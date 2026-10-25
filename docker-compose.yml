@@ -1,0 +1,24 @@
+# Local development database only. Never point this at production data.
+# Passwords come from your local .env (not committed); see .env.example.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: nexora-db
+    environment:
+      POSTGRES_DB: nexora
+      POSTGRES_USER: nexora_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      NEXORA_APP_PASSWORD: ${NEXORA_APP_PASSWORD:?Set NEXORA_APP_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432" # reachable from this machine only
+    volumes:
+      - nexora-db:/var/lib/postgresql/data
+      - ./db/docker/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexora_owner -d nexora"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  nexora-db:

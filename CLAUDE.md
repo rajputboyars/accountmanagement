@@ -21,7 +21,7 @@ Before adding any dependency, check that the handoff lists it. Otherwise, ask fi
 
 ## Commands
 
-The repo currently has `npm run dev | build | start | lint`. Milestone 1 adds `typecheck`, `test`, `test:integration`, `test:e2e`, `check`, `db:generate | db:migrate | db:seed | db:reset` (see handoff §9). Use only scripts that exist in `package.json`.
+Available: `npm run dev | build | start | lint | typecheck` and `db:up | db:generate | db:check | db:migrate | db:seed | db:studio` (see `docs/database.md`). Still to come: `test`, `test:integration`, `test:e2e`, `check` (handoff §9). Use only scripts that exist in `package.json`.
 
 ## Architecture rules
 
