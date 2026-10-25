@@ -1,0 +1,159 @@
+import {
+  Boxes,
+  ChartLine,
+  LayoutDashboard,
+  PackagePlus,
+  ReceiptText,
+  Settings,
+  Truck,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
+
+export type NavKey =
+  | "dashboard"
+  | "billing"
+  | "inventory"
+  | "customers"
+  | "purchases"
+  | "suppliers"
+  | "reports"
+  | "settings";
+
+export type NavItem = {
+  key: NavKey;
+  label: string;
+  /** Short label for the phone bottom bar. */
+  shortLabel: string;
+  href: `/${string}`;
+  icon: LucideIcon;
+  /** One sentence shown under the page title. */
+  description: string;
+  /** Shown in the phone bottom bar; the rest live under "More". */
+  mobilePrimary: boolean;
+  /** What the finished screen will do, shown on not-yet-built pages. */
+  planned: readonly string[];
+};
+
+export const NAV_ITEMS: readonly NavItem[] = [
+  {
+    key: "dashboard",
+    label: "Dashboard",
+    shortLabel: "Home",
+    href: "/dashboard",
+    icon: LayoutDashboard,
+    description: "Today's sales, collections, dues and stock at a glance.",
+    mobilePrimary: true,
+    planned: [],
+  },
+  {
+    key: "billing",
+    label: "Billing",
+    shortLabel: "Billing",
+    href: "/billing",
+    icon: ReceiptText,
+    description: "Create retail and wholesale bills and collect payment.",
+    mobilePrimary: true,
+    planned: [
+      "Search products by name, SKU or barcode",
+      "Retail or wholesale prices applied automatically, with quantity slabs and customer rates",
+      "Cash, UPI, card/bank, credit, part and split payments",
+      "GST invoice with WhatsApp sharing",
+      "Owner approval for discounts above your limit",
+    ],
+  },
+  {
+    key: "inventory",
+    label: "Products & Inventory",
+    shortLabel: "Stock",
+    href: "/inventory",
+    icon: Boxes,
+    description: "Products, units, live stock and low-stock alerts.",
+    mobilePrimary: true,
+    planned: [
+      "Product catalogue with SKU, barcode, HSN and GST rate",
+      "Units and conversions (box = 50 pcs, bag = 50 kg)",
+      "Live stock from every sale, purchase and return",
+      "Returns, damaged stock and stock-count fixes with reasons",
+    ],
+  },
+  {
+    key: "customers",
+    label: "Customers",
+    shortLabel: "Dues",
+    href: "/customers",
+    icon: Users,
+    description: "Customer balances, overdue bills and payments received.",
+    mobilePrimary: true,
+    planned: [
+      "Outstanding balance and oldest unpaid bill for each customer",
+      "Statement with running balance",
+      "Record payments and share receipts",
+      "Credit limits per customer",
+    ],
+  },
+  {
+    key: "purchases",
+    label: "Purchases",
+    shortLabel: "Purchases",
+    href: "/purchases",
+    icon: PackagePlus,
+    description: "Purchase orders and stock received from suppliers.",
+    mobilePrimary: false,
+    planned: [
+      "Record purchase orders",
+      "Receive stock, including short deliveries",
+      "Cost price updated from what you paid",
+    ],
+  },
+  {
+    key: "suppliers",
+    label: "Suppliers",
+    shortLabel: "Suppliers",
+    href: "/suppliers",
+    icon: Truck,
+    description: "What you owe each supplier and when it is due.",
+    mobilePrimary: false,
+    planned: ["Supplier list with balance and due date", "Record supplier payments", "Purchase history per supplier"],
+  },
+  {
+    key: "reports",
+    label: "Reports",
+    shortLabel: "Reports",
+    href: "/reports",
+    icon: ChartLine,
+    description: "Sales, collections, stock value and daily closing.",
+    mobilePrimary: false,
+    planned: [
+      "Sales, collections, credit given and expenses for any period",
+      "Gross profit only where every item has a cost price",
+      "Daily closing: expected vs counted cash",
+      "Sales by counter and staff",
+    ],
+  },
+  {
+    key: "settings",
+    label: "Settings",
+    shortLabel: "Settings",
+    href: "/settings",
+    icon: Settings,
+    description: "Business details, tax, staff access and data import.",
+    mobilePrimary: false,
+    planned: [
+      "Business name, GSTIN and invoice numbering",
+      "Staff accounts and role permissions",
+      "Import products, customers and opening balances from Excel/CSV",
+      "Light or dark appearance",
+    ],
+  },
+];
+
+export function getNavItem(key: NavKey): NavItem {
+  const item = NAV_ITEMS.find((navItem) => navItem.key === key);
+  if (!item) throw new Error(`Unknown navigation key: ${key}`);
+  return item;
+}
+
+export function findNavItemByPath(pathname: string): NavItem | undefined {
+  return NAV_ITEMS.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
+}
