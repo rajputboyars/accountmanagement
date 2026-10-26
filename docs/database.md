@@ -61,6 +61,7 @@ To inspect what will run, read the pending files in `db/migrations/` and compare
 | `0009_expenses_cashbook.sql` | generated | Expenses get an optional reference and void details (who, when, why) with checks: category is one of the fixed list, Other needs a note, a voided expense has a reason; date indexes on expenses and cash movements |
 | `0010_party_ledgers.sql` | generated + hand-edited | `customers.whatsapp_consent` and `consent_updated_at`; unique receipt numbers per shop and year; `role_permissions` rows for the new `payments.reverse` (owner) |
 | `0011_staff_approvals.sql` | hand-added | `role_permissions` rows for `approvals.view` (every role) and `approvals.decide` (owner only); no table changes (the `approvals` table exists since 0001) |
+| `0012_onboarding_import.sql` | generated | `import_jobs`: type `opening_stock`, status `committing`, `file_name`, history index, unique committed file per shop and type; `import_rows`: `entity_id` (record created, so retries skip it) and unique row number per job |
 
 ## Tables by owning module
 

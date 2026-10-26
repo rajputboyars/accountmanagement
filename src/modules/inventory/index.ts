@@ -16,6 +16,6 @@ export {
   type StockStatus,
   type StockStatusFilter,
 } from "./stock";
-export { ADJUSTMENT_KINDS } from "./validation";
+export { ADJUSTMENT_KINDS, openingLineSchema } from "./validation";
 /** For billing: lock stock rows (product-id order), read on-hand quantity from the journal, append a movement with its cache update. */
 export { appendMovement as appendStockMovement, ledgerTotals as stockOnHand, lockCacheRows as lockStockRows, type NewMovement } from "./ledger";

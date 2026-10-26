@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
-import { CircleCheck, KeyRound, Users } from "lucide-react";
+import Link from "next/link";
+import { CircleCheck, KeyRound, ListChecks, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
@@ -31,7 +33,17 @@ async function SettingsContent() {
 
   return (
     <PageContainer>
-      <PageIntro description={item.description} />
+      <PageIntro
+        description={item.description}
+        actions={
+          isOwner ? (
+            <Link href="/settings/setup" className={buttonVariants({ size: "touch", variant: "outline" })}>
+              <ListChecks aria-hidden="true" />
+              Go-live setup & import
+            </Link>
+          ) : null
+        }
+      />
 
       {canManageStaff ? (
         <SectionCard title="Staff & access" description="Each person signs in with their own mobile number. Their role decides what they can open." flush>

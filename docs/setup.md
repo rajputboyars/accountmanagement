@@ -315,3 +315,11 @@ Ties that the database already prevents (two active slabs or rules for the same 
 
 **Limitations.** Below-cost slabs and reopening a day stay owner-only screens (no request flow). The billing and stock screens don't yet show "approval available"; the user just saves again after approval. Bill correction has a service and tests but no screen yet. Approval thresholds are the handoff's (₹2,000; role discount limits 3%/7%); no new financial thresholds were invented. Request lists show the newest 50.
 
+## Go-live setup & data import (Phase 13)
+
+**Screens.** `/settings/setup` (owner, `import.run`): go-live checklist worked out from real records (shop details, owner PIN, staff, products, opening stock, customers, suppliers, first bill), CSV upload, templates, exports and import history. `/settings/setup/imports/[id]`: column mapping, row-by-row preview (ready / skipped / error with reason), commit, and a CSV of the rows left out.
+
+**Rules.** Products, customers (with go-live dues), suppliers and opening stock. Files up to 900 KB (server-action limit) and 2,000 rows; RFC 4180 CSV, inch marks like 1" allowed in plain fields. Rows are checked with the owning module's own Zod schema plus duplicate checks in the file and against the shop (SKU; customer phone, or name when no phone; supplier name; products that already have stock). Nothing is saved until commit; commit re-checks rows and saves each through the normal service (createProduct, createCustomer, createSupplier, recordOpeningStock in idempotent chunks of 200), so stock movements, ledger entries and audit rows are the same as by hand. Each row stores the record it created, so a retry skips it; one commit per shop and type runs at a time (advisory lock; a stuck one can be resumed after 15 minutes); the same file can't be committed twice. Besides `import.run` the owner needs each module's own permission. Exports (products, customers with balance, suppliers with amount owed) use the viewing permissions, show cost only with `profit.view`, and are formula-safe.
+
+**Limitations.** Imports only add new records; existing ones are skipped, never updated. No Excel (.xlsx) upload (save as CSV). Opening stock is dated the import day. A row failing inside a 200-row opening-stock chunk leaves that chunk unsaved with the reason; fix and re-upload.
+

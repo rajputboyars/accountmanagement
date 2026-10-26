@@ -347,3 +347,16 @@ export async function setProductActive(session: SessionContext, productId: strin
     });
   });
 }
+
+/** Every product of the shop for a CSV export, in import-template order. Cost only for `cost.view`. */
+export async function exportProducts(session: SessionContext) {
+  await requirePermission(session, CATALOG_VIEW);
+  const costVisible = await hasPermission(session, COST_VIEW);
+  const rows = await getDb()
+    .select({ name: products.name, sku: products.sku, baseUnit: products.baseUnit, hsn: products.hsn, gstRateBp: products.gstRateBp, retailPaise: products.retailPaise, wholesalePaise: products.wholesalePaise, costPaise: products.costPaise, categoryName: categories.name, barcode: products.barcode, description: products.description, isActive: products.isActive })
+    .from(products)
+    .leftJoin(categories, eq(categories.id, products.categoryId))
+    .where(eq(products.shopId, session.shopId))
+    .orderBy(asc(products.name));
+  return { costVisible, rows: rows.map((row) => ({ ...row, costPaise: costVisible ? row.costPaise : null })) };
+}

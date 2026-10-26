@@ -21,3 +21,4 @@ export {
   type CreatedReceipt,
 } from "./service";
 export { purchasesDaySummary, purchasesRangeSummary, receiptNumbersFor } from "./day-summary";
+export { supplierInputSchema } from "./validation";
