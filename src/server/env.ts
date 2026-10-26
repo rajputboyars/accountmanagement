@@ -35,10 +35,18 @@ const authEnvSchema = z
       .regex(/^[a-z_]{3,32}$/, "SESSION_COOKIE_NAME may only use lowercase letters and _")
       .default("nx_session"),
     SMS_PROVIDER: z.enum(["console", "msg91"]).default("console"),
+    // MSG91 (DLT-registered OTP template). Required when SMS_PROVIDER=msg91.
+    MSG91_AUTH_KEY: z.string().trim().optional(),
+    MSG91_TEMPLATE_ID: z.string().trim().optional(),
+    MSG91_OTP_VARIABLE: z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]{0,30}$/, "MSG91_OTP_VARIABLE must be a template variable name.").default("otp"),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && env.SMS_PROVIDER === "console") {
       ctx.addIssue({ code: "custom", path: ["SMS_PROVIDER"], message: "The console OTP provider is not allowed in production." });
+    }
+    if (env.SMS_PROVIDER === "msg91") {
+      if (!env.MSG91_AUTH_KEY || env.MSG91_AUTH_KEY.length < 16) ctx.addIssue({ code: "custom", path: ["MSG91_AUTH_KEY"], message: "MSG91_AUTH_KEY is not set." });
+      if (!env.MSG91_TEMPLATE_ID) ctx.addIssue({ code: "custom", path: ["MSG91_TEMPLATE_ID"], message: "MSG91_TEMPLATE_ID (the DLT-approved OTP template) is not set." });
     }
   });
 

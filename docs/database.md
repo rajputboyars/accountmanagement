@@ -66,6 +66,7 @@ To inspect what will run, read the pending files in `db/migrations/` and compare
 | `0014_business_settings.sql` | generated + hand-added permission rows | `shops`: `gst_registration`, `inter_state_sales`, `gst_rates_bp`, `invoice_prefix`; `invoices`: `tax_mode` (intra/inter/none, with amount checks) and `place_of_supply`; `igst_paise` on invoice lines, credit notes and their lines; `settings.edit` (owner) |
 | `0015_settings_numbering.sql` | generated | `number_series.start_value` (numbering has started once `next_value` passes it); product GST rate check widened to the notified rates |
 | `0016_purchase_gst_rates.sql` | generated | goods receipt line GST rate check widened to the notified rates (a supplier may charge 3% or 40%) |
+| `0017_health_check_grant.sql` | hand-written | read-only access for `nexora_app` to `drizzle.__drizzle_migrations`, so `/api/health` can report whether migrations are current |
 
 ## Tables by owning module
 

@@ -14,3 +14,6 @@ export async function POST(request: Request) {
   const result = await processWhatsAppOutbox({ limit: 100 });
   return Response.json(result);
 }
+
+/** Vercel Cron calls GET with the same `Authorization: Bearer $CRON_SECRET` header. */
+export const GET = POST;

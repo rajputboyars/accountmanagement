@@ -349,3 +349,11 @@ Ties that the database already prevents (two active slabs or rules for the same 
 
 **Not done (known).** No Content-Security-Policy (the inline theme script would need nonces); no external rate limiter beyond OTP limits; no automated browser (e2e) tests yet.
 
+## Deployment & pilot (Phase 17)
+
+- **Runbook:** `docs/deployment.md` covers Vercel (Mumbai) with managed PostgreSQL 16, environment variables, migrate-before-serve (`npm run build:deploy` → `scripts/migrate-on-deploy.mjs`, production only), health check, logging, backups, restore drill and rollback.
+- **Pilot:** `docs/pilot-checklist.md` covers onboarding, day-1 data verification, daily and weekly checks, the feedback log and exit criteria.
+- **Health:** `GET /api/health` returns 200 or 503 with database and migration state; no session needed.
+- **Errors:** `src/instrumentation.ts` writes one JSON line per server error, without customer data.
+- **Sign-in in production:** `SMS_PROVIDER=msg91` with `MSG91_AUTH_KEY` and `MSG91_TEMPLATE_ID` (a DLT-approved template); the environment is validated at start.
+

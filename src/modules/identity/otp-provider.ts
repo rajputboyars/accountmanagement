@@ -26,12 +26,45 @@ export class ConsoleOtpSender implements OtpSender {
   }
 }
 
+/**
+ * MSG91 Flow API with a DLT-approved OTP template (Indian SMS rules require registered templates).
+ * The code is passed as a template variable and never logged. A failure throws, so sign-in shows
+ * "couldn't send the code" instead of pretending it was sent.
+ */
+export class Msg91OtpSender implements OtpSender {
+  readonly name = "msg91";
+
+  constructor(
+    private readonly config: { authKey: string; templateId: string; otpVariable: string },
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
+
+  async send({ phone, code }: { phone: string; code: string }): Promise<void> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl("https://control.msg91.com/api/v5/flow", {
+        method: "POST",
+        headers: { authkey: this.config.authKey, "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ template_id: this.config.templateId, short_url: "0", recipients: [{ mobiles: `91${phone}`, [this.config.otpVariable]: code }] }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      throw new ConfigurationError("The SMS service could not be reached. Try again in a minute.");
+    }
+    const body = (await response.json().catch(() => null)) as { type?: string; message?: string } | null;
+    if (!response.ok || body?.type === "error") {
+      console.error(`[otp] msg91 refused the code for ${maskPhone(phone)}: ${response.status}`);
+      throw new ConfigurationError("The sign-in code couldn't be sent. Try again in a minute.");
+    }
+  }
+}
+
 export function getOtpSender(): OtpSender {
   const env = getAuthEnv();
   switch (env.SMS_PROVIDER) {
     case "console":
       return new ConsoleOtpSender();
     case "msg91":
-      throw new ConfigurationError("SMS_PROVIDER=msg91 is not implemented yet. Sign-in codes cannot be sent.");
+      return new Msg91OtpSender({ authKey: env.MSG91_AUTH_KEY!, templateId: env.MSG91_TEMPLATE_ID!, otpVariable: env.MSG91_OTP_VARIABLE });
   }
 }

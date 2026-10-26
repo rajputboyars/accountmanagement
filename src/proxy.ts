@@ -15,7 +15,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Everything except sign-in, setup, provider webhooks and scheduled jobs (they verify their own
+  // Everything except sign-in, setup, the health check, provider webhooks and scheduled jobs (they verify their own
   // signature/secret), Next.js internals and static files.
-  matcher: ["/((?!login|setup|api/webhooks|api/jobs|_next/static|_next/image|favicon\\.ico|.*\\.(?:svg|png|jpg|jpeg|ico|webp)$).*)"],
+  matcher: ["/((?!login|setup|api/health|api/webhooks|api/jobs|_next/static|_next/image|favicon\\.ico|.*\\.(?:svg|png|jpg|jpeg|ico|webp)$).*)"],
 };

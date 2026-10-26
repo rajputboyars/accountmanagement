@@ -30,7 +30,7 @@ describe("migrations and database rules", () => {
     const tables = await db.owner.execute<{ n: number }>(sql`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'`);
     expect(tables.rows[0]!.n).toBe(42);
     const applied = await db.owner.execute<{ n: number }>(sql`select count(*)::int as n from drizzle.__drizzle_migrations`);
-    expect(applied.rows[0]!.n).toBe(17);
+    expect(applied.rows[0]!.n).toBe(18);
     const views = await db.owner.execute<{ name: string }>(sql`select table_name as name from information_schema.views where table_schema = 'public' order by 1`);
     expect(views.rows.map((r) => r.name)).toEqual(["v_party_balance", "v_stock"]);
   });
