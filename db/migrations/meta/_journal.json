@@ -50,6 +50,13 @@
       "when": 1793000765111,
       "tag": "0006_party_balance_cache",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793009192562,
+      "tag": "0007_credit_note_checks",
+      "breakpoints": true
     }
   ]
 }

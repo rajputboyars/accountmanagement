@@ -84,3 +84,26 @@ export async function refundInvoicePayments(
   }
   return refunds;
 }
+
+/** Money paid back to a customer for a credit note (an "out" row linked to the note and its invoice). */
+export async function recordCreditNoteRefund(
+  tx: Transaction,
+  refund: { shopId: string; fy: string; customerId: string | null; invoiceId: string; creditNoteId: string; method: PaymentMethod; amountPaise: number; businessDate: string; recordedBy: string },
+): Promise<string> {
+  const id = randomUUID();
+  await tx.insert(payments).values({
+    id,
+    shopId: refund.shopId,
+    fy: refund.fy,
+    direction: "out",
+    partyType: refund.customerId ? "customer" : "none",
+    partyId: refund.customerId,
+    invoiceId: refund.invoiceId,
+    creditNoteId: refund.creditNoteId,
+    method: refund.method,
+    amountPaise: refund.amountPaise,
+    businessDate: refund.businessDate,
+    recordedBy: refund.recordedBy,
+  });
+  return id;
+}

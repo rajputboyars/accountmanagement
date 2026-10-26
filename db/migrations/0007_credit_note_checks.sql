@@ -1,0 +1,7 @@
+CREATE INDEX "credit_note_lines_invoice_line_idx" ON "credit_note_lines" USING btree ("invoice_line_id");--> statement-breakpoint
+CREATE INDEX "credit_notes_invoice_idx" ON "credit_notes" USING btree ("invoice_id");--> statement-breakpoint
+ALTER TABLE "credit_note_lines" ADD CONSTRAINT "credit_note_lines_note_line_key" UNIQUE("credit_note_id","invoice_line_id");--> statement-breakpoint
+ALTER TABLE "credit_note_lines" ADD CONSTRAINT "credit_note_lines_amounts_check" CHECK ("credit_note_lines"."taxable_paise" >= 0 and "credit_note_lines"."cgst_paise" >= 0 and "credit_note_lines"."sgst_paise" >= 0);--> statement-breakpoint
+ALTER TABLE "credit_notes" ADD CONSTRAINT "credit_notes_round_off_check" CHECK ("credit_notes"."round_off_paise" between -50 and 50);--> statement-breakpoint
+ALTER TABLE "credit_notes" ADD CONSTRAINT "credit_notes_total_check" CHECK ("credit_notes"."total_paise" = "credit_notes"."taxable_paise" + "credit_notes"."cgst_paise" + "credit_notes"."sgst_paise" + "credit_notes"."round_off_paise");--> statement-breakpoint
+ALTER TABLE "credit_notes" ADD CONSTRAINT "credit_notes_amounts_check" CHECK ("credit_notes"."taxable_paise" >= 0 and "credit_notes"."cgst_paise" >= 0 and "credit_notes"."sgst_paise" >= 0 and "credit_notes"."total_paise" >= 0);

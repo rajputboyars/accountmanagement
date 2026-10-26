@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { History } from "lucide-react";
+import { History, Undo2 } from "lucide-react";
 import { BillingScreen } from "@/components/sales/billing-screen";
 import { AccessDenied } from "@/components/nexora/access-denied";
 import { PageContainer, PageIntro } from "@/components/nexora/page-container";
@@ -38,10 +38,16 @@ async function NewBill() {
       <PageIntro
         description="Add items, choose the customer and take payment. Every rate, tax and total is worked out on the server from your saved prices."
         actions={
-          <Link href="/billing/invoices" className={buttonVariants({ variant: "outline", size: "touch" })}>
-            <History aria-hidden="true" />
-            Bills
-          </Link>
+          <>
+            <Link href="/billing/returns" className={buttonVariants({ variant: "outline", size: "touch" })}>
+              <Undo2 aria-hidden="true" />
+              Returns
+            </Link>
+            <Link href="/billing/invoices" className={buttonVariants({ variant: "outline", size: "touch" })}>
+              <History aria-hidden="true" />
+              Bills
+            </Link>
+          </>
         }
       />
       <BillingScreen customers={customers} />

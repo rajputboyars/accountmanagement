@@ -93,3 +93,47 @@ export const cancelInvoiceSchema = z.object({
 });
 
 export type BillInput = z.input<typeof billInputSchema>;
+
+export const returnInputSchema = z
+  .object({
+    invoiceId: id("Choose the bill."),
+    lines: z
+      .array(
+        z.object({
+          invoiceLineId: id("Choose an item."),
+          /** In the product's base unit (e.g. pieces), so part of a box can be returned. */
+          baseQty: z
+            .string()
+            .trim()
+            .transform((value, ctx): Milli => {
+              try {
+                const quantity = parseQuantity(value);
+                if (quantity <= BigInt(0)) throw new QuantityError("Enter a quantity more than 0.");
+                return quantity;
+              } catch (error) {
+                ctx.addIssue({ code: "custom", message: error instanceof QuantityError ? error.message : "Enter a valid quantity." });
+                return z.NEVER;
+              }
+            }),
+          /** true: can be sold again (stock up); false: recorded as damaged (stock unchanged, loss on record). */
+          restock: z.boolean(),
+        }),
+      )
+      .min(1, "Choose at least one item to return.")
+      .max(100),
+    reason: z.string().trim().min(3, "Write why the goods came back (at least 3 characters).").max(200, "Keep the reason under 200 characters."),
+    /** ledger = reduce the customer's dues (registered customers only); cash/upi/bank = pay the money back. */
+    settlement: z.enum(["ledger", "cash", "upi", "bank"], { message: "Choose how to settle the return." }),
+  })
+  .superRefine((data, ctx) => {
+    const seen = new Set<string>();
+    data.lines.forEach((line, index) => {
+      if (seen.has(line.invoiceLineId)) ctx.addIssue({ code: "custom", path: ["lines", index, "invoiceLineId"], message: "This item is already on the return." });
+      seen.add(line.invoiceLineId);
+    });
+  });
+
+export const saveReturnSchema = z.object({
+  idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/, "This return form has expired. Reload the page."),
+  expectedTotalPaise: z.number().int().nonnegative(),
+});

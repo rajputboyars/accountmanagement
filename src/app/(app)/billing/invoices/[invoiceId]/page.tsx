@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, CircleCheck, Plus } from "lucide-react";
+import { ArrowLeft, CircleCheck, Plus, Undo2 } from "lucide-react";
 import { CancelInvoice, PrintButton } from "@/components/sales/invoice-actions";
 import { Money } from "@/components/nexora/money";
 import { PageContainer } from "@/components/nexora/page-container";
@@ -219,9 +219,32 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
         </footer>
       </article>
 
-      {invoice.canCancel ? (
-        <div className="print:hidden">
-          <CancelInvoice invoiceId={invoice.id} number={invoice.number} />
+      {invoice.creditNotes.length > 0 ? (
+        <SectionCard title="Returns on this bill" className="print:hidden">
+          <ul className="flex flex-col divide-y divide-border text-sm">
+            {invoice.creditNotes.map((note) => (
+              <li key={note.id} className="flex justify-between gap-3 py-2 first:pt-0">
+                <Link href={`/billing/returns/${note.id}`} className="font-semibold text-teal-strong hover:underline">
+                  {note.number}
+                </Link>
+                <span className="text-muted-foreground">
+                  {dateText(note.businessDate)} · <Money paise={note.totalPaise} withPaise />
+                </span>
+              </li>
+            ))}
+          </ul>
+        </SectionCard>
+      ) : null}
+
+      {invoice.canCancel || invoice.canReturn ? (
+        <div className="flex flex-wrap items-start gap-2 print:hidden">
+          {invoice.canReturn ? (
+            <Link href={`/billing/returns/new?invoice=${invoice.id}`} className={buttonVariants({ variant: "outline", size: "touch" })}>
+              <Undo2 aria-hidden="true" />
+              Return items
+            </Link>
+          ) : null}
+          {invoice.canCancel ? <CancelInvoice invoiceId={invoice.id} number={invoice.number} /> : null}
         </div>
       ) : null}
     </PageContainer>

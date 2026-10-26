@@ -56,6 +56,7 @@ To inspect what will run, read the pending files in `db/migrations/` and compare
 | `0004_pricing_rules.sql` | generated + hand-edited | `price_slabs.shop_id` (backfilled from the product, then NOT NULL) and `is_active`; the slab unique key becomes "one active slab per product and minimum"; customer rules get CHECKs (% between 0.1% and 30%, fixed price needs a product, minimum ≥ 0) and partial unique indexes (one active fixed price per customer/product/minimum, one active % per customer and product, one active % for all products per customer). A database with duplicate active rules or out-of-range % values must be cleaned before applying it |
 | `0005_inventory_opening.sql` | generated + hand-edited | Partial unique index: one `opening` stock movement per product. Backfills missing `stock_levels` cache rows from `stock_movements` (existing cache rows untouched). Adds `role_permissions` rows for the new `stock.opening` permission (owner allowed) to existing shops. Fails if a database already has two opening movements for one product |
 | `0006_party_balance_cache.sql` | hand-written | Backfills missing `party_balances` cache rows from `ledger_entries` (existing rows untouched). No schema change |
+| `0007_credit_note_checks.sql` | generated | Credit notes: total = taxable + CGST + SGST + round off, round off within ±50 paise, non-negative amounts, index on invoice. Credit note lines: one per invoice line per note, non-negative amounts, index on invoice line (for remaining quantities) |
 
 ## Tables by owning module
 

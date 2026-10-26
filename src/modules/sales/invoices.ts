@@ -14,8 +14,8 @@ import { ConflictError, NotFoundError } from "@/server/errors";
 import { indiaDate } from "@/shared/financial-year";
 import { formatQuantity, parseQuantity, toDbQuantity } from "@/shared/quantity";
 import { billView, computeBill, type BillView } from "./bill";
-import { BILLING_CREATE, BILLING_VIEW, INVOICE_CANCEL } from "./permissions";
-import { invoiceLines, invoices } from "./schema";
+import { BILLING_CREATE, BILLING_RETURN, BILLING_VIEW, INVOICE_CANCEL } from "./permissions";
+import { creditNotes, invoiceLines, invoices } from "./schema";
 import { billInputSchema, cancelInvoiceSchema, saveBillSchema } from "./validation";
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
@@ -191,7 +191,9 @@ export async function cancelInvoice(session: SessionContext, invoiceId: string, 
     if (!invoice) throw new NotFoundError("Bill not found.");
     if (invoice.status === "cancelled") throw new ConflictError("ALREADY_CANCELLED", "This bill is already cancelled.");
     const today = indiaDate();
-    if (invoice.businessDate !== today) throw new ConflictError("NOT_SAME_DAY", "Only today's bills can be cancelled. For an older bill, issue a credit note (coming in a later update).");
+    if (invoice.businessDate !== today) throw new ConflictError("NOT_SAME_DAY", "Only today's bills can be cancelled. For an older bill, issue a credit note (return the items).");
+    const [returned] = await tx.select({ n: sql<number>`count(*)::int` }).from(creditNotes).where(eq(creditNotes.invoiceId, invoice.id));
+    if ((returned?.n ?? 0) > 0) throw new ConflictError("HAS_CREDIT_NOTES", "Items on this bill were already returned with a credit note, so it can't be cancelled. Return the remaining items instead.");
 
     const lines = await tx.select().from(invoiceLines).where(eq(invoiceLines.invoiceId, invoice.id)).orderBy(asc(invoiceLines.lineNo));
     await lockStockRows(tx, session.shopId, lines.map((line) => line.productId));
@@ -244,6 +246,12 @@ export async function getInvoice(session: SessionContext, invoiceId: string) {
   const [invoice] = await db.select().from(invoices).where(and(eq(invoices.id, invoiceId), eq(invoices.shopId, session.shopId))).limit(1);
   if (!invoice) throw new NotFoundError("Bill not found.");
   const lines = await db.select().from(invoiceLines).where(eq(invoiceLines.invoiceId, invoice.id)).orderBy(asc(invoiceLines.lineNo));
+  const notes = await db
+    .select({ id: creditNotes.id, number: creditNotes.number, totalPaise: creditNotes.totalPaise, settlement: creditNotes.settlement, businessDate: creditNotes.businessDate })
+    .from(creditNotes)
+    .where(and(eq(creditNotes.invoiceId, invoice.id), eq(creditNotes.shopId, session.shopId)))
+    .orderBy(asc(creditNotes.createdAt));
+  const canReturn = await hasPermission(session, BILLING_RETURN);
   const [products, customer, payments, users, shop, canCancel] = await Promise.all([
     loadProductNames(session.shopId, lines.map((line) => line.productId)),
     findCustomer(session.shopId, invoice.customerId),
@@ -272,7 +280,9 @@ export async function getInvoice(session: SessionContext, invoiceId: string) {
     createdByName: users.get(invoice.createdBy) ?? "Unknown user",
     cancelledByName: invoice.cancelledBy ? (users.get(invoice.cancelledBy) ?? "Unknown user") : null,
     balanceNowPaise,
-    canCancel: canCancel && invoice.status === "issued" && invoice.businessDate === indiaDate(),
+    canCancel: canCancel && invoice.status === "issued" && invoice.businessDate === indiaDate() && notes.length === 0,
+    canReturn: canReturn && invoice.status === "issued",
+    creditNotes: notes,
   };
 }
 

@@ -132,6 +132,10 @@ export const creditNotes = pgTable(
   (t) => [
     unique("credit_notes_shop_fy_number_key").on(t.shopId, t.fy, t.number),
     check("credit_notes_settlement_check", oneOf(t.settlement, CREDIT_NOTE_SETTLEMENTS)),
+    index("credit_notes_invoice_idx").on(t.invoiceId),
+    check("credit_notes_round_off_check", sql`${t.roundOffPaise} between -50 and 50`),
+    check("credit_notes_total_check", sql`${t.totalPaise} = ${t.taxablePaise} + ${t.cgstPaise} + ${t.sgstPaise} + ${t.roundOffPaise}`),
+    check("credit_notes_amounts_check", sql`${t.taxablePaise} >= 0 and ${t.cgstPaise} >= 0 and ${t.sgstPaise} >= 0 and ${t.totalPaise} >= 0`),
   ],
 );
 
@@ -148,5 +152,11 @@ export const creditNoteLines = pgTable(
     restock: boolean("restock").notNull(), // false = goes to damaged
     createdAt: createdAt(),
   },
-  (t) => [check("credit_note_lines_base_qty_check", sql`${t.baseQty} > 0`)],
+  (t) => [
+    check("credit_note_lines_base_qty_check", sql`${t.baseQty} > 0`),
+    // One line per invoice line per credit note; remaining quantities are summed per invoice line.
+    unique("credit_note_lines_note_line_key").on(t.creditNoteId, t.invoiceLineId),
+    index("credit_note_lines_invoice_line_idx").on(t.invoiceLineId),
+    check("credit_note_lines_amounts_check", sql`${t.taxablePaise} >= 0 and ${t.cgstPaise} >= 0 and ${t.sgstPaise} >= 0`),
+  ],
 );

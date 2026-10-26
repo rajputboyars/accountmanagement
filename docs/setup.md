@@ -214,3 +214,27 @@ Ties that the database already prevents (two active slabs or rules for the same 
 - IGST (inter-state) is not supported.
 - Low-stock warning on the invoice (spec §2) is not shown yet.
 
+## Sales returns & cancellations (Phase 7) rules and assumptions
+
+**Screens.** `/billing/returns` (find a bill by number, credit note history), `/billing/returns/new?invoice=…` (enter returned quantities per line, saleable or damaged, reason, settlement; review; confirm), `/billing/returns/[id]` (printable credit note). The bill page lists its returns and offers "Return items".
+
+**Who can do what.** Returns need `billing.return` (owner, manager). Cancelling a bill stays owner only, same business day (Phase 6).
+
+**Credit note** (spec §5, S4): numbered `CN/26-27/00001` from `number_series`; quantities are in the product's base unit; each line's value is the original line's discounted taxable value × returned ÷ sold (half-up), and the last return of a line takes exactly what is left, so returns never exceed the line; GST per rate group as on the invoice; total rounded to the rupee. Golden value: 2 of 60 Example A pipes → ₹900.90 + ₹162.16 → ₹1,063. The invoice itself is never edited.
+
+**Stock.** Saleable goods: `return_in` (+). Damaged goods: `return_in` (+) then `damage` (−) in the same transaction, so stock is unchanged but the loss is on record (valued at the line's cost at sale).
+
+**Settlement.** Registered customers: reduce dues (ledger `credit_note` credit; may create an advance) or refund by cash/UPI/bank (refund payment row linked to the credit note, plus a ledger debit, so dues are unchanged). Walk-in customers have no ledger and must be refunded.
+
+**Integrity.** One transaction: credit note + lines, stock movements, ledger entries, refund row, audit. Lock order: the invoice row → `stock_levels` → `party_balances` → `number_series`; locking the invoice serialises all returns of a bill, so concurrent returns can't over-return. Remaining quantity is re-checked after the lock; the amount shown on review is compared and a difference refuses the save (`RETURN_CHANGED`). Idempotency key per return. A bill with any credit note can't be cancelled (return the rest instead); a cancelled bill can't be returned against.
+
+**Assumptions (spec silent)**
+- Refunds in money are allowed for any credit note, whatever was paid on the bill; for a registered customer the ledger records both the credit and the refund.
+- Quantities are returned in the base unit (part of a box is allowed); the bill's rates, discount and GST are always reused, never today's prices.
+- Returns have no time limit and no day lock yet (closing is not built).
+
+**Limitations**
+- No owner-approval flow, no corrections (edit same-day bill) yet, no WhatsApp/PDF sharing.
+- Refund references (UPI UTR, bank reference) are not captured.
+- Cancellation refunds go by the original method; partial cancellation is a return.
+
