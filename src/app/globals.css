@@ -1,26 +1,212 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
 
+/*
+ * Nexora design tokens.
+ * Brand: navy #14243A · teal #0D9488 (teal-strong #0F766E for text and filled controls) · amber #F5A623.
+ * Page #F7F9FC, white surfaces, slate text. Light is the default; `.dark` on <html> switches theme.
+ * Components use these tokens only — never raw hex values.
+ */
 @theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Brand and status colours */
+  --color-navy: var(--navy);
+  --color-teal: var(--teal);
+  --color-teal-strong: var(--teal-strong);
+  --color-teal-soft: var(--teal-soft);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-amber-ink: var(--amber-ink);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-panel-foreground: var(--panel-foreground);
+  --color-panel-muted: var(--panel-muted);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+:root {
+  --radius: 0.75rem;
+
+  --background: #f7f9fc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #14243a;
+  --primary-foreground: #ffffff;
+  --secondary: #eef2f7;
+  --secondary-foreground: #14243a;
+  --muted: #f1f5f9;
+  --muted-foreground: #526075;
+  --accent: #eef2f7;
+  --accent-foreground: #14243a;
+  --destructive: #b91c1c;
+  --border: #e2e8f0;
+  --input: #cbd5e1;
+  --ring: #0d9488;
+
+  --chart-1: #14243a;
+  --chart-2: #0d9488;
+  --chart-3: #f5a623;
+  --chart-4: #64748b;
+  --chart-5: #cbd5e1;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #334155;
+  --sidebar-primary: #14243a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f1f5f9;
+  --sidebar-accent-foreground: #14243a;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #0d9488;
+
+  --navy: #14243a;
+  --teal: #0d9488;
+  --teal-strong: #0f766e;
+  --teal-soft: #dcf3f0;
+  --amber: #f5a623;
+  --amber-soft: #fef3dc;
+  --amber-ink: #8a5300;
+  --success: #15803d;
+  --success-soft: #dcfce7;
+  --danger: #b91c1c;
+  --danger-soft: #fee2e2;
+  --panel: #14243a;
+  --panel-2: #0d1828;
+  --panel-foreground: #ffffff;
+  --panel-muted: #a3b1c6;
+}
+
+.dark {
+  --background: #0b1220;
+  --foreground: #e2e8f0;
+  --card: #121c2e;
+  --card-foreground: #e2e8f0;
+  --popover: #121c2e;
+  --popover-foreground: #e2e8f0;
+  --primary: #e6edf7;
+  --primary-foreground: #0b1220;
+  --secondary: #1a2640;
+  --secondary-foreground: #e6edf7;
+  --muted: #1a2640;
+  --muted-foreground: #9aa8bd;
+  --accent: #1a2640;
+  --accent-foreground: #e6edf7;
+  --destructive: #f87171;
+  --border: #23314b;
+  --input: #2c3b57;
+  --ring: #2dd4bf;
+
+  --chart-1: #c7d3e6;
+  --chart-2: #2dd4bf;
+  --chart-3: #f5a623;
+  --chart-4: #64748b;
+  --chart-5: #334155;
+
+  --sidebar: #0f1828;
+  --sidebar-foreground: #cbd5e1;
+  --sidebar-primary: #e6edf7;
+  --sidebar-primary-foreground: #0b1220;
+  --sidebar-accent: #1a2640;
+  --sidebar-accent-foreground: #e6edf7;
+  --sidebar-border: #1e2a40;
+  --sidebar-ring: #2dd4bf;
+
+  --navy: #14243a;
+  --teal: #2dd4bf;
+  --teal-strong: #5eead4;
+  --teal-soft: #113a38;
+  --amber: #f5a623;
+  --amber-soft: #3a2a0e;
+  --amber-ink: #fbbf24;
+  --success: #4ade80;
+  --success-soft: #0f3321;
+  --danger: #f87171;
+  --danger-soft: #3b1214;
+  --panel: #1a2a44;
+  --panel-2: #101b2e;
+  --panel-foreground: #ffffff;
+  --panel-muted: #a3b1c6;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

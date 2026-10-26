@@ -1,0 +1,2 @@
+ALTER TABLE "goods_receipt_lines" DROP CONSTRAINT "goods_receipt_lines_gst_rate_check";--> statement-breakpoint
+ALTER TABLE "goods_receipt_lines" ADD CONSTRAINT "goods_receipt_lines_gst_rate_check" CHECK ("goods_receipt_lines"."gst_rate_bp" in (0, 10, 25, 150, 300, 500, 1200, 1800, 2800, 4000));
