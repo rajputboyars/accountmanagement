@@ -16,6 +16,7 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { v5 as uuidv5, v7 as uuidv7 } from "uuid";
+import { DEFAULT_UNITS } from "@/modules/catalog/units";
 import * as schema from "@/server/schema";
 import { isLocalDatabase } from "@/server/env";
 import { defaultPermissionRows } from "./permissions";
@@ -136,6 +137,11 @@ async function main() {
       await tx
         .insert(schema.numberSeries)
         .values(["INV", "CN", "RCPT", "PO", "GRN", "ADJ"].map((series) => ({ shopId: SHOP_ID, series, fy: FY })))
+        .onConflictDoNothing();
+
+      await tx
+        .insert(schema.units)
+        .values(DEFAULT_UNITS.map((unit) => ({ id: sid(`unit:${unit.code}`), shopId: SHOP_ID, ...unit })))
         .onConflictDoNothing();
 
       await tx

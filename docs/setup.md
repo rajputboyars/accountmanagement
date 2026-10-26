@@ -133,3 +133,12 @@ Removes the container but keeps the data volume.
 | `/setup` after setup returns HTTP 200 | The page streams a "not found" screen, but the status code is 200 because of partial prerendering. The setup form is never served again, and setup is also refused on the server | Revisit with route-level handling |
 | Sidebar is not role-aware | Every role sees every menu item. Opening a restricted page shows "You don't have access", and the server refuses the data and actions | UI polish when the modules are built |
 | MSG91 is a placeholder | No working production SMS delivery | Before production |
+
+## Catalog (Phase 4A) decisions and limitations
+
+- **Who can do what.** Viewing products and units uses `inventory.view` (owner, manager, inventory staff). Adding or changing products, pack sizes and units uses `pricing.edit` (owner only by default), because a product carries its retail and wholesale list prices. Cost prices are shown and saved only with `profit.view` (owner). Cashiers do not see the catalog screens yet; billing will read products through the sales module.
+- **Pack sizes are per product.** "1 Box = 50 pc" is stored on the product (`product_units.factor`, numeric(12,3)); there is no shop-wide factor. A size must be more than 0, not exactly 1, at most 3 decimals, and a whole number when the base unit can't be split (Piece, Box, Bag, Set …).
+- **Nothing is deleted.** Products, units and pack sizes are switched off and can be switched back on; every change writes an audit row in the same transaction.
+- **Base unit lock.** The base unit can't change once a product has pack sizes. Stock movements and invoice lines will also need to lock it; that check is added with those modules.
+- **No brand field.** The schema has no brand column; include the brand in the product name or category.
+- **Out of scope here.** Quantity slabs, customer prices, opening stock, reorder levels and stock levels are not editable yet.

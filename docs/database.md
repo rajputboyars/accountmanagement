@@ -52,6 +52,7 @@ To inspect what will run, read the pending files in `db/migrations/` and compare
 | `0000_extensions.sql` | hand-written | `pg_trgm` (product-name search), `pgcrypto` |
 | `0001_v1_schema.sql` | generated | 38 tables, keys, foreign keys (no cascades), unique/partial indexes, CHECK constraints |
 | `0002_journals_views_privileges.sql` | hand-written | Append-only triggers, `v_party_balance` and `v_stock` views, `nexora_app` grants |
+| `0003_catalog_units.sql` | generated + hand-edited | `units` table (per shop, unique short code), `products.description`, `product_units.is_active`; backfills default units (and any unit already used by a product) for existing shops before adding the `products (shop_id, base_unit) → units (shop_id, code)` foreign key; grants `units` to `nexora_app`. 39 tables in total |
 
 ## Tables by owning module
 
@@ -60,7 +61,7 @@ To inspect what will run, read the pending files in `db/migrations/` and compare
 | settings | shops, devices, number_series, number_blocks |
 | identity | users, role_permissions, sessions, otp_requests, approvals |
 | parties | customers, suppliers |
-| catalog | categories, products, product_units, product_cost_history |
+| catalog | units, categories, products, product_units, product_cost_history |
 | pricing | price_slabs, customer_price_rules |
 | sales | invoices, invoice_lines, credit_notes, credit_note_lines |
 | payments | payments |

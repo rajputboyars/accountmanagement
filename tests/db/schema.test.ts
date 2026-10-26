@@ -28,9 +28,9 @@ async function asApp(text: string): Promise<{ ok: boolean; message?: string }> {
 describe("migrations and database rules", () => {
   it("applies all migrations to a fresh database", async () => {
     const tables = await db.owner.execute<{ n: number }>(sql`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'`);
-    expect(tables.rows[0]!.n).toBe(38);
+    expect(tables.rows[0]!.n).toBe(39);
     const applied = await db.owner.execute<{ n: number }>(sql`select count(*)::int as n from drizzle.__drizzle_migrations`);
-    expect(applied.rows[0]!.n).toBe(3);
+    expect(applied.rows[0]!.n).toBe(4);
     const views = await db.owner.execute<{ name: string }>(sql`select table_name as name from information_schema.views where table_schema = 'public' order by 1`);
     expect(views.rows.map((r) => r.name)).toEqual(["v_party_balance", "v_stock"]);
   });
@@ -40,7 +40,8 @@ describe("migrations and database rules", () => {
     await db.owner.execute(sql`
       with s as (insert into shops (id, name, state_code) values (gen_random_uuid(), 'J', '08') returning id),
            u as (insert into users (id, shop_id, name, phone, role) select gen_random_uuid(), id, 'O', '9000000301', 'owner' from s returning id, shop_id),
-           p as (insert into products (id, shop_id, sku, name, base_unit, hsn, gst_rate_bp, retail_paise, wholesale_paise) select gen_random_uuid(), id, 'J-1', 'Pipe', 'pc', '3917', 1800, 100, 90 from s returning id, shop_id),
+           un as (insert into units (id, shop_id, code, name) select gen_random_uuid(), id, 'pc', 'Piece' from s returning shop_id),
+           p as (insert into products (id, shop_id, sku, name, base_unit, hsn, gst_rate_bp, retail_paise, wholesale_paise) select gen_random_uuid(), shop_id, 'J-1', 'Pipe', 'pc', '3917', 1800, 100, 90 from un returning id, shop_id),
            m as (insert into stock_movements (shop_id, product_id, movement_date, kind, qty_base, source_type, source_id, created_by) select p.shop_id, p.id, '2026-10-01', 'opening', 5, 'opening_stock', gen_random_uuid(), u.id from p, u returning 1)
       insert into ledger_entries (shop_id, party_type, party_id, entry_date, kind, source_type, source_id, debit_paise) select id, 'customer', gen_random_uuid(), '2026-10-01', 'opening', 'opening_balance', gen_random_uuid(), 500 from s`);
     await expectDbError(db.owner.execute(sql`update ledger_entries set debit_paise = 1`), /append-only/);

@@ -1,6 +1,7 @@
 import { count, sql } from "drizzle-orm";
 import { z } from "zod";
 import { recordAudit } from "@/modules/audit";
+import { seedDefaultUnits } from "@/modules/catalog";
 import { bootstrapOwner, phoneSchema } from "@/modules/identity";
 import { getDb, withTransaction } from "@/server/db";
 import { safeEqual } from "@/server/crypto";
@@ -34,7 +35,7 @@ export async function isSetupComplete(): Promise<boolean> {
 }
 
 /**
- * First-run setup: creates the shop, the owner, default permissions and this year's document
+ * First-run setup: creates the shop, the owner, default permissions, default units and this year's document
  * number series, in one transaction. Requires SETUP_TOKEN (disabled when it is not configured).
  * A transaction-scoped advisory lock makes concurrent attempts run one at a time, so exactly one
  * shop can ever be created this way.
@@ -56,6 +57,7 @@ export async function runFirstTimeSetup(input: SetupInput, now: Date = new Date(
       .returning({ id: shops.id });
     const shopId = shop!.id;
     const { ownerId } = await bootstrapOwner(tx, shopId, { name: data.ownerName, phone: data.ownerPhone });
+    await seedDefaultUnits(tx, shopId);
     const fy = financialYearLabel(now);
     await tx.insert(numberSeries).values(DOCUMENT_SERIES.map((series) => ({ shopId, series, fy })));
     await recordAudit(tx, { shopId, userId: ownerId, role: "owner" }, {

@@ -1,6 +1,7 @@
 import { count, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { auditLog } from "@/modules/audit/schema";
+import { units } from "@/modules/catalog/schema";
 import { rolePermissions, users } from "@/modules/identity/schema";
 import { isSetupComplete, runFirstTimeSetup, type SetupInput } from "@/modules/settings";
 import { numberSeries, shops } from "@/modules/settings/schema";
@@ -61,6 +62,9 @@ describe("first-run setup", () => {
 
     const series = await db.owner.select().from(numberSeries).where(eq(numberSeries.shopId, shop!.id));
     expect(series.map((s) => s.series).sort()).toEqual(["ADJ", "CN", "GRN", "INV", "PO", "RCPT"]);
+
+    const shopUnits = await db.owner.select({ code: units.code }).from(units).where(eq(units.shopId, shop!.id));
+    expect(shopUnits.map((u) => u.code)).toEqual(expect.arrayContaining(["pc", "box", "bundle", "m", "length"]));
 
     const [audit] = await db.owner.select().from(auditLog).where(eq(auditLog.action, "setup.completed"));
     expect(audit!.after).toMatchObject({ setupToken: "[redacted]" });

@@ -1,5 +1,7 @@
 import { randomInt } from "node:crypto";
 import { createSession, validateSessionToken, type OtpSender, type SessionContext } from "@/modules/identity";
+import { DEFAULT_UNITS } from "@/modules/catalog/units";
+import { units } from "@/modules/catalog/schema";
 import { rolePermissions, users } from "@/modules/identity/schema";
 import { shops } from "@/modules/settings/schema";
 import { withTransaction } from "@/server/db";
@@ -13,11 +15,12 @@ export function randomPhone(): string {
 export type TestUser = { id: string; phone: string; role: RoleName; shopId: string; name: string };
 export type TestShop = { shopId: string; users: Record<RoleName, TestUser> };
 
-/** A shop with one user per role and the default permission table, inserted as the schema owner. */
+/** A shop with one user per role, the default permission table and default units, inserted as the schema owner. */
 export async function createTestShop(db: TestDatabase, name = "Test Shop"): Promise<TestShop> {
   const [shop] = await db.owner.insert(shops).values({ name, stateCode: "08" }).returning({ id: shops.id });
   const shopId = shop!.id;
   await db.owner.insert(rolePermissions).values(defaultPermissionRows().map((row) => ({ shopId, ...row })));
+  await db.owner.insert(units).values(DEFAULT_UNITS.map((unit) => ({ shopId, ...unit })));
   const roles: RoleName[] = ["owner", "manager", "cashier", "inventory"];
   const created = {} as Record<RoleName, TestUser>;
   for (const role of roles) {
