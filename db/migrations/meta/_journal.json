@@ -43,6 +43,13 @@
       "when": 1792998613574,
       "tag": "0005_inventory_opening",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793000765111,
+      "tag": "0006_party_balance_cache",
+      "breakpoints": true
     }
   ]
 }

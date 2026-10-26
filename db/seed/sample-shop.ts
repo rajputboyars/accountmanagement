@@ -261,6 +261,12 @@ async function main() {
         ])
         .onConflictDoNothing();
 
+      // The party_balances cache, built from those entries in the same transaction.
+      await tx.execute(sql`
+        insert into party_balances (party_type, party_id, shop_id, balance_paise, last_entry_id)
+        select party_type, party_id, shop_id, sum(debit_paise - credit_paise), max(id) from ledger_entries where shop_id = ${SHOP_ID} group by party_type, party_id, shop_id
+        on conflict (party_type, party_id) do nothing`);
+
       // Caches are rebuilt from the journals (the source of truth), so they always agree.
       await tx.execute(sql`
         insert into stock_levels (product_id, shop_id, qty_base, last_movement_id)

@@ -15,7 +15,7 @@ export function AppHeader({ shopName, account }: { shopName: React.ReactNode; ac
   const title = findNavItemByPath(pathname)?.label ?? "Nexora";
 
   return (
-    <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+    <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70 print:hidden">
       <div className="mx-auto flex h-16 w-full max-w-[1440px] items-center gap-3 px-4 sm:px-6 lg:px-8">
         <Link href="/" className="rounded-xl md:hidden" aria-label="Nexora home">
           <LogoMark className="size-9" />

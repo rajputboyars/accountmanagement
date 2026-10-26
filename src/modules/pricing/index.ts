@@ -1,6 +1,6 @@
 /** Public API of the pricing module. Other modules and the app import only from here. */
 export { COST_VIEW, PRICING_MANAGE, requireQuotePermission } from "./permissions";
-export { quoteForSession, type QuoteResult } from "./quote";
+export { defaultPriceList, priceBillLine, quoteForSession, rateReasonFor, type BillLinePrice, type QuoteResult } from "./quote";
 export {
   addCustomerRule,
   addSlab,

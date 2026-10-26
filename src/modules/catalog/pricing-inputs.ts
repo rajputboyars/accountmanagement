@@ -13,6 +13,8 @@ export type ProductPricingInputs = {
   baseUnit: string;
   baseUnitName: string;
   baseAllowsDecimal: boolean;
+  hsn: string;
+  gstRateBp: number;
   retailPaise: number;
   wholesalePaise: number;
   /** Always loaded here; the pricing module decides who may see it. */
@@ -36,6 +38,8 @@ export async function loadProductPricingInputs(shopId: string, productId: string
       baseUnit: products.baseUnit,
       baseUnitName: units.name,
       baseAllowsDecimal: units.allowDecimal,
+      hsn: products.hsn,
+      gstRateBp: products.gstRateBp,
       retailPaise: products.retailPaise,
       wholesalePaise: products.wholesalePaise,
       costPaise: products.costPaise,

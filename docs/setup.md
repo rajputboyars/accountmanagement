@@ -191,3 +191,26 @@ Ties that the database already prevents (two active slabs or rules for the same 
 - **No CSV import of opening stock** (spec §8 describes import; it belongs to the import milestone).
 - The sidebar's "Preview build. Screens show sample data; nothing is saved yet." notice is now out of date and should be revised separately.
 
+## Sales & billing (Phase 6) rules and limitations
+
+**Screens.** `/billing` (counter: product search, cart with units, customer, price list, bill discount, split payments, live server preview), `/billing/invoices` (bills by number and date), `/billing/invoices/[id]` (tax invoice with GST summary, amount in words, payments, print view, owner cancel).
+
+**Who can do what.** Make bills: `billing.create` (owner, manager, cashier). See bills: `billing.view`. Cancel: `invoice.cancel` (owner only, same business day, decision 20). Bill discount limits: cashier 3%, manager 7%, owner unlimited (decisions 17–19).
+
+**How a bill is worked out** (spec §2): every line is priced by the Smart Pricing engine on the server; line amount = base quantity × base rate (half-up); bill discount = subtotal × % (half-up), spread over lines by largest remainder; GST per rate group, CGST = SGST = round half-up(group taxable × rate ÷ 2); total rounded half-up to the rupee (round-off within ±₹0.50). Intra-state only (IGST always 0). Golden values from spec Examples A and B are tests.
+
+**Saving** writes, in one transaction: invoice + lines (rate, rate reason, cost at sale), one `sale` stock movement per line, one payment row per method, and for a registered customer a ledger debit for the total and a credit per payment, plus the audit row. Lock order: `stock_levels` (product-id order) → `party_balances` → `number_series`. After the locks it re-prices every line and re-checks stock, the credit limit and the role's discount limit. If any rate or the total differs from what the cashier saw, nothing is saved (`PRICE_CHANGED`) and the new bill is returned to confirm. An `Idempotency-Key` per bill makes a repeated submit return the first invoice. Invoice numbers `INV/26-27/00001` come from `number_series` inside the transaction, so a rollback leaves no gap.
+
+**Payments and dues.** Paid now = sum of Cash/UPI/Card/Bank amounts (≤ total); the rest is credit. Walk-in customers must pay in full and have no ledger. Credit is allowed only while dues after the bill stay within the customer's limit; an advance (negative balance) is used first automatically because dues are always `SUM(ledger_entries)`. Cash received is only used to show change and is not stored. Sales, collections and dues are kept separate; profit is not calculated (cost is stored on each line for later, and `cost_complete` records whether every line had one).
+
+**Cancelling** (owner, today only, reason required): the invoice status becomes cancelled (nothing deleted), `sale_cancel` movements return the stock, each payment gets a refund row by the same method (original marked reversed), and the ledger gets a cancellation credit plus a debit per refund, so dues net to zero.
+
+**Limitations**
+- No owner-approval flow: bills over the role's discount limit or the credit limit are refused with "ask the owner" instead of requesting a PIN approval.
+- No credit notes / returns for older bills, no receipts for later customer payments, no held bills, no WhatsApp/PDF sharing (print view only).
+- No day closing yet, so the "day already closed" check and the day lock are not in place.
+- Same product twice on one bill is refused (combine the quantities on one line).
+- Counter payments carry no receipt number; receipts come with the payments phase. UPI/cheque references are not captured yet.
+- IGST (inter-state) is not supported.
+- Low-stock warning on the invoice (spec §2) is not shown yet.
+

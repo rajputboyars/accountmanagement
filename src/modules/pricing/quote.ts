@@ -1,10 +1,11 @@
-import { loadProductPricingInputs } from "@/modules/catalog";
+import { loadProductPricingInputs, type ProductPricingInputs } from "@/modules/catalog";
 import { hasPermission, type SessionContext } from "@/modules/identity";
 import { findCustomer, type CustomerSummary } from "@/modules/parties";
+import { getDb, type Database, type Transaction } from "@/server/db";
 import { ConflictError, ValidationError } from "@/server/errors";
 import { formatPaise } from "@/shared/money";
 import { formatBasisPoints, PricingError, quotePrice, type PriceList, type Quote, type QuoteStep } from "@/shared/pricing-engine";
-import { formatQuantity, isWholeQuantity, ONE_UNIT } from "@/shared/quantity";
+import { formatQuantity, isWholeQuantity, ONE_UNIT, type Milli } from "@/shared/quantity";
 import { COST_VIEW, requireQuotePermission } from "./permissions";
 import { activeRulesFor, activeSlabsFor } from "./rules";
 import { quoteInputSchema } from "./validation";
@@ -91,44 +92,15 @@ export async function quoteForSession(session: SessionContext, input: unknown): 
   const product = await loadProductPricingInputs(session.shopId, data.productId);
   if (!product.isActive) throw new ConflictError("PRODUCT_INACTIVE", `${product.name} is switched off, so it can't be priced.`);
 
-  const saleUnit =
-    data.unit === product.baseUnit
-      ? { code: product.baseUnit, name: product.baseUnitName, factor: ONE_UNIT }
-      : product.saleUnits.find((unit) => unit.code === data.unit);
-  if (!saleUnit) throw new ValidationError(`"${data.unit}" is not a unit this product is sold in. Set it up under Pack sizes first.`);
-
   const customer = data.customerId ? await findCustomer(session.shopId, data.customerId) : null;
   if (customer && !customer.isActive) throw new ConflictError("CUSTOMER_INACTIVE", `${customer.name} is switched off.`);
-
-  const priceList: PriceList = data.priceList ?? (customer?.type === "wholesale" ? "wholesale" : "retail");
+  const priceList: PriceList = data.priceList ?? defaultPriceList(customer);
   const priceListReason = data.priceList
     ? `${priceList === "wholesale" ? "Wholesale" : "Retail"} price list chosen by hand.`
     : customer
       ? `${customer.name} is a ${customer.type === "wholesale" ? "wholesale" : customer.type === "walkin" ? "walk-in" : "retail"} customer, so the ${priceList} price list is used.`
       : "No customer chosen, so the retail price list is used (as for a walk-in customer).";
-
-  const [slabs, customerRules] = await Promise.all([
-    priceList === "wholesale" ? activeSlabsFor(session.shopId, product.id) : Promise.resolve([]),
-    priceList === "wholesale" && customer ? activeRulesFor(session.shopId, customer.id, product.id) : Promise.resolve([]),
-  ]);
-
-  let quote: Quote;
-  try {
-    quote = quotePrice({
-      priceList,
-      product: { id: product.id, retailPaise: product.retailPaise, wholesalePaise: product.wholesalePaise, baseUnit: product.baseUnit },
-      saleUnit: { code: saleUnit.code, factor: saleUnit.factor },
-      quantity: data.quantity,
-      slabs,
-      customerRules,
-    });
-  } catch (error) {
-    if (error instanceof PricingError) throw new ValidationError(error.message);
-    throw error;
-  }
-  if (!product.baseAllowsDecimal && !isWholeQuantity(quote.baseQuantity)) {
-    throw new ValidationError(`${product.baseUnitName} can't be split, so the quantity must come to a whole number of ${product.baseUnit}.`);
-  }
+  const { saleUnit, quote } = await priceWithProduct(getDb(), session.shopId, product, { unit: data.unit, quantity: data.quantity, customer, priceList });
 
   const decided = quote.decidedBy;
   return {
@@ -147,4 +119,71 @@ export async function quoteForSession(session: SessionContext, input: unknown): 
     decidedBy: { kind: decided.kind, id: decided.kind === "slab" ? decided.slabId : decided.kind === "fixed" || decided.kind === "pct" ? decided.ruleId : null },
     belowCost: (await hasPermission(session, COST_VIEW)) && product.costPaise !== null ? quote.baseRatePaise < product.costPaise : null,
   };
+}
+
+/** Wholesale customers get the wholesale list; walk-in, retail or no customer get retail (spec §2). */
+export function defaultPriceList(customer: Pick<CustomerSummary, "type"> | null): PriceList {
+  return customer?.type === "wholesale" ? "wholesale" : "retail";
+}
+
+async function priceWithProduct(
+  db: Database | Transaction,
+  shopId: string,
+  product: ProductPricingInputs,
+  line: { unit: string; quantity: Milli; customer: Pick<CustomerSummary, "id"> | null; priceList: PriceList },
+) {
+  const saleUnit =
+    line.unit === product.baseUnit ? { code: product.baseUnit, name: product.baseUnitName, factor: ONE_UNIT } : product.saleUnits.find((unit) => unit.code === line.unit);
+  if (!saleUnit) throw new ValidationError(`"${line.unit}" is not a unit ${product.name} is sold in.`);
+  const [slabs, customerRules] = await Promise.all([
+    line.priceList === "wholesale" ? activeSlabsFor(shopId, product.id, db) : Promise.resolve([]),
+    line.priceList === "wholesale" && line.customer ? activeRulesFor(shopId, line.customer.id, product.id, db) : Promise.resolve([]),
+  ]);
+  let quote: Quote;
+  try {
+    quote = quotePrice({
+      priceList: line.priceList,
+      product: { id: product.id, retailPaise: product.retailPaise, wholesalePaise: product.wholesalePaise, baseUnit: product.baseUnit },
+      saleUnit: { code: saleUnit.code, factor: saleUnit.factor },
+      quantity: line.quantity,
+      slabs,
+      customerRules,
+    });
+  } catch (error) {
+    if (error instanceof PricingError) throw new ValidationError(error.message);
+    throw error;
+  }
+  if (!product.baseAllowsDecimal && !isWholeQuantity(quote.baseQuantity)) {
+    throw new ValidationError(`${product.baseUnitName} can't be split, so the quantity of ${product.name} must come to a whole number of ${product.baseUnit}.`);
+  }
+  return { saleUnit, quote };
+}
+
+/** "Slab 50+ −1%", "Special ₹430", "Wholesale −2%": the rule that set the rate, for the bill line. */
+export function rateReasonFor(quote: Quote): string {
+  const pct = quote.steps.find((step) => step.kind === "pct");
+  const base = [...quote.steps].reverse().find((step) => step.kind !== "pct" && (step.kind !== "fixed" || step.applied)) ?? quote.steps[0]!;
+  return pct ? `${badgeFor(base)} ${badgeFor(pct)}` : badgeFor(base);
+}
+
+export type BillLinePrice = {
+  product: ProductPricingInputs;
+  saleUnit: { code: string; name: string; factor: Milli };
+  quote: Quote;
+  rateReason: string;
+};
+
+/**
+ * Prices one bill line inside the caller's transaction, with the shop's current product, slabs
+ * and customer rules. No permission check: billing has done it. Refuses switched-off products.
+ */
+export async function priceBillLine(
+  tx: Transaction,
+  shopId: string,
+  line: { productId: string; unit: string; quantity: Milli; customer: Pick<CustomerSummary, "id"> | null; priceList: PriceList },
+): Promise<BillLinePrice> {
+  const product = await loadProductPricingInputs(shopId, line.productId, tx);
+  if (!product.isActive) throw new ConflictError("PRODUCT_INACTIVE", `${product.name} is switched off, so it can't be sold.`);
+  const { saleUnit, quote } = await priceWithProduct(tx, shopId, product, line);
+  return { product, saleUnit, quote, rateReason: rateReasonFor(quote) };
 }

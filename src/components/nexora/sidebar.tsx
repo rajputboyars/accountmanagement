@@ -12,7 +12,7 @@ export function Sidebar() {
   const activeKey = findNavItemByPath(pathname)?.key;
 
   return (
-    <aside className="sticky top-0 hidden h-dvh w-[84px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex xl:w-64">
+    <aside className="sticky top-0 hidden h-dvh w-[84px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex xl:w-64 print:hidden">
       <div className="flex h-16 items-center justify-center border-b border-sidebar-border xl:justify-start xl:px-5">
         <Link href="/dashboard" className="rounded-xl" aria-label="Nexora dashboard">
           <Logo showWordmark={false} className="xl:hidden" />
@@ -26,10 +26,10 @@ export function Sidebar() {
       </nav>
       <div className="border-t border-sidebar-border p-3">
         <p className="hidden rounded-xl bg-amber-soft px-3 py-2.5 text-xs leading-relaxed text-amber-ink xl:block">
-          Preview build. Screens show sample data; nothing is saved yet.
+          Bills, stock, products and prices are saved. The dashboard and reports still show sample figures.
         </p>
         <p className="text-center text-[11px] font-semibold uppercase tracking-wide text-amber-ink xl:hidden">
-          Preview
+          Beta
         </p>
       </div>
     </aside>

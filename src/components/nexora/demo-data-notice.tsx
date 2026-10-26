@@ -7,7 +7,7 @@ export function DemoDataNotice({ children }: { children?: React.ReactNode }) {
       <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
       <p>
         <span className="font-semibold">Sample data.</span>{" "}
-        {children ?? "These figures are examples for the preview. Nexora is not connected to a database yet."}
+        {children ?? "These dashboard figures are examples until reports are built. Bills, stock, products and prices you enter are saved."}
       </p>
     </div>
   );
