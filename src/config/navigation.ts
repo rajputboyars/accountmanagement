@@ -5,6 +5,7 @@ import {
   PackagePlus,
   ReceiptText,
   Settings,
+  ShieldCheck,
   Tags,
   Truck,
   Users,
@@ -22,6 +23,7 @@ export type NavKey =
   | "suppliers"
   | "cashbook"
   | "reports"
+  | "approvals"
   | "settings";
 
 export type NavItem = {
@@ -149,6 +151,16 @@ export const NAV_ITEMS: readonly NavItem[] = [
     description: "Sales, collections, dues, expenses and stock for any period, with CSV export.",
     mobilePrimary: false,
     planned: ["Sales by counter and staff", "Stock value at cost"],
+  },
+  {
+    key: "approvals",
+    label: "Approvals",
+    shortLabel: "Approvals",
+    href: "/approvals",
+    icon: ShieldCheck,
+    description: "Ask the owner, or approve staff requests: discounts and credit above limit, large stock adjustments, bill corrections.",
+    mobilePrimary: false,
+    planned: [],
   },
   {
     key: "settings",

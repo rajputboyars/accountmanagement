@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { recordAudit } from "@/modules/audit";
 import { lockProductsForStock } from "@/modules/catalog";
-import { requirePermission, type SessionContext } from "@/modules/identity";
+import { consumeApproval, consumeMatchingApproval, requirePermission, verifyOwnerPin, type SessionContext } from "@/modules/identity";
 import { takeDocumentNumber } from "@/modules/settings";
 import { withIdempotency } from "@/modules/sync";
 import { getDb, withTransaction } from "@/server/db";
@@ -58,19 +58,38 @@ export async function recordAdjustment(session: SessionContext, input: unknown):
       }
 
       const valuePaise = product.costPaise === null ? null : multiplyQuantity(base, product.costPaise);
+      let consumedApprovalId: string | null = null;
       if (session.role !== "owner" && (valuePaise === null || valuePaise > OWNER_APPROVAL_THRESHOLD_PAISE)) {
-        throw new ConflictError(
-          "OWNER_APPROVAL_REQUIRED",
-          valuePaise === null
-            ? `${product.name} has no cost price, so this adjustment needs the owner. Ask the owner to record it.`
-            : `This adjustment is worth ${formatPaise(valuePaise, { withPaise: true })} at cost, more than ₹2,000, so it needs the owner. Ask the owner to record it.`,
-        );
+        // Owner PIN now, or an owner approval for this product covering this value at cost (handoff §2.3).
+        const covers = (payload: { amountPaise?: number | null }) => (valuePaise === null || (payload.amountPaise ?? 0) >= valuePaise ? null : "The approved value is lower than this adjustment.");
+        if (body.ownerPin) {
+          await verifyOwnerPin(session, body.ownerPin);
+        } else {
+          const used = body.approvalId ? await consumeApproval(tx, session, body.approvalId, "stock_adjustment", [product.id], covers) : await consumeMatchingApproval(tx, session, "stock_adjustment", [product.id], covers);
+          if (!used) {
+            throw new ConflictError(
+              "OWNER_APPROVAL_REQUIRED",
+              valuePaise === null
+                ? `${product.name} has no cost price, so this adjustment needs the owner. Enter the owner PIN or ask for approval in Approvals.`
+                : `This adjustment is worth ${formatPaise(valuePaise, { withPaise: true })} at cost, more than ₹2,000, so it needs the owner. Enter the owner PIN or ask for approval in Approvals.`,
+            );
+          }
+          consumedApprovalId = used.id;
+        }
       }
 
       const { fy, number } = await takeDocumentNumber(tx, session.shopId, "ADJ");
       const [adjustment] = await tx
         .insert(stockAdjustments)
-        .values({ shopId: session.shopId, fy, number, kind: body.kind, reason: body.reason, createdBy: session.userId })
+        .values({
+          shopId: session.shopId,
+          fy,
+          number,
+          kind: body.kind,
+          reason: body.reason,
+          approvalId: consumedApprovalId,
+          createdBy: session.userId,
+        })
         .returning({ id: stockAdjustments.id });
       await appendMovement(tx, {
         shopId: session.shopId,
@@ -89,6 +108,7 @@ export async function recordAdjustment(session: SessionContext, input: unknown):
         action: "inventory.adjustment_recorded",
         entityType: "stock_adjustment",
         entityId: adjustment!.id,
+        approvalId: consumedApprovalId,
         before: { qty: formatQuantity(ledger.qty) },
         after: { number, kind: body.kind, productId: product.id, qtyChange: result.qtyChange, qty: result.newQty, reason: body.reason, valueAtCostPaise: valuePaise },
         reason: body.reason,

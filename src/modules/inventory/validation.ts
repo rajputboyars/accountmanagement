@@ -78,6 +78,8 @@ export const adjustmentInputSchema = z
     unit: z.string().trim().min(1, "Choose a unit."),
     quantity: positiveQuantity,
     reason: z.string().trim().min(3, "Write a short reason (at least 3 characters).").max(200, "Keep the reason under 200 characters."),
+    approvalId: z.string().regex(/^[0-9a-f-]{36}$/i, "Invalid approval ID.").optional(),
+    ownerPin: z.string().trim().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.kind === "count" && data.direction !== "in" && data.direction !== "out") {

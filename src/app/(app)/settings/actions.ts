@@ -2,9 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
-import { addStaffMember, setOwnerPin, setStaffActive } from "@/modules/identity";
+import { addStaffMember, revokeStaffAccess, setOwnerPin, setStaffActive, updateStaffRole } from "@/modules/identity";
 import { toActionError } from "@/server/action-result";
 import { requireSession } from "@/server/auth";
+import type { RoleName } from "@/shared/permissions";
 
 export type FormState = { ok?: boolean; error?: string; message?: string; nonce?: number };
 
@@ -46,6 +47,33 @@ export async function setPinAction(_previous: FormState, formData: FormData): Pr
     await setOwnerPin(session, pin);
     revalidatePath("/settings");
     return { ok: true, message: "Approval PIN saved.", nonce: Date.now() };
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionError(error);
+  }
+}
+
+export async function updateStaffRoleAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  try {
+    const session = await requireSession();
+    const userId = String(formData.get("userId") ?? "");
+    const role = String(formData.get("role") ?? "") as RoleName;
+    const member = await updateStaffRole(session, userId, role);
+    revalidatePath("/settings");
+    return { ok: true, message: `${member.name}'s role updated to ${member.role}. They were signed out to apply changes.`, nonce: Date.now() };
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionError(error);
+  }
+}
+
+export async function revokeStaffAccessAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  try {
+    const session = await requireSession();
+    const userId = String(formData.get("userId") ?? "");
+    const result = await revokeStaffAccess(session, userId);
+    revalidatePath("/settings");
+    return { ok: true, message: `Signed out of ${result.revokedSessions} active session(s).`, nonce: Date.now() };
   } catch (error) {
     unstable_rethrow(error);
     return toActionError(error);

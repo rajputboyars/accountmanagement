@@ -5,7 +5,7 @@ import { useFormStatus } from "react-dom";
 import { CircleAlert, CircleCheck, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { addStaffAction, setPinAction, setStaffActiveAction, type FormState } from "./actions";
+import { addStaffAction, revokeStaffAccessAction, setPinAction, setStaffActiveAction, updateStaffRoleAction, type FormState } from "./actions";
 
 const fieldClass = "flex flex-col gap-2 text-sm font-medium text-foreground";
 
@@ -79,6 +79,42 @@ export function StaffActiveToggle({ userId, active, name }: { userId: string; ac
           {state.error}
         </span>
       ) : null}
+    </form>
+  );
+}
+
+export function StaffRoleForm({ userId, currentRole, name }: { userId: string; currentRole: string; name: string }) {
+  const [state, action] = useActionState(updateStaffRoleAction, {});
+  return (
+    <form action={action} className="flex flex-col items-start gap-1">
+      <input type="hidden" name="userId" value={userId} />
+      <div className="flex items-center gap-1.5">
+        <select
+          name="role"
+          defaultValue={currentRole}
+          aria-label={`Change role for ${name}`}
+          className="h-9 rounded-lg border border-input bg-background px-2.5 text-xs text-foreground"
+        >
+          <option value="cashier">Cashier</option>
+          <option value="inventory">Inventory</option>
+          <option value="manager">Manager</option>
+        </select>
+        <Submit variant="outline">Change<span className="sr-only"> role for {name}</span></Submit>
+      </div>
+      {state.error ? <span role="alert" className="text-xs text-danger">{state.error}</span> : null}
+      {state.message ? <span role="status" className="text-xs text-success">{state.message}</span> : null}
+    </form>
+  );
+}
+
+export function RevokeAccessButton({ userId, name }: { userId: string; name: string }) {
+  const [state, action] = useActionState(revokeStaffAccessAction, {});
+  return (
+    <form action={action} className="inline-flex flex-col items-end gap-1">
+      <input type="hidden" name="userId" value={userId} />
+      <Submit variant="outline">Sign out<span className="sr-only"> {name}</span></Submit>
+      {state.error ? <span role="alert" className="text-xs text-danger">{state.error}</span> : null}
+      {state.message ? <span role="status" className="text-xs text-success">{state.message}</span> : null}
     </form>
   );
 }

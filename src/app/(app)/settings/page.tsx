@@ -8,7 +8,7 @@ import { SectionCard } from "@/components/nexora/section-card";
 import { getNavItem } from "@/config/navigation";
 import { isOwnerPinSet, listStaff } from "@/modules/identity";
 import { checkPagePermission } from "@/server/auth";
-import { AddStaffForm, PinForm, StaffActiveToggle } from "./settings-forms";
+import { AddStaffForm, PinForm, RevokeAccessButton, StaffActiveToggle, StaffRoleForm } from "./settings-forms";
 
 const item = getNavItem("settings");
 
@@ -57,14 +57,21 @@ async function SettingsContent() {
                     </TableCell>
                     <TableCell className="tabular-nums text-muted-foreground">{member.phone}</TableCell>
                     <TableCell>
-                      <Badge variant={member.role === "owner" ? "info" : "neutral"}>{ROLE_LABELS[member.role]}</Badge>
+                      {member.role !== "owner" && isOwner ? (
+                        <StaffRoleForm userId={member.id} currentRole={member.role} name={member.name} />
+                      ) : (
+                        <Badge variant={member.role === "owner" ? "info" : "neutral"}>{ROLE_LABELS[member.role]}</Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant={member.isActive ? "success" : "neutral"}>{member.isActive ? "Active" : "Deactivated"}</Badge>
                     </TableCell>
                     <TableCell className="pr-5 text-right">
                       {member.role !== "owner" && member.id !== session.userId ? (
-                        <StaffActiveToggle userId={member.id} active={member.isActive} name={member.name} />
+                        <div className="flex items-center justify-end gap-2">
+                          <RevokeAccessButton userId={member.id} name={member.name} />
+                          <StaffActiveToggle userId={member.id} active={member.isActive} name={member.name} />
+                        </div>
                       ) : null}
                     </TableCell>
                   </TableRow>

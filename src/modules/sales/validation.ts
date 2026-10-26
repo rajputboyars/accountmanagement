@@ -86,10 +86,19 @@ export const saveBillSchema = z.object({
   /** The total and line rates the cashier saw. A difference means prices changed: nothing is saved. */
   expectedTotalPaise: z.number().int().nonnegative(),
   expectedRates: z.array(z.number().int().nonnegative()),
+  discountApprovalId: z.string().regex(/^[0-9a-f-]{36}$/i).optional(),
+  creditApprovalId: z.string().regex(/^[0-9a-f-]{36}$/i).optional(),
+  ownerPin: z.string().trim().optional(),
 });
 
 export const cancelInvoiceSchema = z.object({
   reason: z.string().trim().min(3, "Write the reason for cancelling (at least 3 characters).").max(200, "Keep the reason under 200 characters."),
+});
+
+export const correctInvoiceSchema = z.object({
+  reason: z.string().trim().min(3, "Write the reason for correction (at least 3 characters).").max(200, "Keep the reason under 200 characters."),
+  approvalId: z.string().regex(/^[0-9a-f-]{36}$/i).optional(),
+  ownerPin: z.string().trim().optional(),
 });
 
 export type BillInput = z.input<typeof billInputSchema>;

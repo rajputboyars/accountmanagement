@@ -34,6 +34,8 @@ export const DEFAULT_PERMISSIONS = {
   "staff.manage": ["owner"],
   "audit.view": ["owner"],
   "import.run": ["owner"],
+  "approvals.view": ["owner", "manager", "cashier", "inventory"],
+  "approvals.decide": ["owner"],
 } as const satisfies Record<string, readonly RoleName[]>;
 
 export type Permission = keyof typeof DEFAULT_PERMISSIONS;

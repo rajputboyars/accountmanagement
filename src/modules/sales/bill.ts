@@ -40,7 +40,13 @@ export type ComputedBill = {
 
 const money = (paise: number) => formatPaise(paise, { withPaise: false });
 
-export async function computeBill(tx: Transaction, session: SessionContext, input: ParsedBill): Promise<ComputedBill> {
+export async function computeBill(
+  tx: Transaction,
+  session: SessionContext,
+  input: ParsedBill,
+  /** Limits raised by an owner approval or owner PIN for this one bill (handoff §2.3); unset = normal limits. */
+  options: { discountLimitBp?: number; creditLimitPaise?: number } = {},
+): Promise<ComputedBill> {
   const customer = input.customerId ? await findCustomer(session.shopId, input.customerId, tx) : null;
   if (customer && !customer.isActive) throw new ConflictError("CUSTOMER_INACTIVE", `${customer.name} is switched off.`);
   const registered = customer && customer.type !== "walkin" ? customer : null;
@@ -66,12 +72,12 @@ export async function computeBill(tx: Transaction, session: SessionContext, inpu
     return { ...line, baseQtyNeeded: needed, stockQty: onHand };
   });
 
-  const limit = DISCOUNT_LIMIT_BP[session.role] ?? 0;
+  const limit = Math.max(DISCOUNT_LIMIT_BP[session.role] ?? 0, options.discountLimitBp ?? 0);
   if (input.discountPercent > limit) {
     problems.push({
       code: "DISCOUNT_APPROVAL_REQUIRED",
       field: "discountPercent",
-      message: `Discount ${formatBasisPoints(input.discountPercent)} is above your ${formatBasisPoints(limit)} limit. Ask the owner to make this bill.`,
+      message: `Discount ${formatBasisPoints(input.discountPercent)} is above your ${formatBasisPoints(limit)} limit. Ask the owner or submit an approval request.`,
     });
   }
 
@@ -94,11 +100,12 @@ export async function computeBill(tx: Transaction, session: SessionContext, inpu
   } else {
     balanceBeforePaise = await partyBalance(session.shopId, "customer", registered.id, tx);
     balanceAfterPaise = balanceBeforePaise + totals.totalPaise - Math.min(paidNowPaise, totals.totalPaise);
-    if (creditPaise > 0 && balanceAfterPaise > registered.creditLimitPaise) {
+    const creditLimitPaise = Math.max(registered.creditLimitPaise, options.creditLimitPaise ?? 0);
+    if (creditPaise > 0 && balanceAfterPaise > creditLimitPaise) {
       problems.push({
         code: "CREDIT_LIMIT",
         field: "payments",
-        message: `${registered.name} would go over the ${money(registered.creditLimitPaise)} credit limit (dues would be ${money(balanceAfterPaise)}). Take more payment now.`,
+        message: `${registered.name} would go over the ${money(creditLimitPaise)} credit limit (dues would be ${money(balanceAfterPaise)}). Take more payment now or request owner approval.`,
       });
     }
   }

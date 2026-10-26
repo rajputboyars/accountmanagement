@@ -83,6 +83,73 @@ export async function setStaffActive(session: SessionContext, userId: string, ac
   });
 }
 
+const assignableRolesSchema = z.enum(["manager", "cashier", "inventory"], {
+  error: "Choose a valid staff role (manager, cashier, or inventory).",
+});
+
+/** Owner only: updates a staff member's role and immediately signs them out so the change takes effect. */
+export async function updateStaffRole(session: SessionContext, userId: string, newRole: RoleName): Promise<StaffMember> {
+  await requirePermission(session, "staff.manage");
+  if (userId === session.userId) throw new ForbiddenError("You can't change your own role.");
+  const validatedRole = assignableRolesSchema.parse(newRole);
+
+  return withTransaction(async (tx) => {
+    const [existing] = await tx
+      .select(staffColumns)
+      .from(users)
+      .where(and(eq(users.id, userId), eq(users.shopId, session.shopId)))
+      .limit(1);
+    if (!existing) throw new NotFoundError("Staff member not found.");
+    if (existing.role === "owner") throw new ForbiddenError("The owner account's role cannot be changed.");
+
+    const [updated] = await tx
+      .update(users)
+      .set({ role: validatedRole })
+      .where(and(eq(users.id, userId), eq(users.shopId, session.shopId)))
+      .returning(staffColumns);
+
+    // Revoke all active sessions so any active token with the old role is invalidated
+    await revokeAllSessionsForUser(tx, userId);
+
+    await recordAudit(tx, { shopId: session.shopId, userId: session.userId, role: session.role }, {
+      action: "identity.staff_role_updated",
+      entityType: "user",
+      entityId: userId,
+      before: { role: existing.role },
+      after: { role: validatedRole },
+    });
+
+    return toStaff(updated!);
+  });
+}
+
+/** Owner only: revokes all active sessions for a staff member without deactivating their account. */
+export async function revokeStaffAccess(session: SessionContext, userId: string): Promise<{ revokedSessions: number }> {
+  await requirePermission(session, "staff.manage");
+  if (userId === session.userId) throw new ForbiddenError("You can't revoke your own access.");
+
+  return withTransaction(async (tx) => {
+    const [existing] = await tx
+      .select({ id: users.id, role: users.role })
+      .from(users)
+      .where(and(eq(users.id, userId), eq(users.shopId, session.shopId)))
+      .limit(1);
+    if (!existing) throw new NotFoundError("Staff member not found.");
+    if (existing.role === "owner") throw new ForbiddenError("The owner account's access cannot be revoked.");
+
+    const revokedSessions = await revokeAllSessionsForUser(tx, userId);
+
+    await recordAudit(tx, { shopId: session.shopId, userId: session.userId, role: session.role }, {
+      action: "identity.staff_access_revoked",
+      entityType: "user",
+      entityId: userId,
+      after: { revokedSessions },
+    });
+
+    return { revokedSessions };
+  });
+}
+
 /** Names of users of `shopId`, for labelling records. Ids of other shops are ignored. No permission check. */
 export async function loadUserNames(shopId: string, userIds: string[]): Promise<Map<string, string>> {
   if (userIds.length === 0) return new Map();

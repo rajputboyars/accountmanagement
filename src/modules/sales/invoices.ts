@@ -2,14 +2,14 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, ilike, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, searchShopProducts } from "@/modules/catalog";
-import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
+import { ANY_TARGET, consumeApproval, consumeMatchingApproval, hasPermission, loadUserNames, requirePermission, verifyOwnerPin, type SessionContext } from "@/modules/identity";
 import { appendStockMovement, lockStockRows, stockOnHand } from "@/modules/inventory";
 import { appendLedgerEntry, lockPartyBalance, partyBalance } from "@/modules/ledger";
 import { ensureWalkInCustomer, findCustomer, listActiveCustomers, loadCustomerNames } from "@/modules/parties";
 import { paymentsForInvoice, recordCounterPayment, refundInvoicePayments } from "@/modules/payments";
 import { getCurrentShop, takeDocumentNumber } from "@/modules/settings";
 import { withIdempotency } from "@/modules/sync";
-import { getDb, withTransaction } from "@/server/db";
+import { getDb, withTransaction, type Transaction } from "@/server/db";
 import { lockDayForWrite } from "@/server/day-lock";
 import { ConflictError, NotFoundError } from "@/server/errors";
 import { indiaDate } from "@/shared/financial-year";
@@ -17,9 +17,52 @@ import { formatQuantity, parseQuantity, toDbQuantity } from "@/shared/quantity";
 import { billView, computeBill, type BillView } from "./bill";
 import { BILLING_CREATE, BILLING_RETURN, BILLING_VIEW, INVOICE_CANCEL } from "./permissions";
 import { creditNotes, invoiceLines, invoices } from "./schema";
-import { billInputSchema, cancelInvoiceSchema, saveBillSchema } from "./validation";
+import { billInputSchema, cancelInvoiceSchema, correctInvoiceSchema, saveBillSchema } from "./validation";
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
+
+type SaveInput = ReturnType<typeof saveBillSchema.parse>;
+type ParsedBill = ReturnType<typeof billInputSchema.parse>;
+
+/**
+ * Prices the bill under the normal role and credit limits. If it is over a limit, applies the owner's
+ * authority for this one bill (handoff §2.3): the owner PIN typed now, or an approval the owner gave this
+ * user for this customer, covering this discount % or these dues (an explicit id, or the oldest matching
+ * one). The approval raises the limit only to what was approved and is marked used inside this
+ * transaction, so a rollback leaves it unused. Problems that remain are left for the caller to throw.
+ */
+async function computeWithApprovals(tx: Transaction, session: SessionContext, bill: ParsedBill, save: SaveInput, registeredId: string | null) {
+  const options: { discountLimitBp?: number; creditLimitPaise?: number } = {};
+  if (save.ownerPin) {
+    await verifyOwnerPin(session, save.ownerPin);
+    options.discountLimitBp = 10_000;
+    options.creditLimitPaise = Number.MAX_SAFE_INTEGER;
+  }
+  let computed = await computeBill(tx, session, bill, options);
+  let discountApprovalId: string | null = null;
+  let creditApprovalId: string | null = null;
+  if (computed.problems.some((problem) => problem.code === "DISCOUNT_APPROVAL_REQUIRED")) {
+    const refs = registeredId ? [registeredId, ANY_TARGET] : [ANY_TARGET];
+    const covers = (payload: { limitBp?: number | null }) => ((payload.limitBp ?? 0) >= bill.discountPercent ? null : "The approved discount is lower than the discount on this bill.");
+    const used = save.discountApprovalId ? await consumeApproval(tx, session, save.discountApprovalId, "discount_over_limit", refs, covers) : await consumeMatchingApproval(tx, session, "discount_over_limit", refs, covers);
+    if (used) {
+      discountApprovalId = used.id;
+      options.discountLimitBp = used.payload.limitBp ?? 0;
+    }
+  }
+  if (registeredId && computed.problems.some((problem) => problem.code === "CREDIT_LIMIT")) {
+    const after = computed.balanceAfterPaise ?? 0;
+    const covers = (payload: { amountPaise?: number | null }) => ((payload.amountPaise ?? 0) >= after ? null : "The approved dues are lower than this bill needs.");
+    const used = save.creditApprovalId ? await consumeApproval(tx, session, save.creditApprovalId, "credit_over_limit", [registeredId], covers) : await consumeMatchingApproval(tx, session, "credit_over_limit", [registeredId], covers);
+    if (used) {
+      creditApprovalId = used.id;
+      options.creditLimitPaise = used.payload.amountPaise ?? 0;
+    }
+  }
+  if (discountApprovalId || creditApprovalId) computed = await computeBill(tx, session, bill, options);
+  return { computed, discountApprovalId, creditApprovalId };
+}
+
 
 /** Read-only bill preview for the counter. Writes nothing (the transaction is rolled back). */
 export async function previewBill(session: SessionContext, input: unknown): Promise<BillView> {
@@ -70,7 +113,7 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
       const registered = chosen && chosen.type !== "walkin" ? chosen : null;
       if (registered) await lockPartyBalance(tx, session.shopId, "customer", registered.id);
 
-      const computed = await computeBill(tx, session, bill);
+      const { computed, discountApprovalId: consumedDiscountApprovalId, creditApprovalId: consumedCreditApprovalId } = await computeWithApprovals(tx, session, bill, save, registered?.id ?? null);
       const view = billView(computed);
       const ratesChanged = view.expectedRates.length !== save.expectedRates.length || view.expectedRates.some((rate, index) => rate !== save.expectedRates[index]);
       if (ratesChanged || computed.totals.totalPaise !== save.expectedTotalPaise) {
@@ -104,6 +147,7 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
         totalPaise: totals.totalPaise,
         paidNowPaise: computed.paidNowPaise,
         costComplete: computed.costComplete,
+        discountApprovalId: consumedDiscountApprovalId,
       });
       await tx.insert(invoiceLines).values(
         computed.lines.map((line, index) => ({
@@ -155,6 +199,7 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
         action: "sales.invoice_issued",
         entityType: "invoice",
         entityId: invoiceId,
+        approvalId: consumedDiscountApprovalId ?? consumedCreditApprovalId ?? null,
         after: {
           number,
           customerId: customer.id,
@@ -239,6 +284,309 @@ export async function cancelInvoice(session: SessionContext, invoiceId: string, 
   });
 }
 
+
+/**
+ * Corrects a bill (decision C17 & §2.3: owner, or manager with owner approval/PIN).
+ * Cancels the original bill and reissues a new one under a new number in a single transaction,
+ * linked by corrects_invoice_id. Reverses stock and payments from the original, applies the new
+ * items/totals, and audits the correction.
+ */
+export async function correctInvoice(session: SessionContext, originalInvoiceId: string, input: unknown): Promise<CreatedInvoice> {
+  await requirePermission(session, "invoice.edit");
+  const correction = correctInvoiceSchema.parse(input);
+  const bill = billInputSchema.parse(input);
+  const save = saveBillSchema.parse(input);
+
+  if (!/^[0-9a-f-]{36}$/i.test(originalInvoiceId)) throw new NotFoundError("Bill not found.");
+
+  const requestBody = {
+    action: "sales.correct",
+    originalInvoiceId,
+    reason: correction.reason,
+    customerId: bill.customerId ?? null,
+    priceList: bill.priceList ?? null,
+    discountPercent: bill.discountPercent,
+    payments: bill.payments,
+    lines: bill.lines.map((line) => ({
+      ...line,
+      quantity: line.quantity.toString(),
+    })),
+    expectedTotalPaise: save.expectedTotalPaise,
+  };
+  return withTransaction(async (tx) => {
+    const outcome = await withIdempotency<Omit<CreatedInvoice, "replayed">>(
+      tx,
+      {
+        shopId: session.shopId,
+        userId: session.userId,
+        key: save.idempotencyKey,
+      },
+      requestBody,
+      async () => {
+        const today = indiaDate();
+        await lockDayForWrite(tx, session.shopId, today);
+
+        const [original] = await tx
+          .select()
+          .from(invoices)
+          .where(and(eq(invoices.id, originalInvoiceId), eq(invoices.shopId, session.shopId)))
+          .limit(1)
+          .for("update");
+
+        if (!original) throw new NotFoundError("Bill not found.");
+        if (original.status === "cancelled") throw new ConflictError("ALREADY_CANCELLED", "This bill is already cancelled.");
+        if (original.businessDate !== today) throw new ConflictError("NOT_SAME_DAY", "Only today's bills can be corrected. For an older bill, issue a credit note.");
+
+        const [returned] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(creditNotes)
+          .where(eq(creditNotes.invoiceId, original.id));
+        if ((returned?.n ?? 0) > 0) throw new ConflictError("HAS_CREDIT_NOTES", "Items on this bill were already returned with a credit note, so it cannot be corrected.");
+
+        // A manager needs the owner (handoff §2.3): the owner PIN now, or an approval for this bill number.
+        let consumedCorrectionApprovalId: string | null = null;
+        if (session.role !== "owner") {
+          if (correction.ownerPin) {
+            await verifyOwnerPin(session, correction.ownerPin);
+          } else {
+            const used = correction.approvalId ? await consumeApproval(tx, session, correction.approvalId, "edit_invoice", [original.number]) : await consumeMatchingApproval(tx, session, "edit_invoice", [original.number]);
+            if (!used) throw new ConflictError("OWNER_APPROVAL_REQUIRED", `Correcting ${original.number} needs the owner. Enter the owner PIN or ask for approval in Approvals.`);
+            consumedCorrectionApprovalId = used.id;
+          }
+        }
+
+        // Lock order (CLAUDE.md): stock rows of both bills in product order, then both customers' balances.
+        const origLines = await tx.select().from(invoiceLines).where(eq(invoiceLines.invoiceId, original.id)).orderBy(asc(invoiceLines.lineNo));
+        await lockStockRows(tx, session.shopId, [...new Set([...origLines.map((line) => line.productId), ...bill.lines.map((line) => line.productId)])]);
+        const origCustomer = await findCustomer(session.shopId, original.customerId, tx);
+        const origRegistered = origCustomer.type !== "walkin";
+        const chosen = bill.customerId ? await findCustomer(session.shopId, bill.customerId, tx) : null;
+        const registered = chosen && chosen.type !== "walkin" ? chosen : null;
+        const partyIds = [...new Set([origRegistered ? origCustomer.id : null, registered?.id ?? null].filter((id): id is string => id !== null))].sort();
+        for (const partyId of partyIds) await lockPartyBalance(tx, session.shopId, "customer", partyId);
+
+        // 1. Cancel the original invoice
+
+        await tx
+          .update(invoices)
+          .set({
+            status: "cancelled",
+            cancelledAt: new Date(),
+            cancelledBy: session.userId,
+            cancelReason: `Corrected: ${correction.reason}`,
+          })
+          .where(eq(invoices.id, original.id));
+
+        for (const line of origLines) {
+          await appendStockMovement(tx, {
+            shopId: session.shopId,
+            productId: line.productId,
+            movementDate: today,
+            kind: "sale_cancel",
+            qtyBase: parseQuantity(line.baseQty),
+            unitCostPaise: line.unitCostPaise,
+            sourceType: "invoice",
+            sourceId: original.id,
+            reason: `Correction reversal for ${original.number}: ${correction.reason}`,
+            createdBy: session.userId,
+          });
+        }
+
+        if (origRegistered) {
+          await appendLedgerEntry(tx, {
+            shopId: session.shopId,
+            partyType: "customer",
+            partyId: origCustomer.id,
+            entryDate: today,
+            kind: "cancellation",
+            sourceType: "invoice",
+            sourceId: original.id,
+            creditPaise: original.totalPaise,
+          });
+        }
+
+        const refunds = await refundInvoicePayments(tx, {
+          shopId: session.shopId,
+          fy: original.fy,
+          invoiceId: original.id,
+          customerId: origRegistered ? origCustomer.id : null,
+          businessDate: today,
+          recordedBy: session.userId,
+        });
+
+        if (origRegistered) {
+          for (const refund of refunds) {
+            await appendLedgerEntry(tx, {
+              shopId: session.shopId,
+              partyType: "customer",
+              partyId: origCustomer.id,
+              entryDate: today,
+              kind: "payment",
+              sourceType: "payment",
+              sourceId: refund.id,
+              debitPaise: refund.amountPaise,
+            });
+          }
+        }
+
+        await recordAudit(tx, actorOf(session), {
+          action: "sales.invoice_cancelled",
+          entityType: "invoice",
+          entityId: original.id,
+          approvalId: consumedCorrectionApprovalId,
+          before: { status: original.status },
+          after: {
+            status: "cancelled",
+            number: original.number,
+            refundedPaise: refunds.reduce((sum, r) => sum + r.amountPaise, 0),
+          },
+          reason: correction.reason,
+        });
+
+        // 2. Issue the new corrected invoice
+
+        const { computed, discountApprovalId: consumedDiscountApprovalId, creditApprovalId: consumedCreditApprovalId } = await computeWithApprovals(tx, session, bill, save, registered?.id ?? null);
+        const view = billView(computed);
+        const ratesChanged = view.expectedRates.length !== save.expectedRates.length || view.expectedRates.some((rate, index) => rate !== save.expectedRates[index]);
+        if (ratesChanged || computed.totals.totalPaise !== save.expectedTotalPaise) {
+          throw new ConflictError("PRICE_CHANGED", "Prices changed since this bill was shown. Check the new total and save again.", { bill: view });
+        }
+        const problem = computed.problems[0];
+        if (problem)
+          throw new ConflictError(problem.code, problem.message, {
+            bill: view,
+            problems: computed.problems,
+          });
+
+        const customer = chosen ?? (await ensureWalkInCustomer(tx, session.shopId));
+        const { fy, number } = await takeDocumentNumber(tx, session.shopId, "INV");
+        const newInvoiceId = randomUUID();
+        const totals = computed.totals;
+
+        await tx.insert(invoices).values({
+          id: newInvoiceId,
+          shopId: session.shopId,
+          fy,
+          number,
+          businessDate: today,
+          customerId: customer.id,
+          priceList: computed.priceList,
+          createdBy: session.userId,
+          subtotalPaise: totals.subtotalPaise,
+          discountBp: totals.discountBp,
+          discountPaise: totals.discountPaise,
+          taxablePaise: totals.taxablePaise,
+          cgstPaise: totals.cgstPaise,
+          sgstPaise: totals.sgstPaise,
+          igstPaise: totals.igstPaise,
+          roundOffPaise: totals.roundOffPaise,
+          totalPaise: totals.totalPaise,
+          paidNowPaise: computed.paidNowPaise,
+          costComplete: computed.costComplete,
+          discountApprovalId: consumedDiscountApprovalId,
+          correctsInvoiceId: original.id,
+        });
+
+        await tx.insert(invoiceLines).values(
+          computed.lines.map((line, index) => ({
+            id: randomUUID(),
+            invoiceId: newInvoiceId,
+            lineNo: index + 1,
+            productId: line.product.id,
+            unit: line.saleUnit.code,
+            factor: toDbQuantity(line.saleUnit.factor),
+            qty: toDbQuantity(line.quote.quantity),
+            baseQty: toDbQuantity(line.quote.baseQuantity),
+            ratePaise: line.quote.saleUnitRatePaise,
+            rateReason: line.rateReason,
+            linePaise: line.quote.lineAmountPaise,
+            lineDiscountPaise: totals.lines[index]!.discountPaise,
+            taxablePaise: totals.lines[index]!.taxablePaise,
+            gstRateBp: line.product.gstRateBp,
+            cgstPaise: totals.lines[index]!.cgstPaise,
+            sgstPaise: totals.lines[index]!.sgstPaise,
+            unitCostPaise: line.product.costPaise,
+          })),
+        );
+
+        for (const line of computed.lines) {
+          await appendStockMovement(tx, {
+            shopId: session.shopId,
+            productId: line.product.id,
+            movementDate: today,
+            kind: "sale",
+            qtyBase: -line.quote.baseQuantity,
+            unitCostPaise: line.product.costPaise,
+            sourceType: "invoice",
+            sourceId: newInvoiceId,
+            reason: `${number} (corrects ${original.number})`,
+            createdBy: session.userId,
+          });
+        }
+
+        if (registered) {
+          await appendLedgerEntry(tx, {
+            shopId: session.shopId,
+            partyType: "customer",
+            partyId: registered.id,
+            entryDate: today,
+            kind: "invoice",
+            sourceType: "invoice",
+            sourceId: newInvoiceId,
+            debitPaise: totals.totalPaise,
+          });
+        }
+
+        for (const method of ["cash", "upi", "card", "bank"] as const) {
+          const amount = bill.payments[method];
+          if (amount <= 0) continue;
+          const paymentId = await recordCounterPayment(tx, {
+            shopId: session.shopId,
+            fy,
+            customerId: registered?.id ?? null,
+            invoiceId: newInvoiceId,
+            method,
+            amountPaise: amount,
+            businessDate: today,
+            recordedBy: session.userId,
+          });
+          if (registered) {
+            await appendLedgerEntry(tx, {
+              shopId: session.shopId,
+              partyType: "customer",
+              partyId: registered.id,
+              entryDate: today,
+              kind: "payment",
+              sourceType: "payment",
+              sourceId: paymentId,
+              creditPaise: amount,
+            });
+          }
+        }
+
+        await recordAudit(tx, actorOf(session), {
+          action: "sales.invoice_corrected",
+          entityType: "invoice",
+          entityId: newInvoiceId,
+          approvalId: consumedCorrectionApprovalId ?? consumedDiscountApprovalId ?? consumedCreditApprovalId,
+          after: {
+            number,
+            correctsInvoiceId: original.id,
+            correctsNumber: original.number,
+            totalPaise: totals.totalPaise,
+          },
+          reason: correction.reason,
+        });
+
+        return {
+          status: 201,
+          body: { id: newInvoiceId, number, totalPaise: totals.totalPaise },
+        };
+      },
+    );
+    return { ...outcome.body, replayed: outcome.replayed };
+  });
+}
 
 // ── Reading ──────────────────────────────────────────────────────────────────
 

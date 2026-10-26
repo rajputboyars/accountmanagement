@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowUpRight, Plus } from "lucide-react";
+import { ArrowUpRight, Clock, Plus } from "lucide-react";
 import { KpiCard } from "@/components/nexora/kpi-card";
 import { Money } from "@/components/nexora/money";
 import { PageContainer, PageIntro } from "@/components/nexora/page-container";
@@ -10,6 +10,7 @@ import { RangeFilter } from "@/components/reports/range-filter";
 import { TrendChart } from "@/components/reports/trend-chart";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { countPendingApprovals } from "@/modules/identity";
 import { getDashboard } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
 import { formatPaise } from "@/shared/money";
@@ -49,7 +50,11 @@ function ViewAll({ href, label = "View all" }: { href: string; label?: string })
 
 async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
   const query = await searchParams;
-  const data = await getDashboard(await requireSession(), { range: one(query.range), from: one(query.from), to: one(query.to) });
+  const session = await requireSession();
+  const [data, pendingApprovalsCount] = await Promise.all([
+    getDashboard(session, { range: one(query.range), from: one(query.from), to: one(query.to) }),
+    session.role === "owner" ? countPendingApprovals(session) : 0,
+  ]);
   const { range, sales, money, expenses, cash, receivables, payables, stock, profit } = data;
   const q = rangeQuery(range);
   const report = (kind: string, withRange = true) => `/reports/${kind}${withRange ? `?${q}` : ""}`;
@@ -67,6 +72,21 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
           </Link>
         }
       />
+
+      {pendingApprovalsCount > 0 ? (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-amber/40 bg-amber-soft px-4 py-3 text-sm text-amber-ink">
+          <div className="flex items-center gap-2">
+            <Clock className="size-4 shrink-0" aria-hidden="true" />
+            <span>
+              <strong>{pendingApprovalsCount} approval request{pendingApprovalsCount > 1 ? "s" : ""}</strong> waiting for your review.
+            </span>
+          </div>
+          <Link href="/approvals" className="inline-flex min-h-10 items-center font-semibold whitespace-nowrap text-teal-strong hover:underline">
+            Review inbox &rarr;
+          </Link>
+        </div>
+      ) : null}
+
       <RangeFilter basePath="/dashboard" range={range} today={data.today} />
 
       <section aria-label="Billed sales" className="grid gap-4 rounded-2xl bg-panel p-5 text-panel-foreground sm:p-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,2fr)] lg:items-end">
