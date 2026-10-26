@@ -1,0 +1,53 @@
+/**
+ * Permission keys and default role grants (docs/implementation-handoff.md §2.3).
+ * Defaults are copied into role_permissions when a shop is created; the database is the
+ * source of truth after that. Anything not granted there is denied.
+ */
+export const ROLE_NAMES = ["owner", "manager", "cashier", "inventory"] as const;
+export type RoleName = (typeof ROLE_NAMES)[number];
+
+export const DEFAULT_PERMISSIONS = {
+  "billing.create": ["owner", "manager", "cashier"],
+  "billing.view": ["owner", "manager", "cashier"],
+  "billing.return": ["owner", "manager"],
+  "invoice.edit": ["owner", "manager"], // manager needs owner approval per correction
+  "invoice.cancel": ["owner"],
+  "pricing.edit": ["owner"],
+  "customers.view": ["owner", "manager", "cashier"],
+  "customers.edit": ["owner", "manager"],
+  "payments.record": ["owner", "manager", "cashier"],
+  "payments.view": ["owner", "manager", "cashier"],
+  "inventory.view": ["owner", "manager", "inventory"],
+  "purchases.view": ["owner", "manager", "inventory"],
+  "purchases.edit": ["owner", "manager", "inventory"],
+  "stock.receive": ["owner", "manager", "inventory"],
+  "stock.adjust": ["owner", "manager", "inventory"],
+  "suppliers.pay": ["owner"],
+  "reports.view": ["owner", "manager"],
+  "profit.view": ["owner"],
+  "cash.record": ["owner", "manager"],
+  "day.close": ["owner"],
+  "day.reopen": ["owner"],
+  "staff.manage": ["owner"],
+  "audit.view": ["owner"],
+  "import.run": ["owner"],
+} as const satisfies Record<string, readonly RoleName[]>;
+
+export type Permission = keyof typeof DEFAULT_PERMISSIONS;
+
+export const PERMISSIONS = Object.keys(DEFAULT_PERMISSIONS) as Permission[];
+
+export function isPermission(value: string): value is Permission {
+  return Object.hasOwn(DEFAULT_PERMISSIONS, value);
+}
+
+/** One row per (role, permission) — explicit `false` rows make denials visible to the owner. */
+export function defaultPermissionRows(): { role: RoleName; permission: Permission; allowed: boolean }[] {
+  return PERMISSIONS.flatMap((permission) =>
+    ROLE_NAMES.map((role) => ({
+      role,
+      permission,
+      allowed: (DEFAULT_PERMISSIONS[permission] as readonly RoleName[]).includes(role),
+    })),
+  );
+}

@@ -9,12 +9,21 @@ import { SalesTrendCard } from "@/components/dashboard/sales-trend-card";
 import { buttonVariants } from "@/components/ui/button";
 import { DemoDataNotice } from "@/components/nexora/demo-data-notice";
 import { PageContainer, PageIntro } from "@/components/nexora/page-container";
+import { ProtectedPage } from "@/components/nexora/protected-page";
 import { getNavItem } from "@/config/navigation";
 import { buildDashboardSummary } from "@/demo/dashboard-summary";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
 export default function DashboardPage() {
+  return (
+    <ProtectedPage permission="reports.view" title="the owner dashboard">
+      <DashboardContent />
+    </ProtectedPage>
+  );
+}
+
+function DashboardContent() {
   const summary = buildDashboardSummary();
   const item = getNavItem("dashboard");
 

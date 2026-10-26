@@ -8,7 +8,7 @@ PostgreSQL 16 + Drizzle ORM. The schema implements the Technical Architecture do
 cp .env.example .env          # then choose your own local passwords in .env
 npm run db:up                 # PostgreSQL 16 in Docker, bound to 127.0.0.1:5432
 npm run db:migrate            # applies db/migrations in order
-npm run db:seed               # fictional sample shop; safe to repeat
+npm run db:seed               # fictional sample shop (set SEED_ALLOW=true first); safe to repeat
 ```
 
 `db:up` needs Docker Desktop running. The container's first start runs `db/docker/init/01-app-role.sh`, which creates the two roles below.

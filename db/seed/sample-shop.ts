@@ -18,7 +18,7 @@ import { Pool } from "pg";
 import { v5 as uuidv5, v7 as uuidv7 } from "uuid";
 import * as schema from "@/server/schema";
 import { isLocalDatabase } from "@/server/env";
-import { DEFAULT_PERMISSIONS } from "./permissions";
+import { defaultPermissionRows } from "./permissions";
 
 const NAMESPACE = "6f1c3a52-9a7e-4b8e-8f3d-2b1e5c9a0d11";
 const sid = (key: string) => uuidv5(key, NAMESPACE);
@@ -125,11 +125,7 @@ async function main() {
 
       await tx
         .insert(schema.rolePermissions)
-        .values(
-          Object.entries(DEFAULT_PERMISSIONS).flatMap(([permission, allowedRoles]) =>
-            schema.ROLES.map((role) => ({ shopId: SHOP_ID, role, permission, allowed: allowedRoles.includes(role) })),
-          ),
-        )
+        .values(defaultPermissionRows().map((row) => ({ shopId: SHOP_ID, ...row })))
         .onConflictDoNothing();
 
       await tx

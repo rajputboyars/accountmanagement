@@ -1,0 +1,53 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { unstable_rethrow } from "next/navigation";
+import { addStaffMember, setOwnerPin, setStaffActive } from "@/modules/identity";
+import { toActionError } from "@/server/action-result";
+import { requireSession } from "@/server/auth";
+
+export type FormState = { ok?: boolean; error?: string; message?: string; nonce?: number };
+
+/** Every action re-reads the session on the server; the services check permissions and shop scope. */
+
+export async function addStaffAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  try {
+    const session = await requireSession();
+    const member = await addStaffMember(session, {
+      name: formData.get("name"),
+      phone: String(formData.get("phone") ?? "").replace(/\D/g, "").slice(-10),
+      role: formData.get("role"),
+    });
+    revalidatePath("/settings");
+    return { ok: true, message: `${member.name} can now sign in with their mobile number.`, nonce: Date.now() };
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionError(error);
+  }
+}
+
+export async function setStaffActiveAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  try {
+    const session = await requireSession();
+    await setStaffActive(session, String(formData.get("userId") ?? ""), formData.get("active") === "true");
+    revalidatePath("/settings");
+    return { ok: true };
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionError(error);
+  }
+}
+
+export async function setPinAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  const pin = String(formData.get("pin") ?? "");
+  if (pin !== String(formData.get("confirmPin") ?? "")) return { ok: false, error: "The two PINs don't match." };
+  try {
+    const session = await requireSession();
+    await setOwnerPin(session, pin);
+    revalidatePath("/settings");
+    return { ok: true, message: "Approval PIN saved.", nonce: Date.now() };
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionError(error);
+  }
+}

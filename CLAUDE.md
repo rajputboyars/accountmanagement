@@ -21,7 +21,7 @@ Before adding any dependency, check that the handoff lists it. Otherwise, ask fi
 
 ## Commands
 
-Available: `npm run dev | build | start | lint | typecheck` and `db:up | db:generate | db:check | db:migrate | db:seed | db:studio` (see `docs/database.md`). Still to come: `test`, `test:integration`, `test:e2e`, `check` (handoff §9). Use only scripts that exist in `package.json`.
+Available: `npm run dev | build | start | lint | typecheck | test | test:watch | secret` and `db:up | db:generate | db:check | db:migrate | db:seed | db:studio` (see `docs/setup.md`, `docs/database.md`). `npm test` needs Docker (Testcontainers). Still to come: `test:e2e`, `check` (handoff §9). Use only scripts that exist in `package.json`.
 
 ## Architecture rules
 
