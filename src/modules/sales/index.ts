@@ -5,3 +5,4 @@ export { BILLING_CREATE, BILLING_RETURN, BILLING_VIEW, INVOICE_CANCEL } from "./
 export { CREDIT_NOTE_PAGE_SIZE, createReturn, findInvoiceByNumber, getCreditNote, getReturnableInvoice, listCreditNotes, previewReturn, type CreatedCreditNote, type ReturnPreview } from "./returns";
 export type { BillInput } from "./validation";
 export { documentNumbers, salesDaySummary, type SalesDaySummary } from "./day-summary";
+export { creditNotesInRange, invoicesInRange, profitInputs, recentInvoices, salesByDay, salesRangeSummary, topSellingProducts, type ProfitInputs, type SalesRangeSummary } from "./reports";

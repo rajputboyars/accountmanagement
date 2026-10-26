@@ -10,6 +10,7 @@ export {
   rebuildStockCache,
   STOCK_PAGE_SIZE,
   STOCK_STATUS_FILTERS,
+  stockAlerts,
   type StockMovementView,
   type StockRow,
   type StockStatus,

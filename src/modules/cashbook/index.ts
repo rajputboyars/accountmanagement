@@ -2,9 +2,12 @@
 export {
   CASH_RECORD,
   CASH_VIEW,
+  cashFlowsForRange,
   closeDay,
   DAY_CLOSE,
   DAY_REOPEN,
+  expenseBreakdown,
+  expensesInRange,
   getCashbook,
   listClosings,
   recordCashMovement,

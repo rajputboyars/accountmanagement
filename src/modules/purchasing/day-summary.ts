@@ -11,6 +11,15 @@ export async function purchasesDaySummary(shopId: string, businessDate: string, 
   return { purchasesPaise: receipts.reduce((sum, receipt) => sum + receipt.totalPaise, 0), receipts };
 }
 
+/** Goods received (not cancelled) in a range of dates: what the shop now owes suppliers for, not cash paid. */
+export async function purchasesRangeSummary(shopId: string, from: string, to: string, db: Database | Transaction = getDb()) {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${goodsReceipts.totalPaise}), 0)::text` })
+    .from(goodsReceipts)
+    .where(and(eq(goodsReceipts.shopId, shopId), sql`${goodsReceipts.receivedDate} >= ${from}`, sql`${goodsReceipts.receivedDate} <= ${to}`, sql`${goodsReceipts.status} <> 'cancelled'`));
+  return { receiptCount: row?.count ?? 0, receivedPaise: Number(row?.total ?? 0) };
+}
+
 /** Goods receipt numbers for labelling supplier ledger lines. Ids of other shops are ignored. */
 export async function receiptNumbersFor(shopId: string, ids: string[], db: Database | Transaction = getDb()) {
   if (ids.length === 0) return new Map<string, string>();

@@ -146,14 +146,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
     shortLabel: "Reports",
     href: "/reports",
     icon: ChartLine,
-    description: "Sales, collections, stock value and daily closing.",
+    description: "Sales, collections, dues, expenses and stock for any period, with CSV export.",
     mobilePrimary: false,
-    planned: [
-      "Sales, collections, credit given and expenses for any period",
-      "Gross profit only where every item has a cost price",
-      "Daily closing: expected vs counted cash",
-      "Sales by counter and staff",
-    ],
+    planned: ["Sales by counter and staff", "Stock value at cost"],
   },
   {
     key: "settings",

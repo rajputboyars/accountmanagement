@@ -66,17 +66,32 @@ const toRow = (product: ProductStockInputs, ledger: LedgerTotal | undefined, cac
 
 export const STOCK_PAGE_SIZE = 50;
 
+async function stockRows(shopId: string, filters: { q?: string; categoryId?: string }) {
+  const products = await listShopProductsForStock(shopId, { q: filters.q, categoryId: filters.categoryId });
+  const ids = products.map((product) => product.id);
+  const [ledger, cache] = await Promise.all([ledgerTotals(shopId, ids), cacheRows(shopId, ids)]);
+  const rows = products.map((product) => toRow(product, ledger.get(product.id), cache.get(product.id)));
+  const counts = { uncounted: 0, out: 0, reorder: 0, low: 0, healthy: 0, needs_check: 0 } satisfies Record<StockStatus, number>;
+  for (const row of rows) counts[row.status] += 1;
+  return { rows, counts };
+}
+
+const ALERT_ORDER: Partial<Record<StockStatus, number>> = { needs_check: 0, out: 1, reorder: 2, low: 3 };
+
+/** Active products that are out, below half the reorder level, low, or need checking (dashboard), worst first. */
+export async function stockAlerts(session: SessionContext, limit = 10) {
+  await requirePermission(session, STOCK_VIEW);
+  const { rows, counts } = await stockRows(session.shopId, {});
+  const alerts = rows.filter((row) => row.isActive && ALERT_ORDER[row.status] !== undefined).sort((a, b) => ALERT_ORDER[a.status]! - ALERT_ORDER[b.status]! || a.name.localeCompare(b.name));
+  return { counts, total: alerts.length, items: limit > 0 ? alerts.slice(0, limit) : alerts };
+}
+
 export async function listStock(
   session: SessionContext,
   filters: { q?: string; categoryId?: string; status?: StockStatusFilter; page?: number } = {},
 ): Promise<{ items: StockRow[]; total: number; page: number; pageSize: number; counts: Record<StockStatus, number> }> {
   await requirePermission(session, STOCK_VIEW);
-  const products = await listShopProductsForStock(session.shopId, { q: filters.q, categoryId: filters.categoryId });
-  const ids = products.map((product) => product.id);
-  const [ledger, cache] = await Promise.all([ledgerTotals(session.shopId, ids), cacheRows(session.shopId, ids)]);
-  const rows = products.map((product) => toRow(product, ledger.get(product.id), cache.get(product.id)));
-  const counts = { uncounted: 0, out: 0, reorder: 0, low: 0, healthy: 0, needs_check: 0 } satisfies Record<StockStatus, number>;
-  for (const row of rows) counts[row.status] += 1;
+  const { rows, counts } = await stockRows(session.shopId, filters);
   const status = filters.status ?? "all";
   const filtered = status === "all" ? rows : rows.filter((row) => row.status === status);
   const page = Math.max(1, Math.floor(filters.page ?? 1));

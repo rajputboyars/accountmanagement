@@ -10,7 +10,7 @@ import { withIdempotency } from "@/modules/sync";
 import { lockDayExclusive, lockDayForWrite } from "@/server/day-lock";
 import { getDb, withTransaction, type Database, type Transaction } from "@/server/db";
 import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
-import { DIFFERENCE_REASONS, drawerResult, EXPENSE_CATEGORIES, expectedCash, type CashFlows } from "@/shared/cashbook";
+import { DIFFERENCE_REASONS, drawerResult, EXPENSE_CATEGORIES, expectedCash, netCashFlow, type CashFlows } from "@/shared/cashbook";
 import { indiaDate } from "@/shared/financial-year";
 import { formatPaise, parseRupeesToPaise } from "@/shared/money";
 import { cashMovements, dayClosings, expenses } from "./schema";
@@ -172,6 +172,36 @@ async function flowsBetween(db: Db, shopId: string, fromDate: string | null, toD
     else flows.cashWithdrawnPaise += Number(row.total);
   }
   return { flows, nonCash: [...byMethod.entries()].map(([method, totals]) => ({ method, ...totals })) };
+}
+
+/**
+ * Cash and non-cash movement for a range of business dates (reports), by the same rules as the
+ * cashbook. No permission check: the caller does it. Net cash is money into the drawer minus money out;
+ * it is not profit and not sales.
+ */
+export async function cashFlowsForRange(shopId: string, fromDate: string, toDate: string, db: Db = getDb()) {
+  const { flows, nonCash } = await flowsBetween(db, shopId, fromDate, toDate);
+  return { flows, nonCash, netCashPaise: netCashFlow(flows) };
+}
+
+/** Recorded expenses for a range, by category and method (voided ones left out). */
+export async function expenseBreakdown(shopId: string, fromDate: string, toDate: string, db: Db = getDb()) {
+  const rows = await db
+    .select({ category: expenses.category, method: expenses.method, total: sql<string>`sum(${expenses.amountPaise})::text`, count: sql<number>`count(*)::int` })
+    .from(expenses)
+    .where(and(eq(expenses.shopId, shopId), eq(expenses.status, "recorded"), sql`${expenses.businessDate} >= ${fromDate}`, sql`${expenses.businessDate} <= ${toDate}`))
+    .groupBy(expenses.category, expenses.method);
+  return rows.map((row) => ({ category: row.category, method: row.method, totalPaise: Number(row.total), count: row.count }));
+}
+
+/** Expense rows for a range, newest first (drill-down and CSV), voided ones included and marked. */
+export async function expensesInRange(shopId: string, fromDate: string, toDate: string, limit: number, db: Db = getDb()) {
+  return db
+    .select({ id: expenses.id, businessDate: expenses.businessDate, category: expenses.category, method: expenses.method, amountPaise: expenses.amountPaise, note: expenses.note, status: expenses.status, createdAt: expenses.createdAt })
+    .from(expenses)
+    .where(and(eq(expenses.shopId, shopId), sql`${expenses.businessDate} >= ${fromDate}`, sql`${expenses.businessDate} <= ${toDate}`))
+    .orderBy(desc(expenses.businessDate), desc(expenses.createdAt))
+    .limit(limit + 1);
 }
 
 /**
