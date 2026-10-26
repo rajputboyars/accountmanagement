@@ -11,12 +11,12 @@ export function AddUnitForm() {
   const values = state.values ?? {};
   return (
     <form key={state.nonce ?? "add-unit"} action={action} className="flex flex-col gap-3">
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] sm:items-end">
+      <div className="grid gap-3">
         <Field label="Unit name" error={state.fieldErrors?.name}>
-          <Input name="name" defaultValue={values.name} maxLength={40} placeholder="Coil" className="h-11" />
+          <Input name="name" defaultValue={values.name} maxLength={40} placeholder="e.g. Coil" className="h-11" />
         </Field>
         <Field label="Short name" hint="Shown on bills, e.g. coil" error={state.fieldErrors?.code}>
-          <Input name="code" defaultValue={values.code} maxLength={16} placeholder="coil" className="h-11 lowercase" autoCapitalize="none" />
+          <Input name="code" defaultValue={values.code} maxLength={16} placeholder="e.g. coil" className="h-11 lowercase" autoCapitalize="none" />
         </Field>
         <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
           <input type="checkbox" name="allowDecimal" defaultChecked={values.allowDecimal === "on"} className="size-5 accent-[var(--teal-strong)]" />

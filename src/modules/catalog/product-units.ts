@@ -44,9 +44,9 @@ export async function addProductUnit(session: SessionContext, productId: string,
   return withTransaction(async (tx) => {
     const product = await lockProduct(tx, session.shopId, productId);
     if (data.unit === product.baseUnit) {
-      throw new ValidationError(`${product.baseUnitName} is already this product's base unit. Choose a packaging unit such as Box or Bundle.`);
+      throw new ValidationError(`${product.baseUnitName} is already this product's base unit. Choose a pack unit such as Box or Bundle.`);
     }
-    const unit = await requireActiveUnit(tx, session.shopId, data.unit, "packaging unit");
+    const unit = await requireActiveUnit(tx, session.shopId, data.unit, "pack unit");
     validateFactor(data.factor, product);
 
     const [existing] = await tx
@@ -78,13 +78,13 @@ export async function addProductUnit(session: SessionContext, productId: string,
 }
 
 async function findPackaging(tx: Transaction, productId: string, packagingId: string) {
-  if (!/^[0-9a-f-]{36}$/i.test(packagingId)) throw new NotFoundError("Packaging unit not found.");
+  if (!/^[0-9a-f-]{36}$/i.test(packagingId)) throw new NotFoundError("Pack size not found.");
   const [row] = await tx
     .select({ id: productUnits.id, unit: productUnits.unit, factor: productUnits.factor, isActive: productUnits.isActive })
     .from(productUnits)
     .where(and(eq(productUnits.id, packagingId), eq(productUnits.productId, productId)))
     .limit(1);
-  if (!row) throw new NotFoundError("Packaging unit not found.");
+  if (!row) throw new NotFoundError("Pack size not found.");
   return row;
 }
 
@@ -113,7 +113,7 @@ export async function setProductUnitActive(session: SessionContext, productId: s
   await withTransaction(async (tx) => {
     const product = await lockProduct(tx, session.shopId, productId);
     const packaging = await findPackaging(tx, product.id, packagingId);
-    if (active) await requireActiveUnit(tx, session.shopId, packaging.unit, "packaging unit");
+    if (active) await requireActiveUnit(tx, session.shopId, packaging.unit, "pack unit");
     await tx.update(productUnits).set({ isActive: active }).where(eq(productUnits.id, packaging.id));
     await recordAudit(tx, actorOf(session), {
       action: active ? "catalog.packaging_reactivated" : "catalog.packaging_retired",

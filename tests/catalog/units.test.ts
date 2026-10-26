@@ -45,6 +45,17 @@ describe("units", () => {
     expect(codes).toEqual(expect.arrayContaining(["pc", "box", "bundle", "m", "length"]));
   });
 
+  it("counts only this shop's products for each unit", async () => {
+    const countFor = async (shop: TestShop, code: string) => (await listUnits(await owner(shop))).find((unit) => unit.code === code)!.productCount;
+    const beforeA = await countFor(shopA, "set");
+    const beforeB = await countFor(shopB, "set");
+    await newProduct("set");
+    await newProduct("set");
+    await newProduct("set", shopB);
+    expect(await countFor(shopA, "set")).toBe(beforeA + 2);
+    expect(await countFor(shopB, "set")).toBe(beforeB + 1);
+  });
+
   it("adds a unit, rejecting duplicate names and short names", async () => {
     const session = await owner();
     const unit = await createUnit(session, { name: "Coil", code: "coil" });

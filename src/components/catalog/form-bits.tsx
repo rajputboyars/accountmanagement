@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { CircleAlert, CircleCheck, LoaderCircle } from "lucide-react";
 import { cn } from "cn";
@@ -9,6 +10,28 @@ export const selectClass =
   "h-11 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground aria-invalid:border-destructive";
 export const textareaClass =
   "min-h-20 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground aria-invalid:border-destructive";
+
+/**
+ * A select that keeps its value after a rejected submit. React resets forms after an action, and
+ * an uncontrolled select's defaultValue does not survive that reset, so this one is controlled.
+ */
+export function FormSelect({ defaultValue = "", ...props }: Omit<React.ComponentProps<"select">, "value" | "defaultValue"> & { defaultValue?: string }) {
+  const [value, setValue] = useState(defaultValue);
+  const ref = useRef<HTMLSelectElement>(null);
+  const valueRef = useRef(value);
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
+  useEffect(() => {
+    const form = ref.current?.form;
+    if (!form) return;
+    // The reset event fires before the browser resets the fields, so restore on the next tick.
+    const restore = () => queueMicrotask(() => ref.current && (ref.current.value = valueRef.current));
+    form.addEventListener("reset", restore);
+    return () => form.removeEventListener("reset", restore);
+  }, []);
+  return <select {...props} ref={ref} value={value} onChange={(event) => setValue(event.target.value)} className={cn(selectClass, props.className)} />;
+}
 
 export function Field({
   label,

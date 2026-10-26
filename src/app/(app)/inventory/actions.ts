@@ -56,11 +56,24 @@ function productInput(formData: FormData) {
 /** Service field names → form field names, so errors land next to the right input. */
 const FIELD_ALIASES: Record<string, string> = { retailPaise: "retailPrice", wholesalePaise: "wholesalePrice", costPaise: "costPrice" };
 
+/** Conflicts that belong to one form field, so the message shows next to that input. */
+const CONFLICT_FIELDS: Record<string, string> = {
+  SKU_IN_USE: "sku",
+  BARCODE_IN_USE: "barcode",
+  UNIT_NAME_IN_USE: "name",
+  UNIT_CODE_IN_USE: "code",
+  PACKAGING_EXISTS: "unit",
+  UNIT_INACTIVE: "unit",
+};
+
 function failure(error: unknown, values?: Record<string, string>): CatalogFormState {
   const result = toActionError(error);
+  const conflictField = result.code ? CONFLICT_FIELDS[result.code] : undefined;
   const fieldErrors = result.fieldErrors
     ? Object.fromEntries(Object.entries(result.fieldErrors).map(([key, message]) => [FIELD_ALIASES[key] ?? key, message]))
-    : undefined;
+    : conflictField && values && conflictField in values
+      ? { [conflictField]: result.error }
+      : undefined;
   return { ok: false, error: result.error, fieldErrors, values };
 }
 
@@ -120,7 +133,7 @@ export async function addProductUnitAction(_previous: CatalogFormState, formData
   }
   revalidatePath(`/inventory/${productId}`);
   revalidatePath("/inventory");
-  return { ok: true, message: "Packaging unit saved.", nonce: Date.now() };
+  return { ok: true, message: "Pack size saved.", nonce: Date.now() };
 }
 
 export async function updateProductUnitAction(_previous: CatalogFormState, formData: FormData): Promise<CatalogFormState> {

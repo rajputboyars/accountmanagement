@@ -32,7 +32,11 @@ export default function InventoryPage({ searchParams }: PageProps<"/inventory">)
 const one = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value) ?? "";
 
 function packSummary(product: ProductListItem) {
-  return product.conversions.map((conversion) => `1 ${conversion.unitName} = ${conversion.factor} ${product.baseUnit}`).join(" · ");
+  return product.conversions.map((conversion, index) => (
+    <span key={conversion.id} className="whitespace-nowrap">
+      {index > 0 ? " · " : ""}1 {conversion.unitName} = {conversion.factor} {product.baseUnit}
+    </span>
+  ));
 }
 
 async function ProductList({ searchParams }: { searchParams: Search }) {
@@ -76,8 +80,8 @@ async function ProductList({ searchParams }: { searchParams: Search }) {
       />
       <CatalogTabs current="products" />
 
-      <form role="search" action="/inventory" className="grid gap-3 rounded-2xl border border-border bg-card p-4 sm:grid-cols-[minmax(0,1fr)_12rem_10rem_auto]">
-        <label className="relative">
+      <form role="search" action="/inventory" className="grid grid-cols-2 gap-3 rounded-2xl border border-border bg-card p-4 sm:grid-cols-[minmax(0,1fr)_12rem_10rem_auto]">
+        <label className="relative col-span-2 sm:col-span-1">
           <span className="sr-only">Search products</span>
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
           <Input name="q" defaultValue={q} placeholder="Search by name, code or barcode" className="h-11 pl-9" />
@@ -101,7 +105,7 @@ async function ProductList({ searchParams }: { searchParams: Search }) {
             <option value="all">All</option>
           </select>
         </label>
-        <button type="submit" className={buttonVariants({ size: "touch", variant: "outline" })}>
+        <button type="submit" className={buttonVariants({ size: "touch", variant: "outline", className: "col-span-2 sm:col-span-1" })}>
           Search
         </button>
       </form>

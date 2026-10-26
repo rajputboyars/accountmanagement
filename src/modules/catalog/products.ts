@@ -275,7 +275,7 @@ export async function updateProduct(session: SessionContext, productId: string, 
     if (data.baseUnit !== current.baseUnit) {
       const [packaging] = await tx.select({ n: count() }).from(productUnits).where(eq(productUnits.productId, productId));
       if ((packaging?.n ?? 0) > 0) {
-        throw new ConflictError("BASE_UNIT_LOCKED", "This product already has packaging units based on its current unit, so the base unit can't be changed.");
+        throw new ConflictError("BASE_UNIT_LOCKED", "This product already has pack sizes set up in its current unit, so the base unit can't be changed.");
       }
       await requireActiveUnit(tx, session.shopId, data.baseUnit, "base unit");
     }

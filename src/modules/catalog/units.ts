@@ -33,7 +33,9 @@ export async function seedDefaultUnits(tx: Transaction, shopId: string): Promise
 
 export async function listUnits(session: SessionContext, options: { includeInactive?: boolean } = {}): Promise<Unit[]> {
   await requirePermission(session, CATALOG_VIEW);
-  const productCount = sql<number>`(select count(*)::int from ${products} where ${products.shopId} = ${units.shopId} and ${products.baseUnit} = ${units.code})`;
+  // Written with explicit table names: in a single-table select Drizzle renders bare column names,
+  // which inside this subquery would bind to the products table instead of units.
+  const productCount = sql<number>`(select count(*)::int from ${products} p where p.shop_id = "units"."shop_id" and p.base_unit = "units"."code")`;
   const rows = await getDb()
     .select({ id: units.id, code: units.code, name: units.name, allowDecimal: units.allowDecimal, isActive: units.isActive, productCount })
     .from(units)

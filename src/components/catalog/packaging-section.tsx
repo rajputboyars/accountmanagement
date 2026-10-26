@@ -10,7 +10,7 @@ import {
   updateProductUnitAction,
   type CatalogFormState,
 } from "@/app/(app)/inventory/actions";
-import { Field, FormAlert, selectClass, SubmitButton } from "./form-bits";
+import { Field, FormAlert, FormSelect, SubmitButton } from "./form-bits";
 
 type Conversion = { id: string; unit: string; unitName: string; factor: string; isActive: boolean };
 
@@ -34,13 +34,13 @@ function ConversionRow({ productId, baseUnit, conversion, canManage }: { product
 
   return (
     <li className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-foreground">
+      <div className="flex items-center justify-between gap-2">
+        <p className="min-w-0 text-sm text-foreground">
           <span className="font-semibold">1 {conversion.unitName}</span> = <span className="font-semibold tabular-nums">{conversion.factor}</span> {baseUnit.code}
           {!conversion.isActive ? <Badge variant="neutral" className="ml-2">Retired</Badge> : null}
         </p>
         {canManage ? (
-          <div className="flex gap-2">
+          <div className="flex shrink-0 gap-1">
             {conversion.isActive ? (
               <Button type="button" size="sm" variant="ghost" onClick={() => setEditing((value) => !value)}>
                 {editing ? "Cancel" : "Change size"}
@@ -107,7 +107,7 @@ export function PackagingSection({ productId, baseUnit, conversions, unitOptions
             <input type="hidden" name="productId" value={productId} />
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
               <Field label="Pack unit" error={state.fieldErrors?.unit}>
-                <select name="unit" defaultValue={state.values?.unit ?? ""} className={selectClass}>
+                <FormSelect name="unit" defaultValue={state.values?.unit ?? ""}>
                   <option value="" disabled>
                     Choose…
                   </option>
@@ -116,14 +116,14 @@ export function PackagingSection({ productId, baseUnit, conversions, unitOptions
                       {unit.name}
                     </option>
                   ))}
-                </select>
+                </FormSelect>
               </Field>
               <Field
                 label={`${baseUnit.name} in one pack`}
                 hint={baseUnit.allowDecimal ? "Up to 3 decimal places, e.g. 3 or 2.5." : "A whole number, e.g. 50."}
                 error={state.fieldErrors?.factor}
               >
-                <Input name="factor" defaultValue={state.values?.factor ?? ""} inputMode="decimal" placeholder="50" className="h-11 tabular-nums" />
+                <Input name="factor" defaultValue={state.values?.factor ?? ""} inputMode="decimal" placeholder="e.g. 50" className="h-11 tabular-nums" />
               </Field>
             </div>
             <FormAlert error={state.fieldErrors ? undefined : state.error} message={state.message} />
