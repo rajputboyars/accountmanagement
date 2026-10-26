@@ -8,6 +8,7 @@ import {
   Tags,
   Truck,
   Users,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -19,6 +20,7 @@ export type NavKey =
   | "customers"
   | "purchases"
   | "suppliers"
+  | "cashbook"
   | "reports"
   | "settings";
 
@@ -127,6 +129,16 @@ export const NAV_ITEMS: readonly NavItem[] = [
     description: "What you owe each supplier and when it is due.",
     mobilePrimary: false,
     planned: ["Supplier list with balance and due date", "Record supplier payments", "Purchase history per supplier"],
+  },
+  {
+    key: "cashbook",
+    label: "Cashbook",
+    shortLabel: "Cash",
+    href: "/cashbook",
+    icon: Wallet,
+    description: "Cash in the drawer, expenses and closing the day.",
+    mobilePrimary: false,
+    planned: [],
   },
   {
     key: "reports",

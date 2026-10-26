@@ -9,6 +9,7 @@ import { recordSupplierPayment, reverseSupplierPaymentRow, supplierPayments } fr
 import { getCurrentShop, takeDocumentNumber } from "@/modules/settings";
 import { withIdempotency } from "@/modules/sync";
 import { getDb, withTransaction, type Database, type Transaction } from "@/server/db";
+import { lockDayForWrite } from "@/server/day-lock";
 import { isUniqueViolation } from "@/server/db-errors";
 import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { financialYearLabel, indiaDate } from "@/shared/financial-year";
@@ -220,6 +221,7 @@ export async function receiveGoods(session: SessionContext, input: unknown): Pro
   try {
     return await withTransaction(async (tx) => {
       const outcome = await withIdempotency<Omit<CreatedReceipt, "replayed">>(tx, { shopId: session.shopId, userId: session.userId, key: idempotencyKey }, body, async () => {
+        await lockDayForWrite(tx, session.shopId, indiaDate());
         // 1. Document: the order (if any) decides supplier, products, units and what is left to receive.
         const order = data.purchaseOrderId ? await lockOrder(tx, session.shopId, data.purchaseOrderId) : null;
         if (order && order.status !== "ordered" && order.status !== "partially_received") {
@@ -329,6 +331,7 @@ export async function cancelGoodsReceipt(session: SessionContext, receiptId: str
   const { reason } = reasonSchema.parse(input);
   if (!/^[0-9a-f-]{36}$/i.test(receiptId)) throw new NotFoundError("Receipt not found.");
   await withTransaction(async (tx) => {
+    await lockDayForWrite(tx, session.shopId, indiaDate());
     const [receipt] = await tx.select().from(goodsReceipts).where(and(eq(goodsReceipts.id, receiptId), eq(goodsReceipts.shopId, session.shopId))).limit(1).for("update");
     if (!receipt) throw new NotFoundError("Receipt not found.");
     if (receipt.status === "cancelled") throw new ConflictError("ALREADY_CANCELLED", "This receipt is already cancelled.");
@@ -369,6 +372,7 @@ export async function paySupplier(session: SessionContext, input: unknown): Prom
   try {
     return await withTransaction(async (tx) => {
       const outcome = await withIdempotency<{ id: string; owedAfterPaise: number }>(tx, { shopId: session.shopId, userId: session.userId, key: idempotencyKey }, { action: "purchasing.supplier_payment", ...data }, async () => {
+        await lockDayForWrite(tx, session.shopId, indiaDate());
         const supplier = await findSupplier(session.shopId, data.supplierId, tx);
         await lockPartyBalance(tx, session.shopId, "supplier", supplier.id);
         const owed = owedFrom(await partyBalance(session.shopId, "supplier", supplier.id, tx));
@@ -395,6 +399,7 @@ export async function reverseSupplierPayment(session: SessionContext, paymentId:
   const { reason } = reasonSchema.parse(input);
   await withTransaction(async (tx) => {
     const today = indiaDate();
+    await lockDayForWrite(tx, session.shopId, indiaDate());
     const result = await reverseSupplierPaymentRow(tx, session.shopId, paymentId, { fy: financialYearLabel(), businessDate: today, recordedBy: session.userId });
     if (!result) throw new NotFoundError("Payment not found.");
     if (!result.reversalId) throw new ConflictError("ALREADY_REVERSED", "This payment is already reversed.");

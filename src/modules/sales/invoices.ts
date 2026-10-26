@@ -10,6 +10,7 @@ import { paymentsForInvoice, recordCounterPayment, refundInvoicePayments } from 
 import { getCurrentShop, takeDocumentNumber } from "@/modules/settings";
 import { withIdempotency } from "@/modules/sync";
 import { getDb, withTransaction } from "@/server/db";
+import { lockDayForWrite } from "@/server/day-lock";
 import { ConflictError, NotFoundError } from "@/server/errors";
 import { indiaDate } from "@/shared/financial-year";
 import { formatQuantity, parseQuantity, toDbQuantity } from "@/shared/quantity";
@@ -63,6 +64,7 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
 
   return withTransaction(async (tx) => {
     const outcome = await withIdempotency<Omit<CreatedInvoice, "replayed">>(tx, { shopId: session.shopId, userId: session.userId, key: save.idempotencyKey }, requestBody, async () => {
+      await lockDayForWrite(tx, session.shopId, indiaDate());
       await lockStockRows(tx, session.shopId, bill.lines.map((line) => line.productId));
       const chosen = bill.customerId ? await findCustomer(session.shopId, bill.customerId, tx) : null;
       const registered = chosen && chosen.type !== "walkin" ? chosen : null;
@@ -182,6 +184,7 @@ export async function cancelInvoice(session: SessionContext, invoiceId: string, 
   const { reason } = cancelInvoiceSchema.parse(input);
   if (!/^[0-9a-f-]{36}$/i.test(invoiceId)) throw new NotFoundError("Bill not found.");
   await withTransaction(async (tx) => {
+    await lockDayForWrite(tx, session.shopId, indiaDate());
     const [invoice] = await tx
       .select()
       .from(invoices)

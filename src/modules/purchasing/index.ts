@@ -20,3 +20,4 @@ export {
   updateSupplier,
   type CreatedReceipt,
 } from "./service";
+export { purchasesDaySummary } from "./day-summary";

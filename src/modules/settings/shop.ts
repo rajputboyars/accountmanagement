@@ -16,3 +16,9 @@ export async function getCurrentShop(session: Pick<SessionContext, "shopId">): P
   if (!row) throw new NotFoundError("Shop not found.");
   return row;
 }
+
+/** The cash the drawer started with on the first day (handoff C13). No permission check. */
+export async function shopOpeningCash(shopId: string): Promise<number> {
+  const [row] = await getDb().select({ openingCashPaise: shops.openingCashPaise }).from(shops).where(eq(shops.id, shopId)).limit(1);
+  return row?.openingCashPaise ?? 0;
+}

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Database, Transaction } from "@/server/db";
 import { payments, PAYMENT_METHODS } from "./schema";
 
@@ -169,4 +169,45 @@ export async function supplierPayments(db: Database | Transaction, shopId: strin
     .from(payments)
     .where(and(eq(payments.shopId, shopId), eq(payments.partyType, "supplier"), eq(payments.partyId, supplierId)))
     .orderBy(payments.createdAt);
+}
+
+// ── Day totals for the cashbook ─────────────────────────────────────────────
+
+/**
+ * What a payment row is, for the cashbook. Every row is money that moved, so originals and their
+ * reversals are both counted (they cancel out): a cancelled bill's cash and its refund net to zero.
+ *   bill               money in on a bill at the counter
+ *   collection         money in from a customer not tied to a bill (old dues)
+ *   refund             money paid back to a customer (cancellation or credit note)
+ *   supplier_paid      money paid to a supplier
+ *   supplier_returned  a supplier payment reversed
+ */
+export const PAYMENT_CATEGORY_SQL = sql<string>`case
+  when ${payments.partyType} = 'supplier' and ${payments.direction} = 'out' then 'supplier_paid'
+  when ${payments.partyType} = 'supplier' and ${payments.direction} = 'in' then 'supplier_returned'
+  when ${payments.direction} = 'out' then 'refund'
+  when ${payments.invoiceId} is not null then 'bill'
+  else 'collection' end`;
+
+export type PaymentCategory = "bill" | "collection" | "refund" | "supplier_paid" | "supplier_returned";
+
+/** Sums per method and category for business dates in [fromDate, toDate] (null from = since the start). */
+export async function paymentTotals(db: Database | Transaction, shopId: string, fromDate: string | null, toDate: string) {
+  const rows = await db
+    .select({ method: payments.method, category: PAYMENT_CATEGORY_SQL, total: sql<string>`sum(${payments.amountPaise})::text` })
+    .from(payments)
+    .where(and(eq(payments.shopId, shopId), fromDate ? sql`${payments.businessDate} >= ${fromDate}` : undefined, sql`${payments.businessDate} <= ${toDate}`))
+    .groupBy(payments.method, PAYMENT_CATEGORY_SQL);
+  return rows.map((row) => ({ method: row.method, category: row.category as PaymentCategory, totalPaise: Number(row.total) }));
+}
+
+export type DayPayment = { id: string; method: PaymentMethod; direction: "in" | "out"; category: PaymentCategory; amountPaise: number; partyType: string; partyId: string | null; invoiceId: string | null; creditNoteId: string | null; reference: string | null; status: string; createdAt: Date };
+
+export async function paymentsOnDay(db: Database | Transaction, shopId: string, businessDate: string): Promise<DayPayment[]> {
+  const rows = await db
+    .select({ id: payments.id, method: payments.method, direction: payments.direction, category: PAYMENT_CATEGORY_SQL, amountPaise: payments.amountPaise, partyType: payments.partyType, partyId: payments.partyId, invoiceId: payments.invoiceId, creditNoteId: payments.creditNoteId, reference: payments.reference, status: payments.status, createdAt: payments.createdAt })
+    .from(payments)
+    .where(and(eq(payments.shopId, shopId), eq(payments.businessDate, businessDate)))
+    .orderBy(payments.createdAt);
+  return rows.map((row) => ({ ...row, category: row.category as PaymentCategory }));
 }

@@ -64,6 +64,13 @@
       "when": 1793010702840,
       "tag": "0008_purchases_receiving",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793012289904,
+      "tag": "0009_expenses_cashbook",
+      "breakpoints": true
     }
   ]
 }

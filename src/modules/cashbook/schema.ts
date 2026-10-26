@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, date, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { check, date, index, jsonb, pgTable, text, timestamp, unique, uuid, varchar } from "drizzle-orm/pg-core";
 import { users } from "../identity/schema";
 import { shops } from "../settings/schema";
 import { createdAt, id, oneOf, paise } from "../../server/schema-helpers";
@@ -21,11 +21,19 @@ export const expenses = pgTable(
     amountPaise: paise("amount_paise").notNull(),
     method: text("method").$type<(typeof EXPENSE_METHODS)[number]>().notNull(),
     note: text("note"),
+    reference: varchar("reference", { length: 40 }), // bill or UPI reference, optional
     status: text("status").$type<(typeof EXPENSE_STATUSES)[number]>().notNull().default("recorded"),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedBy: uuid("voided_by").references(() => users.id),
+    voidReason: text("void_reason"),
     createdBy: uuid("created_by").notNull().references(() => users.id),
     createdAt: createdAt(),
   },
   (t) => [
+    index("expenses_shop_business_date_idx").on(t.shopId, t.businessDate),
+    check("expenses_category_check", sql`${t.category} in ('rent', 'salary', 'transport', 'electricity', 'tea', 'other')`),
+    check("expenses_other_note_check", sql`${t.category} <> 'other' or ${t.note} is not null`),
+    check("expenses_void_check", sql`${t.status} <> 'voided' or (${t.voidedAt} is not null and ${t.voidReason} is not null)`),
     check("expenses_amount_check", sql`${t.amountPaise} > 0`),
     check("expenses_method_check", oneOf(t.method, EXPENSE_METHODS)),
     check("expenses_status_check", oneOf(t.status, EXPENSE_STATUSES)),
@@ -45,6 +53,7 @@ export const cashMovements = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
+    index("cash_movements_shop_business_date_idx").on(t.shopId, t.businessDate),
     check("cash_movements_kind_check", oneOf(t.kind, CASH_MOVEMENT_KINDS)),
     check("cash_movements_amount_check", sql`${t.amountPaise} > 0`),
   ],

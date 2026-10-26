@@ -10,6 +10,7 @@ import { recordCreditNoteRefund } from "@/modules/payments";
 import { getCurrentShop, takeDocumentNumber } from "@/modules/settings";
 import { withIdempotency } from "@/modules/sync";
 import { getDb, withTransaction, type Database, type Transaction } from "@/server/db";
+import { lockDayForWrite } from "@/server/day-lock";
 import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { computeCreditNote, ReturnQuantityError, type CreditNoteTotals } from "@/shared/credit-note";
 import { indiaDate } from "@/shared/financial-year";
@@ -218,6 +219,7 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
 
   return withTransaction(async (tx) => {
     const outcome = await withIdempotency<Omit<CreatedCreditNote, "replayed">>(tx, { shopId: session.shopId, userId: session.userId, key: save.idempotencyKey }, body, async () => {
+      await lockDayForWrite(tx, session.shopId, indiaDate());
       const plan = await planReturn(tx, session.shopId, data, true);
       if (plan.totals.totalPaise !== save.expectedTotalPaise) {
         throw new ConflictError("RETURN_CHANGED", "This bill changed since the return was shown (another return may have been saved). Check the new amount and save again.", { preview: returnView(plan) });

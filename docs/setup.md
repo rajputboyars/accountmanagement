@@ -261,3 +261,28 @@ Ties that the database already prevents (two active slabs or rules for the same 
 - Receiving into a product with no opening stock makes the purchase its first stock entry, so opening stock can no longer be entered for it: enter opening stock first at go-live.
 - Supplier payments get no receipt number (receipt numbers are for customer payments).
 
+## Expenses & daily cashbook (Phase 9) rules and limitations
+
+**Screen.** `/cashbook?date=…` (Cashbook in the menu): cash drawer breakdown, non-cash totals, everything recorded that day with links to bills, returns and suppliers, add an expense, cash in/out, close or reopen the day, recent closings.
+
+**Who can do what.** See the cashbook, record expenses and cash movements, void an expense: `cash.record` (owner, manager). Close the day: `day.close` (owner). Reopen: `day.reopen` (owner).
+
+**Where the numbers come from (nothing is entered twice).** Money in and out is read from the existing payment rows: bills paid at the counter, old dues paid, refunds (cancellations and credit notes), supplier payments and their reversals. Originals and reversals are both counted, so a cancelled cash bill and its refund cancel out. Expenses and cash movements (bank deposit, owner withdrawal, cash put in) are the cashbook's own records. Only cash reaches the drawer; UPI, card, bank and cheque are listed separately, and a credit sale is shown as "added to dues", never as money received. Sales, credit notes and goods received are shown for context. Cash flow is not profit.
+
+**Expected cash** (spec §7): opening + cash on bills + old dues in cash + cash put in + reversed supplier payments − cash refunds − cash paid to suppliers − cash expenses − cash taken out. Spec example ₹5,000 + ₹11,800 + ₹6,400 − ₹850 − ₹4,000 = ₹18,350.
+
+**Opening cash** (handoff C13): the cash counted at the last closed day, moved on by the cash flows of any later days that were never closed; before the first closing it starts from the shop's opening cash. A bank deposit counts on the day it is recorded, which reaches the same expected cash as the spec's "₹18,150 counted − ₹15,000 deposited".
+
+**Expenses.** Fixed categories (handoff C18): Rent, Salary, Transport, Electricity, Tea & snacks, Other (note required). Amount, date (today or earlier, if that day is open), cash/UPI/bank, optional note and reference. A recorded expense is never edited; it can be voided (who, when, why kept) only while its day is open. After closing, record a correction on today's date.
+
+**Closing** (owner): enter the cash counted; the screen shows "Drawer matches", "Cash short" or "Cash extra"; any difference needs a reason (change given short, unrecorded expense, counting mistake, other with a note). Closing saves a snapshot (cash flows, non-cash totals, sales, credit given, credit notes, purchases, expected, counted, difference, reason). Days close in order: a day can't be closed or reopened behind a later closed day. Reopening needs a reason and is logged; the snapshot is redone at the next close.
+
+**The day lock.** First in the lock order. Bills, bill cancellations, returns, goods receipts and their cancellation, supplier payments and their reversal, expenses and cash movements take a shared lock on (shop, day) and are refused once the day is closed ("This day is closed"). Closing takes the exclusive lock, so a bill being saved at the same moment is either in the snapshot or refused, never lost. The lock lives in `src/server/day-lock.ts` so sales and purchasing can use it without importing the cashbook.
+
+**Limitations**
+- Stock adjustments and opening stock are not day-locked (they move stock, not money).
+- Customer receipts for old dues (the "collections" line) have no screen yet; the cashbook already counts them when they exist.
+- Business day = calendar date in Asia/Kolkata; "shop opening to closing" days that cross midnight are not supported.
+- No bank reconciliation, no WhatsApp daily report, no expense attachments.
+- A cash difference never blocks closing (spec decision); there is no alert above ₹500 yet.
+
