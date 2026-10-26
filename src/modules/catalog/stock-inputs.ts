@@ -1,7 +1,7 @@
-import { and, asc, eq, ilike, inArray, or, type SQL } from "drizzle-orm";
+import { and, asc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { getDb, type Database, type Transaction } from "@/server/db";
 import { parseQuantity, type Milli } from "@/shared/quantity";
-import { categories, productUnits, products, units } from "./schema";
+import { categories, productCostHistory, productUnits, products, units } from "./schema";
 
 /** What the inventory module needs to know about a product. Callers check permissions first. */
 export type ProductStockInputs = {
@@ -15,6 +15,7 @@ export type ProductStockInputs = {
   baseUnitName: string;
   baseAllowsDecimal: boolean;
   reorderLevel: Milli;
+  gstRateBp: number;
   /** Always loaded; the inventory module decides who may see it. */
   costPaise: number | null;
 };
@@ -32,6 +33,7 @@ const columns = {
   baseUnitName: units.name,
   baseAllowsDecimal: units.allowDecimal,
   reorderLevel: products.reorderLevel,
+  gstRateBp: products.gstRateBp,
   costPaise: products.costPaise,
 };
 
@@ -109,4 +111,17 @@ export async function lockProductsForStock(tx: Transaction, shopId: string, prod
     .orderBy(asc(products.id))
     .for("update");
   return loadProductsForStock(shopId, locked.map((row) => row.id), tx);
+}
+
+/**
+ * Sets a product's cost price after a goods receipt (weighted average, worked out by the caller)
+ * and records it in the cost history. Bumps the product version so an edit form opened before the
+ * receipt can't silently overwrite it. The caller holds the product lock (lockProductsForStock).
+ */
+export async function applyReceivedCost(tx: Transaction, shopId: string, productId: string, costPaise: number, goodsReceiptId: string): Promise<void> {
+  await tx
+    .update(products)
+    .set({ costPaise, version: sql`${products.version} + 1` })
+    .where(and(eq(products.shopId, shopId), eq(products.id, productId)));
+  await tx.insert(productCostHistory).values({ productId, costPaise, sourceType: "goods_receipt", sourceId: goodsReceiptId, effectiveAt: new Date() });
 }

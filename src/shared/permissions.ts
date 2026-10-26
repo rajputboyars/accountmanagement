@@ -20,6 +20,7 @@ export const DEFAULT_PERMISSIONS = {
   "inventory.view": ["owner", "manager", "inventory"],
   "purchases.view": ["owner", "manager", "inventory"],
   "purchases.edit": ["owner", "manager", "inventory"],
+  "purchases.cancel": ["owner"], // cancel a goods receipt or order, close a short delivery (spec §5: owner)
   "stock.receive": ["owner", "manager", "inventory"],
   "stock.adjust": ["owner", "manager", "inventory"],
   "stock.opening": ["owner"], // go-live opening stock (spec §8: owner enters and reviews opening entries)

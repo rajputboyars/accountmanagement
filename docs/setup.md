@@ -238,3 +238,26 @@ Ties that the database already prevents (two active slabs or rules for the same 
 - Refund references (UPI UTR, bank reference) are not captured.
 - Cancellation refunds go by the original method; partial cancellation is a return.
 
+## Supplier purchases (Phase 8) rules and limitations
+
+**Screens.** `/suppliers` (what you owe in total and per supplier, add a supplier), `/suppliers/[id]` (statement with running balance, payments with reverse, goods received, pay form, edit details), `/purchases` (orders and receipts), `/purchases/new` (purchase order), `/purchases/receive` (direct receipt, or `?order=` against an order), `/purchases/orders/[id]` (ordered vs received vs still expected; close shortfall, cancel), `/purchases/receipts/[id]` (printable goods receipt; cancel).
+
+**Who can do what.** See: `purchases.view` (owner, manager, inventory). Suppliers and orders: `purchases.edit`. Receive goods: `stock.receive`. Pay a supplier or reverse a payment: `suppliers.pay` (owner). Cancel a receipt or order, close a short delivery: the new `purchases.cancel` (owner).
+
+**How it works** (spec §5, S1, S2, S5). An order (PO/26-27/00001) changes nothing in stock or accounts. A goods receipt (GRN/26-27/00001), against an order or direct, writes in one transaction: receipt + lines (unit, factor, quantity and cost as entered, cost per base unit, GST), a `purchase` stock movement per line, the new cost price, a supplier ledger credit for the bill total (value + GST input), the order's new status ("Received · short" while anything is still expected) and the audit row. Receiving more than is still expected on an order is refused. A supplier's bill number can be entered once per supplier (cancelled receipts excepted).
+
+**Cost price.** Handoff §2.2 decision 2 (final for V1): weighted average on each goods receipt, with every change in `product_cost_history`. New cost per base unit = (stock on hand × current cost + received value) ÷ (stock on hand + received base quantity), half-up; S5: 94 at ₹402 + 180 at ₹410 → ₹407.26. When the current cost is unknown or nothing is in stock, the received cost is used (assumption: the spec does not cover it). Old bills keep the cost stored on their lines.
+
+**Payments and dues.** What you owe a supplier = −SUM(debit − credit) on their ledger (purchases credit, payments debit). A payment must be more than 0 and not more than what is owed (spec); cash/UPI/bank/cheque with an optional reference; a UPI/bank/cheque reference can't be used twice. Payments are idempotent and serialised on the supplier's balance row.
+
+**Corrections.** Cancel a receipt (owner, reason): `purchase` movements with a minus sign take the stock out, the ledger gets a `cancellation` debit, the order reopens; refused if the goods were already sold or used. Cancel an order only while nothing was received; close a short order to stop expecting the rest. Reverse a mistaken supplier payment: a matching "in" payment row and ledger credit; the original is marked reversed. Nothing is deleted or edited.
+
+**Lock order.** Order/receipt row → products (id order) → `stock_levels` → `party_balances` → `number_series`.
+
+**Assumptions and limitations**
+- GST on a receipt is worked out per rate group from the entered values (no rupee round-off); if the supplier's bill differs by paise it is not adjustable yet. GST defaults to the product's rate and can be changed per line (S1 uses 0% as in the spec example).
+- Cancelling a receipt does not recalculate the product's cost price (a weighted average can't be undone exactly); the owner can correct it on the product.
+- No return to supplier / debit note (spec: not in V1), no supplier opening-balance entry screen (import milestone), no due-date reminders.
+- Receiving into a product with no opening stock makes the purchase its first stock entry, so opening stock can no longer be entered for it: enter opening stock first at go-live.
+- Supplier payments get no receipt number (receipt numbers are for customer payments).
+

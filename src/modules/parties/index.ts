@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, type Database, type Transaction } from "@/server/db";
 import { NotFoundError } from "@/server/errors";
-import { customers, CUSTOMER_TYPES } from "./schema";
+import { customers, CUSTOMER_TYPES, suppliers } from "./schema";
 
 /**
  * Public API of the parties module. Customer screens come in Phase 2; for now other modules only
@@ -75,4 +75,53 @@ export async function ensureWalkInCustomer(tx: Transaction, shopId: string): Pro
     .where(and(eq(customers.shopId, shopId), eq(customers.type, "walkin")))
     .limit(1);
   return row!;
+}
+
+// ── Suppliers ────────────────────────────────────────────────────────────────
+
+export type SupplierRow = { id: string; name: string; phone: string | null; gstin: string | null; paymentTermsDays: number; isActive: boolean; createdAt: Date };
+const supplierColumns = { id: suppliers.id, name: suppliers.name, phone: suppliers.phone, gstin: suppliers.gstin, paymentTermsDays: suppliers.paymentTermsDays, isActive: suppliers.isActive, createdAt: suppliers.createdAt };
+
+export async function findSupplier(shopId: string, supplierId: string, db: Database | Transaction = getDb()): Promise<SupplierRow> {
+  if (!/^[0-9a-f-]{36}$/i.test(supplierId)) throw new NotFoundError("Supplier not found.");
+  const [row] = await db.select(supplierColumns).from(suppliers).where(and(eq(suppliers.shopId, shopId), eq(suppliers.id, supplierId))).limit(1);
+  if (!row) throw new NotFoundError("Supplier not found.");
+  return row;
+}
+
+export async function listShopSuppliers(shopId: string, options: { includeInactive?: boolean } = {}, db: Database | Transaction = getDb()): Promise<SupplierRow[]> {
+  return db
+    .select(supplierColumns)
+    .from(suppliers)
+    .where(options.includeInactive ? eq(suppliers.shopId, shopId) : and(eq(suppliers.shopId, shopId), eq(suppliers.isActive, true)))
+    .orderBy(asc(suppliers.name));
+}
+
+export type SupplierFields = { name: string; phone: string | null; gstin: string | null; paymentTermsDays: number };
+
+/** True when another supplier of the shop already has this name (case-insensitive). */
+export async function supplierNameTaken(tx: Transaction, shopId: string, name: string, exceptId?: string): Promise<boolean> {
+  const rows = await tx
+    .select({ id: suppliers.id })
+    .from(suppliers)
+    .where(and(eq(suppliers.shopId, shopId), sql`lower(${suppliers.name}) = lower(${name})`));
+  return rows.some((row) => row.id !== exceptId);
+}
+
+export async function insertSupplier(tx: Transaction, shopId: string, fields: SupplierFields): Promise<string> {
+  const id = randomUUID();
+  await tx.insert(suppliers).values({ id, shopId, ...fields });
+  return id;
+}
+
+export async function updateSupplierRow(tx: Transaction, shopId: string, supplierId: string, fields: Partial<SupplierFields> & { isActive?: boolean }): Promise<void> {
+  await tx.update(suppliers).set(fields).where(and(eq(suppliers.shopId, shopId), eq(suppliers.id, supplierId)));
+}
+
+/** Locks one supplier row, so purchase and payment writes for a supplier run one at a time. */
+export async function lockSupplier(tx: Transaction, shopId: string, supplierId: string): Promise<SupplierRow> {
+  if (!/^[0-9a-f-]{36}$/i.test(supplierId)) throw new NotFoundError("Supplier not found.");
+  const [row] = await tx.select(supplierColumns).from(suppliers).where(and(eq(suppliers.shopId, shopId), eq(suppliers.id, supplierId))).limit(1).for("update");
+  if (!row) throw new NotFoundError("Supplier not found.");
+  return row;
 }

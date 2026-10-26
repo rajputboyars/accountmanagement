@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, type Database, type Transaction } from "@/server/db";
 import { LEDGER_KINDS, ledgerEntries, partyBalances } from "./schema";
 
@@ -60,4 +60,31 @@ export async function appendLedgerEntry(tx: Transaction, entry: NewLedgerEntry):
       set: { balancePaise: sql`${partyBalances.balancePaise} + ${debit - credit}`, lastEntryId: row!.id, updatedAt: sql`now()` },
     });
   return row!.id;
+}
+
+/** SUM(debit − credit) per party for many parties of one type (journal, shop-scoped). */
+export async function partyBalancesFor(shopId: string, partyType: "customer" | "supplier", partyIds: string[], db: Database | Transaction = getDb()): Promise<Map<string, number>> {
+  if (partyIds.length === 0) return new Map();
+  const rows = await db
+    .select({ partyId: ledgerEntries.partyId, balance: sql<string>`sum(${ledgerEntries.debitPaise} - ${ledgerEntries.creditPaise})::text` })
+    .from(ledgerEntries)
+    .where(and(eq(ledgerEntries.shopId, shopId), eq(ledgerEntries.partyType, partyType), inArray(ledgerEntries.partyId, partyIds)))
+    .groupBy(ledgerEntries.partyId);
+  return new Map(rows.map((row) => [row.partyId, Number(row.balance)]));
+}
+
+export type StatementLine = { id: number; entryDate: string; kind: string; sourceType: string; sourceId: string; debitPaise: number; creditPaise: number; balancePaise: number };
+
+/** A party's entries in date order with a running balance (debit − credit). */
+export async function partyStatement(shopId: string, partyType: "customer" | "supplier", partyId: string, db: Database | Transaction = getDb()): Promise<StatementLine[]> {
+  const rows = await db
+    .select({ id: ledgerEntries.id, entryDate: ledgerEntries.entryDate, kind: ledgerEntries.kind, sourceType: ledgerEntries.sourceType, sourceId: ledgerEntries.sourceId, debitPaise: ledgerEntries.debitPaise, creditPaise: ledgerEntries.creditPaise })
+    .from(ledgerEntries)
+    .where(and(eq(ledgerEntries.shopId, shopId), eq(ledgerEntries.partyType, partyType), eq(ledgerEntries.partyId, partyId)))
+    .orderBy(asc(ledgerEntries.entryDate), asc(ledgerEntries.id));
+  let running = 0;
+  return rows.map((row) => {
+    running += row.debitPaise - row.creditPaise;
+    return { ...row, balancePaise: running };
+  });
 }

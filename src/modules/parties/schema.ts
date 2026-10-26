@@ -36,5 +36,6 @@ export const suppliers = pgTable("suppliers", {
   phone: varchar("phone", { length: 15 }),
   gstin: varchar("gstin", { length: 15 }),
   paymentTermsDays: integer("payment_terms_days").notNull().default(30),
+  isActive: boolean("is_active").notNull().default(true),
   createdAt: createdAt(),
 });

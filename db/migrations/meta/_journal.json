@@ -57,6 +57,13 @@
       "when": 1793009192562,
       "tag": "0007_credit_note_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793010702840,
+      "tag": "0008_purchases_receiving",
+      "breakpoints": true
     }
   ]
 }

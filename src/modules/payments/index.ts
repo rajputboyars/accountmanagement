@@ -107,3 +107,66 @@ export async function recordCreditNoteRefund(
   });
   return id;
 }
+
+export type SupplierPaymentRow = { id: string; method: PaymentMethod; amountPaise: number; reference: string | null; businessDate: string; direction: "in" | "out"; status: "recorded" | "reversed"; createdAt: Date };
+
+/** Money paid to a supplier ("out", party supplier). */
+export async function recordSupplierPayment(
+  tx: Transaction,
+  payment: { shopId: string; fy: string; supplierId: string; method: PaymentMethod; amountPaise: number; reference: string | null; businessDate: string; recordedBy: string },
+): Promise<string> {
+  const id = randomUUID();
+  await tx.insert(payments).values({
+    id,
+    shopId: payment.shopId,
+    fy: payment.fy,
+    direction: "out",
+    partyType: "supplier",
+    partyId: payment.supplierId,
+    method: payment.method,
+    amountPaise: payment.amountPaise,
+    reference: payment.reference,
+    businessDate: payment.businessDate,
+    recordedBy: payment.recordedBy,
+  });
+  return id;
+}
+
+/**
+ * Reverses a supplier payment entered by mistake: a new "in" row for the same amount and method,
+ * with the original marked reversed and linked to it. Returns the original (locked) and the reversal id.
+ */
+export async function reverseSupplierPaymentRow(tx: Transaction, shopId: string, paymentId: string, info: { fy: string; businessDate: string; recordedBy: string }) {
+  if (!/^[0-9a-f-]{36}$/i.test(paymentId)) return null;
+  const [original] = await tx
+    .select()
+    .from(payments)
+    .where(and(eq(payments.shopId, shopId), eq(payments.id, paymentId), eq(payments.partyType, "supplier"), eq(payments.direction, "out")))
+    .limit(1)
+    .for("update");
+  if (!original) return null;
+  if (original.status === "reversed") return { original, reversalId: null };
+  const reversalId = randomUUID();
+  await tx.insert(payments).values({
+    id: reversalId,
+    shopId,
+    fy: info.fy,
+    direction: "in",
+    partyType: "supplier",
+    partyId: original.partyId,
+    method: original.method,
+    amountPaise: original.amountPaise,
+    businessDate: info.businessDate,
+    recordedBy: info.recordedBy,
+  });
+  await tx.update(payments).set({ status: "reversed", reversedByPaymentId: reversalId }).where(eq(payments.id, original.id));
+  return { original, reversalId };
+}
+
+export async function supplierPayments(db: Database | Transaction, shopId: string, supplierId: string): Promise<SupplierPaymentRow[]> {
+  return db
+    .select({ id: payments.id, method: payments.method, amountPaise: payments.amountPaise, reference: payments.reference, businessDate: payments.businessDate, direction: payments.direction, status: payments.status, createdAt: payments.createdAt })
+    .from(payments)
+    .where(and(eq(payments.shopId, shopId), eq(payments.partyType, "supplier"), eq(payments.partyId, supplierId)))
+    .orderBy(payments.createdAt);
+}
