@@ -22,6 +22,7 @@ export const DEFAULT_PERMISSIONS = {
   "purchases.edit": ["owner", "manager", "inventory"],
   "stock.receive": ["owner", "manager", "inventory"],
   "stock.adjust": ["owner", "manager", "inventory"],
+  "stock.opening": ["owner"], // go-live opening stock (spec §8: owner enters and reviews opening entries)
   "suppliers.pay": ["owner"],
   "reports.view": ["owner", "manager"],
   "profit.view": ["owner"],

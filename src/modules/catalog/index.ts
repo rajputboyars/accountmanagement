@@ -21,3 +21,4 @@ export { addProductUnit, setProductUnitActive, updateProductUnitFactor } from ".
 export { createUnit, DEFAULT_UNITS, listUnits, seedDefaultUnits, setUnitActive, type Unit } from "./units";
 export { GST_RATE_OPTIONS } from "./validation";
 export { loadProductNames, loadProductPricingInputs, type ProductPricingInputs } from "./pricing-inputs";
+export { listShopProductsForStock, loadProductsForStock, lockProductsForStock, type ProductStockInputs, type ProductStockUnits } from "./stock-inputs";

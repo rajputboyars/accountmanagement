@@ -15,4 +15,4 @@ export {
 export { ConsoleOtpSender, getOtpSender, maskPhone, type OtpSender } from "./otp-provider";
 export { hashPin, isOwnerPinSet, PIN_LOCKOUT_SECONDS, PIN_MAX_FAILURES, setOwnerPin, validatePinStrength, verifyOwnerPin } from "./pin";
 export { createSession, revokeAllSessionsForUser, SESSION_TTL_SECONDS, validateSessionToken, type SessionContext } from "./sessions";
-export { addStaffMember, getStaffMember, listStaff, setStaffActive, type StaffMember } from "./staff";
+export { addStaffMember, getStaffMember, listStaff, loadUserNames, setStaffActive, type StaffMember } from "./staff";

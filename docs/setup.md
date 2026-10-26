@@ -169,3 +169,25 @@ Ties that the database already prevents (two active slabs or rules for the same 
 - There is no `/api/v1/pricing/quote` route yet; the price check uses a server action. The route comes with billing.
 - The sidebar shows Smart Pricing to every role; other roles get "You don't have access" and the server refuses the data.
 
+## Inventory & opening stock (Phase 5) rules and limitations
+
+**Screens.** `/inventory/stock` (stock list with status counts, search, category and status filters, recent adjustments), `/inventory/stock/[productId]` (on-hand quantity, full stock history, adjustment form), `/inventory/stock/opening` (multi-line opening stock with a review step).
+
+**Who can do what.** See stock: `inventory.view` (owner, manager, inventory staff). Enter opening stock: the new `stock.opening` permission (owner only by default; spec §8 has the owner enter and review opening entries). Record an adjustment: `stock.adjust` (owner, manager, inventory staff); one worth more than ₹2,000 at cost, or of a product with no cost price, needs the owner (decision 21). Costs in the history: `profit.view`.
+
+**How stock is calculated.** The quantity shown is always `SUM(stock_movements.qty_base)` for the product (the `v_stock` definition, scoped to the shop). `stock_levels` is a cache written only in the same transaction as a movement; the screens compare it with the journal and show **Needs check** (with the journal quantity and a plain explanation) when they disagree, when the cache is missing, or when stock is below zero. "Recalculate from stock entries" (needs `stock.adjust`) rebuilds the cache from the journal and is audited; it never changes stock. A product with no movements is **Not counted yet** (unknown), never zero. Status: at or below the reorder level → Low; below half of it → Reorder now (spec §5).
+
+**Opening stock.** One `opening` movement per product, dated the opening day, in the base unit (quantity × that product's own pack size), with `unit_cost_paise` = the entered cost or the product's current cost (may be unknown). All lines are validated first and saved in one transaction; a product with any existing movement is refused (use a count fix). The product rows are locked (`FOR UPDATE`, sorted) so two submissions can't both open the same product, and a partial unique index enforces one opening per product. Each submission carries an `Idempotency-Key` (`withIdempotency`): a repeat returns the first result, a reused key with different lines is refused.
+
+**Adjustments** (spec S3). Customer return (+), damaged (−), count fix (±); a reason is required; stock can never go below zero (decision 12); each gets a gap-free `ADJ/26-27/00001` number from `number_series`; one movement, the cache update and an audit row in one transaction, idempotent like opening stock. Lock order: product rows → `stock_levels` → `number_series`.
+
+**Limitations**
+- **Costing is not decided here.** Opening cost is stored on the movement only; the product's cost price and `product_cost_history` are not changed. Weighted-average cost on receiving (spec decision 2) belongs to purchasing. No stock value or profit is shown.
+- **Owner approval flow is not built.** Staff adjustments above ₹2,000 (or of uncosted products) are refused with "ask the owner" instead of requesting an approval.
+- **No "lock opening entries" step** (spec §8 checklist). Opening can only ever happen once per product, which gives the same protection per product.
+- **Zero opening stock is not recorded** (a movement can't be 0); such products stay "Not counted yet".
+- **No day lock yet.** Closing (and its lock) comes later; adjustments are dated today in Asia/Kolkata.
+- **Not connected to sales or purchases yet.** Billing must add `sale` movements under the `stock_levels` lock; nothing deducts stock today.
+- **No CSV import of opening stock** (spec §8 describes import; it belongs to the import milestone).
+- The sidebar's "Preview build. Screens show sample data; nothing is saved yet." notice is now out of date and should be revised separately.
+

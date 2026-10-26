@@ -228,6 +228,12 @@ async function main() {
         )
         .onConflictDoNothing();
 
+      // The stock_levels cache, built from those movements in the same transaction.
+      await tx.execute(sql`
+        insert into stock_levels (product_id, shop_id, qty_base, last_movement_id)
+        select product_id, shop_id, sum(qty_base), max(id) from stock_movements where shop_id = ${SHOP_ID} group by product_id, shop_id
+        on conflict (product_id) do nothing`);
+
       // Opening balances: customer owes = debit; shop owes supplier = credit.
       await tx
         .insert(schema.ledgerEntries)

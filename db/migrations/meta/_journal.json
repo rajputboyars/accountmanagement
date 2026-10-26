@@ -36,6 +36,13 @@
       "when": 1792994598509,
       "tag": "0004_pricing_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792998613574,
+      "tag": "0005_inventory_opening",
+      "breakpoints": true
     }
   ]
 }

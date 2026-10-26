@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { recordAudit } from "@/modules/audit";
 import { getDb, withTransaction, type Transaction } from "@/server/db";
@@ -81,4 +81,14 @@ export async function setStaffActive(session: SessionContext, userId: string, ac
       entityId: userId,
     });
   });
+}
+
+/** Names of users of `shopId`, for labelling records. Ids of other shops are ignored. No permission check. */
+export async function loadUserNames(shopId: string, userIds: string[]): Promise<Map<string, string>> {
+  if (userIds.length === 0) return new Map();
+  const rows = await getDb()
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(and(eq(users.shopId, shopId), inArray(users.id, userIds)));
+  return new Map(rows.map((row) => [row.id, row.name]));
 }

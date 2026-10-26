@@ -42,6 +42,8 @@ export const stockMovements = pgTable(
     index("stock_movements_product_idx").on(t.productId, t.id),
     // The same source document can never move the same product twice for the same reason.
     uniqueIndex("stock_movements_source_key").on(t.sourceType, t.sourceId, t.productId, t.kind),
+    // Opening stock is entered once per product (spec §8); later changes are adjustments.
+    uniqueIndex("stock_movements_one_opening_key").on(t.productId).where(sql`${t.kind} = 'opening'`),
     check("stock_movements_kind_check", oneOf(t.kind, STOCK_MOVEMENT_KINDS)),
     check("stock_movements_qty_check", sql`${t.qtyBase} <> 0`),
   ],
