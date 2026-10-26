@@ -1,11 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { unstable_rethrow } from "next/navigation";
 import { ZodError } from "zod";
 import { createCustomer, updateCustomer } from "@/modules/parties";
 import { recordCustomerReceipt, reverseCustomerReceipt } from "@/modules/payments";
-import { logReminder, prepareReminder } from "@/modules/reporting";
+import { logReminder, prepareReminder, processWhatsAppOutbox } from "@/modules/reporting";
 import { toActionError } from "@/server/action-result";
 import { requireSession } from "@/server/auth";
 import { formatPaise } from "@/shared/money";
@@ -86,7 +87,14 @@ export async function prepareReminderAction(customerId: string) {
 
 export async function logReminderAction(customerId: string, channel: "provider" | "shared") {
   try {
-    return await logReminder(await requireSession(), customerId, channel);
+    const session = await requireSession();
+    const result = await logReminder(session, customerId, channel);
+    if (channel === "provider") {
+      // Send right after the response; the outbox retries anything that fails.
+      after(() => processWhatsAppOutbox({ shopId: session.shopId }).then(() => undefined));
+      revalidatePath(`/customers/${customerId}`);
+    }
+    return result;
   } catch (error) {
     unstable_rethrow(error);
     return { error: toActionError(error).error };

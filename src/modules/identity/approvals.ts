@@ -182,7 +182,7 @@ export async function requestApproval(session: SessionContext, input: unknown): 
   const view = toView(outcome.row, { name: session.name, role: session.role }, null, session);
   const notification = outcome.duplicate
     ? { delivered: false, channel: "in_app" as const, note: "This request was already waiting for the owner." }
-    : await notifyApprovalEvent(session.shopId, { type: "requested", requesterName: session.name, actionLabel: view.actionLabel, targetLabel: view.targetLabel });
+    : await notifyApprovalEvent(session.shopId, { type: "requested", approvalId: view.id, requesterName: session.name, actionLabel: view.actionLabel, targetLabel: view.targetLabel });
   return { ...view, duplicate: outcome.duplicate, notification };
 }
 
@@ -236,7 +236,7 @@ export async function decideApproval(session: SessionContext, input: unknown): P
 
   const [requester] = await getDb().select({ name: users.name, role: users.role }).from(users).where(and(eq(users.id, result.requestedBy), eq(users.shopId, session.shopId)));
   const view = toView(result, requester ?? { name: "Staff", role: "staff" }, session.name, session);
-  await notifyApprovalEvent(session.shopId, { type: "decided", recipientUserId: result.requestedBy, actionLabel: view.actionLabel, targetLabel: view.targetLabel, decision: view.status === "approved" ? "approved" : "rejected", decisionReason });
+  await notifyApprovalEvent(session.shopId, { type: "decided", approvalId: view.id, recipientUserId: result.requestedBy, actionLabel: view.actionLabel, targetLabel: view.targetLabel, decision: view.status === "approved" ? "approved" : "rejected", decisionReason });
   return view;
 }
 

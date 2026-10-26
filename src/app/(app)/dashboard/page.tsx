@@ -11,7 +11,7 @@ import { TrendChart } from "@/components/reports/trend-chart";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { countPendingApprovals } from "@/modules/identity";
-import { getDashboard } from "@/modules/reporting";
+import { getDashboard, refreshBusinessAlerts } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
 import { formatPaise } from "@/shared/money";
 import { rangeQuery } from "@/shared/report-range";
@@ -54,6 +54,8 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
   const [data, pendingApprovalsCount] = await Promise.all([
     getDashboard(session, { range: one(query.range), from: one(query.from), to: one(query.to) }),
     session.role === "owner" ? countPendingApprovals(session) : 0,
+    // Raises today's stock / this week's dues alerts at most once (deduplicated); never blocks the page.
+    refreshBusinessAlerts(session).catch(() => 0),
   ]);
   const { range, sales, money, expenses, cash, receivables, payables, stock, profit } = data;
   const q = rangeQuery(range);

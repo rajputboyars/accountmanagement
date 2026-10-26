@@ -149,7 +149,7 @@ describe("reminders", () => {
     expect(reminder.providerConfigured).toBe(false);
     expect(reminder.shareUrl).toMatch(/^https:\/\/wa\.me\/91\d{10}\?text=/);
     await expect(logReminder(session, id, "provider")).rejects.toMatchObject({ code: "NO_PROVIDER" });
-    expect(await logReminder(session, id, "shared")).toEqual({ delivery: "shared_manually" });
+    expect(await logReminder(session, id, "shared")).toMatchObject({ delivery: "shared_manually" });
     const [audit] = await db.owner.select().from(auditLog).where(and(eq(auditLog.shopId, shop.shopId), eq(auditLog.action, "reporting.reminder_shared_manually")));
     expect(audit).toMatchObject({ entityId: id });
   });

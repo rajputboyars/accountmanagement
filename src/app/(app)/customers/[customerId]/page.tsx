@@ -8,7 +8,7 @@ import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { getCustomerAccount } from "@/modules/reporting";
+import { getCustomerAccount, listWhatsAppMessages } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
 import { ConflictError, NotFoundError } from "@/server/errors";
 import { formatPaise } from "@/shared/money";
@@ -28,6 +28,16 @@ export default function CustomerPage({ params, searchParams }: Props) {
 const dateText = (value: string) => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 const METHOD: Record<string, string> = { cash: "Cash", upi: "UPI", bank: "Bank", cheque: "Cheque", card: "Card" };
 
+const WHATSAPP_STATUS: Record<string, { label: string; variant: "success" | "warning" | "danger" | "neutral" | "info" }> = {
+  queued: { label: "Queued", variant: "neutral" },
+  sending: { label: "Sending", variant: "warning" },
+  sent: { label: "Sent", variant: "info" },
+  delivered: { label: "Delivered", variant: "success" },
+  read: { label: "Read", variant: "success" },
+  failed: { label: "Failed", variant: "danger" },
+};
+const timeText = (date: Date) => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }).format(date);
+
 async function Account({ params, searchParams }: Pick<Props, "params" | "searchParams">) {
   const [{ customerId }, query] = await Promise.all([params, searchParams]);
   const session = await requireSession();
@@ -35,6 +45,7 @@ async function Account({ params, searchParams }: Pick<Props, "params" | "searchP
     if (error instanceof NotFoundError || error instanceof ConflictError) return null;
     throw error;
   });
+  const messages = account ? await listWhatsAppMessages(session, account.customer.id) : { rows: [] };
   if (!account) {
     return (
       <PageContainer className="max-w-4xl">
@@ -213,6 +224,21 @@ async function Account({ params, searchParams }: Pick<Props, "params" | "searchP
           {account.canRecord && account.balancePaise > 0 ? (
             <SectionCard title="Payment reminder" description={customer.whatsappConsent ? "Only this customer's own balance is included." : "The customer hasn't agreed to WhatsApp reminders."}>
               {customer.whatsappConsent && customer.phone ? <ReminderCard customerId={customer.id} /> : <p className="text-sm text-muted-foreground">Turn on consent in the details below only if the customer agreed.</p>}
+            </SectionCard>
+          ) : null}
+          {messages.rows.length > 0 ? (
+            <SectionCard title="WhatsApp messages" description="Sent means WhatsApp accepted it; delivered and read come from WhatsApp." flush>
+              <ul className="flex flex-col divide-y divide-border pb-2">
+                {messages.rows.map((message) => (
+                  <li key={message.id} className="flex flex-col gap-0.5 px-5 py-2.5 text-sm">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="text-foreground">Dues reminder · {timeText(message.createdAt)}</span>
+                      <Badge variant={WHATSAPP_STATUS[message.status]?.variant ?? "neutral"}>{WHATSAPP_STATUS[message.status]?.label ?? message.status}</Badge>
+                    </span>
+                    {message.lastError ? <span className="text-xs text-muted-foreground">{message.lastError}</span> : null}
+                  </li>
+                ))}
+              </ul>
             </SectionCard>
           ) : null}
           {account.canEdit ? (

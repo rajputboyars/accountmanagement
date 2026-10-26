@@ -34,4 +34,16 @@ export {
   type RequestableAction,
   type ApprovalView,
 } from "./approvals";
-export { notifyApprovalEvent, type NotificationResult } from "./notifications";
+export {
+  countUnreadNotifications,
+  getNotificationPreferences,
+  listNotifications,
+  markNotificationsRead,
+  NOTIFICATION_KIND_LABELS,
+  notifyApprovalEvent,
+  raiseNotification,
+  setNotificationPreference,
+  type NewNotification,
+  type NotificationResult,
+} from "./notifications";
+export { NOTIFICATION_KINDS, type NotificationKind } from "./schema";

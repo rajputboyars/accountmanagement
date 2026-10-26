@@ -1,5 +1,7 @@
-import { LogOut } from "lucide-react";
+import Link from "next/link";
+import { Bell, LogOut } from "lucide-react";
 import { signOutAction } from "@/app/(auth)/login/actions";
+import { countUnreadNotifications } from "@/modules/identity";
 import { getCurrentShop } from "@/modules/settings";
 import { getCurrentSession } from "@/server/auth";
 
@@ -26,8 +28,17 @@ export async function HeaderShopName() {
 export async function HeaderAccount() {
   const session = await getCurrentSession();
   if (!session) return null;
+  const unread = await countUnreadNotifications(session);
   return (
     <div className="flex items-center gap-2">
+      <Link href="/notifications" className="relative grid size-11 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}>
+        <Bell className="size-5" aria-hidden="true" />
+        {unread ? (
+          <span aria-hidden="true" className="absolute top-1.5 right-1.5 grid min-w-5 place-items-center rounded-full bg-danger px-1 text-[11px] font-semibold text-white tabular-nums">
+            {unread > 99 ? "99+" : unread}
+          </span>
+        ) : null}
+      </Link>
       <div className="flex items-center gap-2.5 rounded-full border border-border bg-card py-1 pr-1 pl-1 sm:pr-3">
         <span aria-hidden="true" className="grid size-9 place-items-center rounded-full bg-teal-soft text-sm font-semibold text-teal-strong">
           {initials(session.name)}

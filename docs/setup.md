@@ -323,3 +323,11 @@ Ties that the database already prevents (two active slabs or rules for the same 
 
 **Limitations.** Imports only add new records; existing ones are skipped, never updated. No Excel (.xlsx) upload (save as CSV). Opening stock is dated the import day. A row failing inside a 200-row opening-stock chunk leaves that chunk unsaved with the reason; fix and re-upload.
 
+## Notifications & WhatsApp (Phase 14)
+
+**In-app.** Bell in the header (unread count) and `/notifications` (mark read, mute kinds per person). Alerts: approval requested (owner) and decided (requester), low/out of stock (daily summary to `inventory.view`), overdue customer dues (weekly summary to `customers.edit`), WhatsApp failures (`customers.edit`). Stock and dues summaries are worked out from stock movements and the ledger when the dashboard or notifications page opens; a unique (recipient, dedupe key) makes repeats no-ops. Recipients are active staff of the same shop holding the permission.
+
+**WhatsApp.** `WHATSAPP_PROVIDER=meta` uses the WhatsApp Business Cloud API (`WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, optional approved `WHATSAPP_TEMPLATE_NAME` with one body variable); empty keeps manual Copy / Open WhatsApp. "Send via WhatsApp" on a customer queues today's dues reminder in the outbox (consent, phone and balance required; one per customer per day; audited) and sends right after the response. `POST /api/jobs/whatsapp` with `Bearer $CRON_SECRET` sends due messages for all shops (run every minute). Temporary failures (network, 429, 5xx) retry after 1, 4, 16, 64 minutes, up to 5 attempts; permanent failures, withdrawn consent or a changed phone fail the message and alert. A send interrupted mid-way is failed as "outcome unknown", never repeated. Rows are claimed with SKIP LOCKED. Delivered/read come only from `/api/webhooks/whatsapp`, verified with `WHATSAPP_APP_SECRET` (and `WHATSAPP_VERIFY_TOKEN` for the subscription check); statuses only move forward. Tests use a fake provider; nothing reaches the network.
+
+**Limitations.** No scheduler is bundled (call the job route from cron or a platform scheduler). Only dues reminders are sent by WhatsApp; staff alerts are in-app only. No SMS/email. Bulk overdue reminders exist as a service (`queueOverdueReminders`) without a screen yet.
+

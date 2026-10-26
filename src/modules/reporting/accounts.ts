@@ -219,16 +219,15 @@ export async function prepareReminder(session: SessionContext, customerId: strin
  * "shared" only means the user opened or copied it; delivery is not confirmed.
  */
 export async function logReminder(session: SessionContext, customerId: string, channel: "provider" | "shared") {
-  const reminder = await prepareReminder(session, customerId);
-  let delivery: "sent" | "shared_manually" = "shared_manually";
   if (channel === "provider") {
-    const provider = getReminderProvider();
-    if (!provider) throw new ConflictError("NO_PROVIDER", "No WhatsApp provider is set up. Use Copy or Open WhatsApp instead.");
-    await provider.send({ phone: reminder.phone, text: reminder.text });
-    delivery = "sent";
+    // Queued in the WhatsApp outbox (consent re-checked, one per day); delivery is tracked there.
+    const { queueDuesReminder } = await import("./whatsapp");
+    const queued = await queueDuesReminder(session, customerId);
+    return { delivery: "queued" as const, duplicate: queued.duplicate };
   }
+  const reminder = await prepareReminder(session, customerId);
   await withTransaction((tx) =>
-    recordAudit(tx, { shopId: session.shopId, userId: session.userId, role: session.role }, { action: "reporting.reminder_" + delivery, entityType: "customer", entityId: customerId, after: { channel, delivery, textLength: reminder.text.length } }),
+    recordAudit(tx, { shopId: session.shopId, userId: session.userId, role: session.role }, { action: "reporting.reminder_shared_manually", entityType: "customer", entityId: customerId, after: { channel, delivery: "shared_manually", textLength: reminder.text.length } }),
   );
-  return { delivery };
+  return { delivery: "shared_manually" as const, duplicate: false };
 }

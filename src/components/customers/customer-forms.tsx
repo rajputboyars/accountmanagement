@@ -160,7 +160,25 @@ export function ReminderCard({ customerId }: { customerId: string }) {
               Open WhatsApp
             </a>
           </div>
-          {!reminder.providerConfigured ? <p className="text-xs text-muted-foreground">No WhatsApp sending service is set up, so you send it yourself.</p> : null}
+          {reminder.providerConfigured ? (
+            <Button
+              type="button"
+              size="touch"
+              className="self-start"
+              disabled={pending}
+              onClick={() =>
+                start(async () => {
+                  const result = await logReminderAction(customerId, "provider");
+                  setNote("error" in result ? (result.error ?? null) : result.duplicate ? "Today's reminder is already queued or sent; see its status below." : "Queued for WhatsApp. The status below updates when WhatsApp confirms.");
+                })
+              }
+            >
+              <MessageCircle className="size-4" aria-hidden="true" />
+              Send via WhatsApp
+            </Button>
+          ) : (
+            <p className="text-xs text-muted-foreground">No WhatsApp sending service is set up, so you send it yourself.</p>
+          )}
         </>
       ) : (
         <Button
