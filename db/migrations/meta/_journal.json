@@ -113,6 +113,13 @@
       "when": 1793035028961,
       "tag": "0015_settings_numbering",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793035842616,
+      "tag": "0016_purchase_gst_rates",
+      "breakpoints": true
     }
   ]
 }

@@ -106,7 +106,7 @@ export const goodsReceiptLines = pgTable(
   },
   (t) => [
     check("goods_receipt_lines_qty_check", sql`${t.qtyBase} > 0`),
-    check("goods_receipt_lines_gst_rate_check", sql`${t.gstRateBp} in (0, 500, 1200, 1800, 2800)`),
+    check("goods_receipt_lines_gst_rate_check", sql`${t.gstRateBp} in (0, 10, 25, 150, 300, 500, 1200, 1800, 2800, 4000)`), // STATUTORY_GST_RATES_BP
     index("goods_receipt_lines_receipt_idx").on(t.goodsReceiptId),
     index("goods_receipt_lines_po_line_idx").on(t.purchaseOrderLineId),
   ],

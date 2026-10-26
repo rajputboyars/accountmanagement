@@ -3,7 +3,7 @@ import { isOwnerPinSet, listStaff, requirePermission, type SessionContext } from
 import { stockOnHand } from "@/modules/inventory";
 import { listShopCustomers, listShopSuppliers } from "@/modules/parties";
 import { recentInvoices } from "@/modules/sales";
-import { getCurrentShop } from "@/modules/settings";
+import { getBusinessSettings } from "@/modules/settings";
 
 /**
  * Go-live checklist for the owner (spec §8): worked out from the shop's real records every time, never
@@ -13,8 +13,8 @@ export type OnboardingStep = { key: string; title: string; detail: string; done:
 
 export async function getOnboardingStatus(session: SessionContext) {
   await requirePermission(session, "import.run");
-  const [shop, pinSet, staff, items, customers, suppliers, bills] = await Promise.all([
-    getCurrentShop(session),
+  const [business, pinSet, staff, items, customers, suppliers, bills] = await Promise.all([
+    getBusinessSettings(session),
     isOwnerPinSet(session),
     listStaff(session),
     listShopProductsForStock(session.shopId, { includeInactive: true }),
@@ -24,8 +24,12 @@ export async function getOnboardingStatus(session: SessionContext) {
   ]);
   const stocked = (await stockOnHand(session.shopId, items.map((item) => item.id))).size;
   const registered = customers.filter((customer) => customer.type !== "walkin").length;
+  const shop = business.profile;
+  // A regular GST-registered shop can't issue a valid tax invoice without its GSTIN on it.
+  const gstReady = business.gst.registration !== "regular" || Boolean(business.gst.gstin);
+  const shopReady = Boolean(shop.legalName && shop.address && shop.phone) && gstReady;
   const steps: OnboardingStep[] = [
-    { key: "shop", title: "Shop details", detail: shop.legalName && shop.address && shop.phone ? "Name, address and phone are set." : "Add the legal name, address and phone printed on bills.", done: Boolean(shop.legalName && shop.address && shop.phone), href: "/settings" },
+    { key: "shop", title: "Shop details & GST", detail: shopReady ? "Name, address, phone and GST details are set." : gstReady ? "Add the legal name, address and phone printed on bills." : "Add the shop's GSTIN in Settings → GST (needed on every tax invoice).", done: shopReady, href: "/settings" },
     { key: "pin", title: "Owner PIN", detail: pinSet ? "Set. Staff need it for approvals on the spot." : "Set a PIN for approvals at the counter.", done: pinSet, href: "/settings" },
     { key: "staff", title: "Staff accounts", detail: staff.length > 1 ? `${staff.length - 1} staff added.` : "Add your cashier, manager or stock person.", done: staff.length > 1, href: "/settings" },
     { key: "products", title: "Products", detail: items.length ? `${items.length} products.` : "Add products one by one or import a CSV.", done: items.length > 0, href: "/inventory", importType: "products" },

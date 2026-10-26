@@ -341,3 +341,11 @@ Ties that the database already prevents (two active slabs or rules for the same 
 
 **Limitations.** No e-invoicing (IRN/QR) or e-way bills; no reverse charge, cess, export/SEZ or exempt-vs-nil distinctions; composition rates and returns are outside the app. Changing registration type mid-year is allowed but should follow the CA's advice; issued bills never change.
 
+## Final QA & security (Phase 16)
+
+**Checked.** Every server action and route handler validates the session (login/setup excepted; webhook and job routes use signature/secret). Services check permissions and filter by the session's shop; cross-shop writes on bills, returns, receipts, expenses, supplier payments, goods receipts and adjustments are refused (`tests/security/hardening.test.ts`). Money writes take the day lock and are idempotent or state-guarded; a duplicate submission replays, a different body with the same key is 409; a failed bill uses no number. After a mixed flow every `party_balances`/`stock_levels` cache equals its journal. Sessions: httpOnly, SameSite=Lax, Secure in production; expired, revoked and switched-off users are rejected; OTP limited to 5 requests/hour and 5 attempts. No secrets are tracked (only `.env.example` placeholders); env validation refuses weak secrets and the console SMS provider in production. Unexpected errors show a generic message; server details stay in logs.
+
+**Fixed.** Purchases refused notified GST rates other than the old five (3%, 40%…), in validation, the form and the database check (migration 0016). Added error, global-error and 404 pages; HSTS in production; shop filter on the expense void lock; the go-live checklist requires the GSTIN for a regular GST shop; the Settings GST form no longer scrolls sideways on phones.
+
+**Not done (known).** No Content-Security-Policy (the inline theme script would need nonces); no external rate limiter beyond OTP limits; no automated browser (e2e) tests yet.
+

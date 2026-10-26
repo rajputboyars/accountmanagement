@@ -5,7 +5,8 @@ import { createdAt, id, paise, quantity } from "../../server/schema-helpers";
 
 /** Owned by the catalog module: categories, products, units and cost history. */
 
-export const GST_RATES_BP = [0, 500, 1200, 1800, 2800] as const;
+/** Notified GST rates (see src/shared/gst.ts STATUTORY_GST_RATES_BP). */
+export const GST_RATES_BP = [0, 10, 25, 150, 300, 500, 1200, 1800, 2800, 4000] as const;
 
 /**
  * Units a shop sells or counts in (Piece, Box, Meter …). Products reference a unit by its short

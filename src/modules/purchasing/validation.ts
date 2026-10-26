@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { STATUTORY_GST_RATES_BP } from "@/shared/gst";
 import { parseRupeesToPaise } from "@/shared/money";
 import { parseQuantity, QuantityError, type Milli } from "@/shared/quantity";
 
@@ -74,7 +75,8 @@ export const purchaseOrderInputSchema = z
     });
   });
 
-const GST_RATES = [0, 500, 1200, 1800, 2800];
+/** What the supplier charged: any notified GST rate (the shop's own sales rates may be fewer). */
+const GST_RATES: readonly number[] = STATUTORY_GST_RATES_BP;
 
 export const receiptInputSchema = z
   .object({

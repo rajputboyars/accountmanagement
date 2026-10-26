@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { parseRupeesToPaise } from "@/shared/money";
 import { computePurchaseTotals } from "@/shared/purchase";
 import { parseQuantity } from "@/shared/quantity";
+import { STATUTORY_GST_RATES_BP } from "@/shared/gst";
 
 export type PurchasableProduct = { id: string; name: string; sku: string; baseUnit: string; gstRateBp: number; units: { code: string; label: string }[] };
 export type OrderLineForReceipt = { id: string; productName: string; unit: string; baseUnit: string; leftBase: string; leftInUnit: string | null; costPaisePerUnit: number; gstRateBp: number };
@@ -18,7 +19,7 @@ export type OrderLineForReceipt = { id: string; productName: string; unit: strin
 type Line = { key: number; productId: string; purchaseOrderLineId: string; unit: string; quantity: string; cost: string; gstRateBp: string; label?: string };
 
 const newKey = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID().replace(/-/g, "") : `${Date.now()}${Math.random().toString(36).slice(2)}`);
-const GST = [0, 500, 1200, 1800, 2800];
+const GST: readonly number[] = STATUTORY_GST_RATES_BP;
 const rupeeText = (paise: number) => (paise % 100 === 0 ? String(paise / 100) : (paise / 100).toFixed(2));
 
 /** Live total from the shared purchase maths; the server works it out again when saving. */

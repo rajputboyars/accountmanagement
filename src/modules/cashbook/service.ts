@@ -311,9 +311,9 @@ export async function voidExpense(session: SessionContext, expenseId: string, in
     const [found] = await tx.select({ businessDate: expenses.businessDate }).from(expenses).where(and(eq(expenses.id, expenseId), eq(expenses.shopId, session.shopId))).limit(1);
     if (!found) throw new NotFoundError("Expense not found.");
     await lockDayForWrite(tx, session.shopId, found.businessDate);
-    const [expense] = await tx.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1).for("update");
+    const [expense] = await tx.select().from(expenses).where(and(eq(expenses.id, expenseId), eq(expenses.shopId, session.shopId))).limit(1).for("update");
     if (expense!.status === "voided") throw new ConflictError("ALREADY_VOIDED", "This expense is already voided.");
-    await tx.update(expenses).set({ status: "voided", voidedAt: new Date(), voidedBy: session.userId, voidReason: reason }).where(eq(expenses.id, expenseId));
+    await tx.update(expenses).set({ status: "voided", voidedAt: new Date(), voidedBy: session.userId, voidReason: reason }).where(and(eq(expenses.id, expenseId), eq(expenses.shopId, session.shopId)));
     await recordAudit(tx, actorOf(session), { action: "cashbook.expense_voided", entityType: "expense", entityId: expenseId, before: { status: "recorded", amountPaise: expense!.amountPaise }, after: { status: "voided" }, reason });
   });
 }

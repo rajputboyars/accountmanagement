@@ -65,6 +65,7 @@ To inspect what will run, read the pending files in `db/migrations/` and compare
 | `0013_notifications.sql` | generated + hand-added grants | `notifications` (one row per recipient, unique per user and dedupe key), `notification_preferences` (mutes), `whatsapp_messages` (outbox: status, attempts, next attempt, provider id, unique dedupe key per shop) |
 | `0014_business_settings.sql` | generated + hand-added permission rows | `shops`: `gst_registration`, `inter_state_sales`, `gst_rates_bp`, `invoice_prefix`; `invoices`: `tax_mode` (intra/inter/none, with amount checks) and `place_of_supply`; `igst_paise` on invoice lines, credit notes and their lines; `settings.edit` (owner) |
 | `0015_settings_numbering.sql` | generated | `number_series.start_value` (numbering has started once `next_value` passes it); product GST rate check widened to the notified rates |
+| `0016_purchase_gst_rates.sql` | generated | goods receipt line GST rate check widened to the notified rates (a supplier may charge 3% or 40%) |
 
 ## Tables by owning module
 

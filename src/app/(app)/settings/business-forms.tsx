@@ -7,7 +7,7 @@ import type { BusinessSettings } from "@/modules/settings";
 import { COMPOSITION_DECLARATION, GST_STATE_LIST, STATUTORY_GST_RATES_BP } from "@/shared/gst";
 import { saveGstAction, saveInvoiceAction, saveProfileAction, type SettingsFormState } from "./actions";
 
-const selectClass = "h-11 rounded-lg border border-input bg-background px-3 text-sm text-foreground";
+const selectClass = "h-11 w-full min-w-0 rounded-lg border border-input bg-background px-3 text-sm text-foreground";
 const textareaClass = "min-h-20 rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground";
 const pick = (state: SettingsFormState, name: string, saved: string | null) => (typeof state.values?.[name] === "string" ? (state.values[name] as string) : (saved ?? ""));
 const rateLabel = (rate: number) => (rate === 0 ? "0% (nil / exempt)" : `${(rate / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}%`);
