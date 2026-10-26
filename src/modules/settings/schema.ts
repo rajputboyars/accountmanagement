@@ -14,9 +14,16 @@ export const shops = pgTable("shops", {
   phone: varchar("phone", { length: 15 }),
   fyStartMonth: smallint("fy_start_month").notNull().default(4),
   openingCashPaise: bigint("opening_cash_paise", { mode: "number" }).notNull().default(0),
-  settings: jsonb("settings").notNull().default(sql`'{}'::jsonb`),
+  settings: jsonb("settings").notNull().default(sql`'{}'::jsonb`), // invoice extras: terms, UPI id, bank details
+  /** GST treatment (src/shared/gst.ts). Existing shops keep charging GST as before ('regular'). */
+  gstRegistration: text("gst_registration").notNull().default("regular"),
+  interStateSales: boolean("inter_state_sales").notNull().default(false),
+  /** GST rates offered for products, in basis points (a subset of the statutory rates). */
+  gstRatesBp: integer("gst_rates_bp").array().notNull().default(sql`'{0,500,1200,1800,2800}'::integer[]`),
+  /** Rendered before invoice numbers, e.g. INV/26-27/00001 (≤ 4 letters keeps it within 16 characters). */
+  invoicePrefix: varchar("invoice_prefix", { length: 4 }).notNull().default("INV"),
   createdAt: createdAt(),
-});
+}, (t) => [check("shops_gst_registration_check", sql`${t.gstRegistration} in ('regular', 'composition', 'unregistered')`), check("shops_invoice_prefix_check", sql`${t.invoicePrefix} ~ '^[A-Z]{1,4}$'`)]);
 
 export const devices = pgTable("devices", {
   id: id(),
@@ -35,6 +42,8 @@ export const numberSeries = pgTable(
     series: text("series").notNull(),
     fy: char("fy", { length: 5 }).notNull(),
     nextValue: integer("next_value").notNull().default(1),
+    /** First number of the year (Settings → Invoice); numbering has started once next_value passes it. */
+    startValue: integer("start_value").notNull().default(1),
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.shopId, t.series, t.fy] })],

@@ -224,10 +224,18 @@ function auditFields(data: AuditableProduct) {
   };
 }
 
+/** The rate must be one the shop uses (Settings → GST). Loaded lazily: settings imports this module. */
+async function requireShopGstRate(tx: Transaction, shopId: string, rate: number) {
+  const { loadTaxSettings } = await import("@/modules/settings");
+  const { gstRatesBp } = await loadTaxSettings(tx, shopId);
+  if (!gstRatesBp.includes(rate)) throw new ConflictError("GST_RATE_NOT_ENABLED", `${rate / 100}% isn't one of this shop's GST rates. The owner can add it in Settings → GST.`, { fieldErrors: { gstRateBp: "Not one of this shop's GST rates." } });
+}
+
 export async function createProduct(session: SessionContext, input: unknown): Promise<{ id: string }> {
   await requirePermission(session, CATALOG_MANAGE);
   const data = productInputSchema.parse(input);
   return withTransaction(async (tx) => {
+    await requireShopGstRate(tx, session.shopId, data.gstRateBp);
     await requireActiveUnit(tx, session.shopId, data.baseUnit, "base unit");
     const categoryId = await resolveCategory(tx, session.shopId, data.categoryName);
     let row: { id: string } | undefined;
@@ -277,6 +285,7 @@ export async function updateProduct(session: SessionContext, productId: string, 
       .limit(1)
       .for("update");
     if (!current) throw new NotFoundError("Product not found.");
+    if (data.gstRateBp !== current.gstRateBp) await requireShopGstRate(tx, session.shopId, data.gstRateBp);
     if (current.version !== data.version) {
       throw new ConflictError("VERSION_CONFLICT", "Someone else changed this product while you were editing. Reload the page to see the latest details.");
     }

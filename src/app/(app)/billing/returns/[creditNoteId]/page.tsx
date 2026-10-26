@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { stateTaxLabel } from "@/shared/gst";
 import { ArrowLeft, CircleCheck } from "lucide-react";
 import { PrintButton } from "@/components/sales/invoice-actions";
 import { Money } from "@/components/nexora/money";
@@ -67,7 +68,7 @@ async function CreditNoteView({ params, searchParams }: Pick<Props, "params" | "
           <div>
             <p className="text-lg font-bold text-foreground">{note.shop.legalName ?? note.shop.name}</p>
             {note.shop.address ? <p className="text-sm text-muted-foreground">{note.shop.address}</p> : null}
-            <p className="text-sm text-muted-foreground">{note.shop.gstin ? `GSTIN ${note.shop.gstin}` : "GSTIN not set"}</p>
+            <p className="text-sm text-muted-foreground">{note.shop.gstin ? `GSTIN ${note.shop.gstin}` : note.shop.registration === "unregistered" ? "Not registered under GST" : "GSTIN not set"}</p>
           </div>
           <div className="sm:text-right">
             <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Credit note</p>
@@ -118,8 +119,14 @@ async function CreditNoteView({ params, searchParams }: Pick<Props, "params" | "
 
         <dl className="flex flex-col gap-1 self-end text-sm sm:w-72">
           <Row label="Taxable value" paise={note.taxablePaise} />
-          <Row label="CGST" paise={note.cgstPaise} />
-          <Row label="SGST" paise={note.sgstPaise} />
+          {note.taxMode === "intra" ? (
+            <>
+              <Row label="CGST" paise={note.cgstPaise} />
+              <Row label={stateTaxLabel(note.shop.stateCode)} paise={note.sgstPaise} />
+            </>
+          ) : null}
+          {note.taxMode === "inter" ? <Row label="IGST" paise={note.igstPaise} /> : null}
+          {note.taxMode === "none" ? <p className="text-xs text-muted-foreground">No GST on the original bill of supply.</p> : null}
           {note.roundOffPaise !== 0 ? <Row label="Round off" paise={note.roundOffPaise} /> : null}
           <div className="mt-1 flex items-baseline justify-between border-t border-border pt-2">
             <dt className="font-semibold text-foreground">Total</dt>

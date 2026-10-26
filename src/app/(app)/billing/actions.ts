@@ -20,6 +20,8 @@ export type BillInputPayload = {
   lines: { productId: string; unit: string; quantity: string }[];
   payments: { cash: string; upi: string; card: string; bank: string };
   cashReceived: string;
+  /** GST state code; empty = the shop's own state. */
+  placeOfSupply?: string;
 };
 
 type Failure = { error: string; code?: string; fieldErrors?: Record<string, string> };

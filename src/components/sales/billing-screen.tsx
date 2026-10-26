@@ -3,6 +3,7 @@
 import { cn } from "cn";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { GST_STATE_LIST, stateTaxLabel } from "@/shared/gst";
 import { CircleAlert, LoaderCircle, Minus, Plus, ReceiptText, Search, Trash2 } from "lucide-react";
 import { previewBillAction, saveBillAction, searchProductsAction, type BillInputPayload } from "@/app/(app)/billing/actions";
 import { Field, selectClass } from "@/components/catalog/form-bits";
@@ -40,6 +41,7 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
   const [customerId, setCustomerId] = useState("");
   const [priceList, setPriceList] = useState("");
   const [discountPercent, setDiscountPercent] = useState("");
+  const [placeOfSupply, setPlaceOfSupply] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
   const [payments, setPayments] = useState<Record<Method, string>>({ cash: "", upi: "", card: "", bank: "" });
   const [cashReceived, setCashReceived] = useState("");
@@ -55,8 +57,8 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
   const nextKey = useRef(1);
 
   const payload: BillInputPayload = useMemo(
-    () => ({ customerId, priceList, discountPercent, lines: lines.map((line) => ({ productId: line.product.id, unit: line.unit, quantity: line.quantity })), payments, cashReceived }),
-    [customerId, priceList, discountPercent, lines, payments, cashReceived],
+    () => ({ customerId, priceList, discountPercent, lines: lines.map((line) => ({ productId: line.product.id, unit: line.unit, quantity: line.quantity })), payments, cashReceived, placeOfSupply }),
+    [customerId, priceList, discountPercent, lines, payments, cashReceived, placeOfSupply],
   );
   const payloadKey = JSON.stringify(payload);
 
@@ -262,6 +264,20 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
           <Field label="Bill discount (%)" error={problems.find((problem) => problem.field === "discountPercent")?.message ?? fieldErrors.discountPercent}>
             <Input value={discountPercent} onChange={(event) => setDiscountPercent(event.target.value)} inputMode="decimal" placeholder="0" className="h-11 tabular-nums" />
           </Field>
+          {bill?.interStateSales || placeOfSupply ? (
+            <Field label="Place of supply" error={problems.find((problem) => problem.field === "placeOfSupply")?.message}>
+              <select value={placeOfSupply} onChange={(event) => setPlaceOfSupply(event.target.value)} className={selectClass}>
+                <option value="">This shop&apos;s state (counter sale)</option>
+                {GST_STATE_LIST
+                  .filter(([code]) => code !== bill?.shopStateCode)
+                  .map(([code, name]) => (
+                    <option key={code} value={code}>
+                      Delivered to {name} (IGST)
+                    </option>
+                  ))}
+              </select>
+            </Field>
+          ) : null}
         </div>
 
         <dl className="flex flex-col gap-1.5 border-t border-border pt-3 text-sm">
@@ -270,8 +286,14 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
               <Row label="Subtotal" paise={current.totals.subtotalPaise} />
               {current.totals.discountPaise > 0 ? <Row label={`Discount`} paise={-current.totals.discountPaise} /> : null}
               <Row label="Taxable value" paise={current.totals.taxablePaise} />
-              <Row label="CGST" paise={current.totals.cgstPaise} />
-              <Row label="SGST" paise={current.totals.sgstPaise} />
+              {current.taxMode === "intra" ? (
+                <>
+                  <Row label="CGST" paise={current.totals.cgstPaise} />
+                  <Row label={stateTaxLabel(current.shopStateCode)} paise={current.totals.sgstPaise} />
+                </>
+              ) : null}
+              {current.taxMode === "inter" ? <Row label="IGST" paise={current.totals.igstPaise} /> : null}
+              {current.taxMode === "none" ? <p className="text-xs text-muted-foreground">Bill of Supply: no GST is charged.</p> : null}
               {current.totals.roundOffPaise !== 0 ? <Row label="Round off" paise={current.totals.roundOffPaise} /> : null}
               <div className="mt-1 flex items-baseline justify-between border-t border-border pt-2">
                 <dt className="font-semibold text-foreground">Total</dt>

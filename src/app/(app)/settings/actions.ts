@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { addStaffMember, revokeStaffAccess, setOwnerPin, setStaffActive, updateStaffRole } from "@/modules/identity";
+import { updateBusinessProfile, updateGstSettings, updateInvoiceSettings } from "@/modules/settings";
 import { toActionError } from "@/server/action-result";
 import { requireSession } from "@/server/auth";
 import type { RoleName } from "@/shared/permissions";
@@ -78,4 +79,36 @@ export async function revokeStaffAccessAction(_previous: FormState, formData: Fo
     unstable_rethrow(error);
     return toActionError(error);
   }
+}
+
+// ── Business profile, GST and invoice settings (owner: `settings.edit`, checked by the service) ──
+
+export type SettingsFormState = FormState & { values?: Record<string, string | string[]> };
+
+async function saveSettings(save: () => Promise<void>, values: Record<string, string | string[]>, message: string): Promise<SettingsFormState> {
+  try {
+    await save();
+  } catch (error) {
+    unstable_rethrow(error);
+    return { ...toActionError(error), values, nonce: Date.now() };
+  }
+  revalidatePath("/settings");
+  return { ok: true, message, nonce: Date.now() };
+}
+
+const fields = (formData: FormData, names: string[]) => Object.fromEntries(names.map((name) => [name, String(formData.get(name) ?? "")]));
+
+export async function saveProfileAction(_previous: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
+  const values = fields(formData, ["name", "legalName", "address", "phone", "stateCode"]);
+  return saveSettings(async () => updateBusinessProfile(await requireSession(), values), values, "Business details saved. New bills will show them.");
+}
+
+export async function saveGstAction(_previous: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
+  const values = { ...fields(formData, ["registration", "gstin", "interStateSales"]), gstRatesBp: formData.getAll("gstRatesBp").map(String) };
+  return saveSettings(async () => updateGstSettings(await requireSession(), values), values, "GST settings saved. They apply to bills made from now on.");
+}
+
+export async function saveInvoiceAction(_previous: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
+  const values = fields(formData, ["invoicePrefix", "startingNumber", "terms", "upiId", "bankDetails"]);
+  return saveSettings(async () => updateInvoiceSettings(await requireSession(), values), values, "Invoice settings saved.");
 }

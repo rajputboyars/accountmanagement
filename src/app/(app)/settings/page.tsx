@@ -10,6 +10,8 @@ import { SectionCard } from "@/components/nexora/section-card";
 import { getNavItem } from "@/config/navigation";
 import { isOwnerPinSet, listStaff } from "@/modules/identity";
 import { checkPagePermission } from "@/server/auth";
+import { getBusinessSettings } from "@/modules/settings";
+import { GstForm, InvoiceForm, ProfileForm } from "./business-forms";
 import { AddStaffForm, PinForm, RevokeAccessButton, StaffActiveToggle, StaffRoleForm } from "./settings-forms";
 
 const item = getNavItem("settings");
@@ -28,7 +30,7 @@ export default function SettingsPage() {
 
 async function SettingsContent() {
   const { session, allowed: canManageStaff } = await checkPagePermission("staff.manage");
-  const [staff, pinSet] = await Promise.all([canManageStaff ? listStaff(session) : Promise.resolve([]), isOwnerPinSet(session)]);
+  const [staff, pinSet, business] = await Promise.all([canManageStaff ? listStaff(session) : Promise.resolve([]), isOwnerPinSet(session), getBusinessSettings(session)]);
   const isOwner = session.role === "owner";
 
   return (
@@ -44,6 +46,35 @@ async function SettingsContent() {
           ) : null
         }
       />
+
+      {business.canEdit ? (
+        <>
+          <SectionCard title="Business details" description="Printed on every bill and statement.">
+            <ProfileForm profile={business.profile} />
+          </SectionCard>
+          <div className="grid gap-6 xl:grid-cols-2">
+            <SectionCard title="GST" description="How bills are taxed. Changes apply to bills made after saving; issued bills never change.">
+              <GstForm gst={business.gst} />
+            </SectionCard>
+            <SectionCard title="Invoice" description="Numbering, payment details and terms on bills.">
+              <InvoiceForm invoice={business.invoice} />
+            </SectionCard>
+          </div>
+        </>
+      ) : (
+        <SectionCard title="Business details" description="Only the owner can change these.">
+          <dl className="grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-muted-foreground">Shop</dt>
+              <dd className="font-medium text-foreground">{business.profile.legalName ?? business.profile.name}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">GST</dt>
+              <dd className="font-medium text-foreground">{business.gst.registration === "regular" ? `Registered · ${business.gst.gstin ?? "GSTIN missing"}` : business.gst.registration === "composition" ? "Composition scheme" : "Not registered"}</dd>
+            </div>
+          </dl>
+        </SectionCard>
+      )}
 
       {canManageStaff ? (
         <SectionCard title="Staff & access" description="Each person signs in with their own mobile number. Their role decides what they can open." flush>

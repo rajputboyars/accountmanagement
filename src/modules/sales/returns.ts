@@ -7,7 +7,7 @@ import { appendStockMovement, lockStockRows } from "@/modules/inventory";
 import { appendLedgerEntry, lockPartyBalance, partyBalance } from "@/modules/ledger";
 import { findCustomer, loadCustomerNames } from "@/modules/parties";
 import { recordCreditNoteRefund } from "@/modules/payments";
-import { getCurrentShop, takeDocumentNumber } from "@/modules/settings";
+import { invoiceProfile, takeDocumentNumber } from "@/modules/settings";
 import { withIdempotency } from "@/modules/sync";
 import { getDb, withTransaction, type Database, type Transaction } from "@/server/db";
 import { lockDayForWrite } from "@/server/day-lock";
@@ -155,7 +155,7 @@ async function planReturn(db: Db, shopId: string, data: Parsed, lockInvoice: boo
   });
   let totals: CreditNoteTotals;
   try {
-    totals = computeCreditNote(lines.map((line) => ({ soldBaseQty: line.soldBaseQty, lineTaxablePaise: line.taxablePaise, gstRateBp: line.gstRateBp, returnedBaseQty: line.returnedBaseQty, returnedTaxablePaise: line.returnedTaxablePaise, returnBaseQty: line.returnBaseQty })));
+    totals = computeCreditNote(lines.map((line) => ({ soldBaseQty: line.soldBaseQty, lineTaxablePaise: line.taxablePaise, gstRateBp: line.gstRateBp, returnedBaseQty: line.returnedBaseQty, returnedTaxablePaise: line.returnedTaxablePaise, returnBaseQty: line.returnBaseQty })), invoice.taxMode);
   } catch (error) {
     if (error instanceof ReturnQuantityError) {
       const line = lines[error.lineIndex]!;
@@ -185,6 +185,8 @@ function returnView(plan: Planned) {
     taxablePaise: plan.totals.taxablePaise,
     cgstPaise: plan.totals.cgstPaise,
     sgstPaise: plan.totals.sgstPaise,
+    igstPaise: plan.totals.igstPaise,
+    taxMode: plan.invoice.taxMode,
     roundOffPaise: plan.totals.roundOffPaise,
     totalPaise: plan.totals.totalPaise,
   };
@@ -243,6 +245,7 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
         taxablePaise: plan.totals.taxablePaise,
         cgstPaise: plan.totals.cgstPaise,
         sgstPaise: plan.totals.sgstPaise,
+        igstPaise: plan.totals.igstPaise,
         roundOffPaise: plan.totals.roundOffPaise,
         totalPaise: plan.totals.totalPaise,
         createdBy: session.userId,
@@ -256,6 +259,7 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
           taxablePaise: plan.totals.lines[index]!.taxablePaise,
           cgstPaise: plan.totals.lines[index]!.cgstPaise,
           sgstPaise: plan.totals.lines[index]!.sgstPaise,
+          igstPaise: plan.totals.lines[index]!.igstPaise,
           restock: line.restock,
         })),
       );
@@ -338,17 +342,20 @@ export async function getCreditNote(session: SessionContext, creditNoteId: strin
     .innerJoin(invoiceLines, eq(invoiceLines.id, creditNoteLines.invoiceLineId))
     .where(eq(creditNoteLines.creditNoteId, note.id))
     .orderBy(asc(invoiceLines.lineNo));
+  const [original] = await db.select({ taxMode: invoices.taxMode, placeOfSupply: invoices.placeOfSupply }).from(invoices).where(and(eq(invoices.id, note.invoiceId), eq(invoices.shopId, session.shopId))).limit(1);
   const [products, customer, users, shop] = await Promise.all([
     loadProductNames(session.shopId, lines.map((line) => line.productId)),
     findCustomer(session.shopId, note.customerId),
     loadUserNames(session.shopId, [note.createdBy]),
-    getCurrentShop(session),
+    invoiceProfile(session.shopId),
   ]);
   return {
     ...note,
     invoiceNumber: invoice?.number ?? "",
     invoiceDate: invoice?.businessDate ?? "",
     shop,
+    taxMode: original?.taxMode ?? "intra",
+    placeOfSupply: original?.placeOfSupply ?? null,
     customer: { id: customer.id, name: customer.name, type: customer.type, phone: customer.phone, gstin: customer.gstin },
     lines: lines.map((line) => ({ ...line, baseQty: formatQuantity(parseQuantity(line.baseQty)), productName: products.get(line.productId)?.name ?? "Unknown product", baseUnit: products.get(line.productId)?.baseUnit ?? "" })),
     createdByName: users.get(note.createdBy) ?? "Unknown user",

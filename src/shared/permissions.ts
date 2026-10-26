@@ -32,6 +32,7 @@ export const DEFAULT_PERMISSIONS = {
   "day.close": ["owner"],
   "day.reopen": ["owner"],
   "staff.manage": ["owner"],
+  "settings.edit": ["owner"], // business profile, GST and invoice settings
   "audit.view": ["owner"],
   "import.run": ["owner"],
   "approvals.view": ["owner", "manager", "cashier", "inventory"],

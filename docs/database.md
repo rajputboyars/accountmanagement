@@ -63,6 +63,8 @@ To inspect what will run, read the pending files in `db/migrations/` and compare
 | `0011_staff_approvals.sql` | hand-added | `role_permissions` rows for `approvals.view` (every role) and `approvals.decide` (owner only); no table changes (the `approvals` table exists since 0001) |
 | `0012_onboarding_import.sql` | generated | `import_jobs`: type `opening_stock`, status `committing`, `file_name`, history index, unique committed file per shop and type; `import_rows`: `entity_id` (record created, so retries skip it) and unique row number per job |
 | `0013_notifications.sql` | generated + hand-added grants | `notifications` (one row per recipient, unique per user and dedupe key), `notification_preferences` (mutes), `whatsapp_messages` (outbox: status, attempts, next attempt, provider id, unique dedupe key per shop) |
+| `0014_business_settings.sql` | generated + hand-added permission rows | `shops`: `gst_registration`, `inter_state_sales`, `gst_rates_bp`, `invoice_prefix`; `invoices`: `tax_mode` (intra/inter/none, with amount checks) and `place_of_supply`; `igst_paise` on invoice lines, credit notes and their lines; `settings.edit` (owner) |
+| `0015_settings_numbering.sql` | generated | `number_series.start_value` (numbering has started once `next_value` passes it); product GST rate check widened to the notified rates |
 
 ## Tables by owning module
 

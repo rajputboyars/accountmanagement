@@ -6,6 +6,7 @@ import { PageContainer } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { listCategories, listUnits } from "@/modules/catalog";
+import { getBusinessSettings } from "@/modules/settings";
 import { requireSession } from "@/server/auth";
 
 export const metadata: Metadata = { title: "Add product" };
@@ -21,7 +22,7 @@ export default function NewProductPage() {
 
 async function NewProduct() {
   const session = await requireSession();
-  const [units, categories] = await Promise.all([listUnits(session), listCategories(session)]);
+  const [units, categories, settings] = await Promise.all([listUnits(session), listCategories(session), getBusinessSettings(session)]);
   return (
     <PageContainer className="max-w-4xl">
       <Link href="/inventory" className="inline-flex items-center gap-1.5 self-start text-sm font-medium text-muted-foreground hover:text-foreground">
@@ -36,6 +37,7 @@ async function NewProduct() {
           categories={categories.map((category) => category.name)}
           canSeeCost
           baseUnitEditable
+          gstRates={settings.gst.gstRatesBp}
         />
       </SectionCard>
     </PageContainer>

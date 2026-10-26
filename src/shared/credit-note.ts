@@ -13,7 +13,8 @@
  */
 
 import type { Paise } from "./money";
-import { allocate, mulDivHalfUp } from "./invoice";
+import type { TaxMode } from "./gst";
+import { groupTax, mulDivHalfUp } from "./invoice";
 import type { Milli } from "./quantity";
 
 export type ReturnLineInput = {
@@ -29,10 +30,11 @@ export type ReturnLineInput = {
 };
 
 export type CreditNoteTotals = {
-  lines: { taxablePaise: Paise; cgstPaise: Paise; sgstPaise: Paise }[];
+  lines: { taxablePaise: Paise; cgstPaise: Paise; sgstPaise: Paise; igstPaise: Paise }[];
   taxablePaise: Paise;
   cgstPaise: Paise;
   sgstPaise: Paise;
+  igstPaise: Paise;
   roundOffPaise: number;
   totalPaise: Paise;
 };
@@ -56,27 +58,21 @@ function lineTaxable(line: ReturnLineInput, index: number): Paise {
   return Math.min(Number(share), remainingTaxable);
 }
 
-export function computeCreditNote(lines: readonly ReturnLineInput[]): CreditNoteTotals {
+/** Credit note in the original bill's tax mode (an IGST bill is credited with IGST, a bill of supply with no tax). */
+export function computeCreditNote(lines: readonly ReturnLineInput[], taxMode: TaxMode = "intra"): CreditNoteTotals {
   const taxable = lines.map(lineTaxable);
-  const tax = lines.map(() => 0);
-  let cgstPaise = 0;
-  for (const rate of [...new Set(lines.map((line) => line.gstRateBp))]) {
-    const members = lines.flatMap((line, index) => (line.gstRateBp === rate ? [index] : []));
-    const groupTaxable = members.reduce((sum, index) => sum + taxable[index]!, 0);
-    const half = mulDivHalfUp(groupTaxable, rate, 20000);
-    cgstPaise += half;
-    allocate(half, members.map((index) => taxable[index]!)).forEach((share, position) => {
-      tax[members[position]!] = share;
-    });
-  }
+  const { lineTax, groups } = groupTax(lines.map((line, index) => ({ taxablePaise: taxable[index]!, gstRateBp: line.gstRateBp })), taxMode);
+  const cgstPaise = groups.reduce((sum, group) => sum + group.cgstPaise, 0);
+  const igstPaise = groups.reduce((sum, group) => sum + group.igstPaise, 0);
   const taxablePaise = taxable.reduce((sum, value) => sum + value, 0);
-  const raw = taxablePaise + cgstPaise * 2;
+  const raw = taxablePaise + cgstPaise * 2 + igstPaise;
   const totalPaise = mulDivHalfUp(raw, 1, 100) * 100;
   return {
-    lines: taxable.map((value, index) => ({ taxablePaise: value, cgstPaise: tax[index]!, sgstPaise: tax[index]! })),
+    lines: taxable.map((value, index) => ({ taxablePaise: value, cgstPaise: taxMode === "intra" ? lineTax[index]! : 0, sgstPaise: taxMode === "intra" ? lineTax[index]! : 0, igstPaise: taxMode === "inter" ? lineTax[index]! : 0 })),
     taxablePaise,
     cgstPaise,
     sgstPaise: cgstPaise,
+    igstPaise,
     roundOffPaise: totalPaise - raw,
     totalPaise,
   };

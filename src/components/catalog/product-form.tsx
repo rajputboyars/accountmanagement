@@ -19,13 +19,7 @@ export type ProductFormValues = {
   costPrice: string;
 };
 
-const GST_LABELS: [string, string][] = [
-  ["0", "0% (exempt)"],
-  ["500", "5%"],
-  ["1200", "12%"],
-  ["1800", "18%"],
-  ["2800", "28%"],
-];
+const gstLabel = (rate: number) => (rate === 0 ? "0% (nil / exempt)" : `${(rate / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}%`);
 
 type Props = {
   mode: "create" | "edit";
@@ -38,9 +32,11 @@ type Props = {
   canSeeCost: boolean;
   /** False once packaging units exist (they are measured in the base unit). */
   baseUnitEditable: boolean;
+  /** GST rates the shop uses (Settings → GST), in basis points. */
+  gstRates: number[];
 };
 
-export function ProductForm({ mode, initial, units, categories, productId, version, canSeeCost, baseUnitEditable }: Props) {
+export function ProductForm({ mode, initial, units, categories, productId, version, canSeeCost, baseUnitEditable, gstRates }: Props) {
   const [state, action] = useActionState<CatalogFormState, FormData>(mode === "create" ? createProductAction : updateProductAction, {});
   const values: ProductFormValues = { ...initial, ...(state.values as Partial<ProductFormValues> | undefined) };
   const errors = state.fieldErrors ?? {};
@@ -105,11 +101,13 @@ export function ProductForm({ mode, initial, units, categories, productId, versi
         </Field>
         <Field label="GST rate" error={errors.gstRateBp}>
           <FormSelect name="gstRateBp" defaultValue={values.gstRateBp} aria-invalid={invalid("gstRateBp")}>
-            {GST_LABELS.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
+            {[...new Set([...gstRates, ...(values.gstRateBp ? [Number(values.gstRateBp)] : [])])]
+              .sort((a, b) => a - b)
+              .map((rate) => (
+                <option key={rate} value={String(rate)}>
+                  {gstLabel(rate)}
+                </option>
+              ))}
           </FormSelect>
         </Field>
       </fieldset>

@@ -2,10 +2,12 @@ import { findCustomer, type CustomerSummary } from "@/modules/parties";
 import { defaultPriceList, priceBillLine, type BillLinePrice } from "@/modules/pricing";
 import { stockOnHand } from "@/modules/inventory";
 import { partyBalance } from "@/modules/ledger";
+import { loadTaxSettings } from "@/modules/settings";
 import type { SessionContext } from "@/modules/identity";
 import type { Transaction } from "@/server/db";
 import { ConflictError } from "@/server/errors";
 import { formatPaise } from "@/shared/money";
+import { resolveTaxMode, type TaxMode } from "@/shared/gst";
 import { computeInvoiceTotals, DISCOUNT_LIMIT_BP, type InvoiceTotals } from "@/shared/invoice";
 import { formatBasisPoints } from "@/shared/pricing-engine";
 import { formatQuantity } from "@/shared/quantity";
@@ -36,6 +38,10 @@ export type ComputedBill = {
   changePaise: number | null;
   costComplete: boolean;
   problems: BillProblem[];
+  taxMode: TaxMode;
+  placeOfSupply: string;
+  shopStateCode: string;
+  interStateSales: boolean;
 };
 
 const money = (paise: number) => formatPaise(paise, { withPaise: false });
@@ -81,9 +87,16 @@ export async function computeBill(
     });
   }
 
+  // Tax treatment from the shop's saved GST settings and the chosen place of supply (src/shared/gst.ts).
+  const taxSettings = await loadTaxSettings(tx, session.shopId);
+  const tax = resolveTaxMode(taxSettings, input.placeOfSupply ?? null);
+  if ("problem" in tax) problems.push({ code: "PLACE_OF_SUPPLY", field: "placeOfSupply", message: tax.problem });
+  const taxMode: TaxMode = "problem" in tax ? (taxSettings.registration === "regular" ? "intra" : "none") : tax.mode;
+  const placeOfSupply = "problem" in tax ? taxSettings.stateCode : tax.placeOfSupply;
   const totals = computeInvoiceTotals(
     lines.map((line) => ({ amountPaise: line.quote.lineAmountPaise, gstRateBp: line.product.gstRateBp })),
     input.discountPercent,
+    taxMode,
   );
 
   const pay = input.payments;
@@ -128,6 +141,10 @@ export async function computeBill(
     changePaise,
     costComplete: lines.every((line) => line.product.costPaise !== null),
     problems,
+    taxMode,
+    placeOfSupply,
+    shopStateCode: taxSettings.stateCode,
+    interStateSales: taxSettings.registration === "regular" && taxSettings.interStateSales,
   };
 }
 
@@ -148,7 +165,7 @@ export function billView(bill: ComputedBill) {
       ratePaise: line.quote.saleUnitRatePaise,
       rateReason: line.rateReason,
       amountPaise: line.quote.lineAmountPaise,
-      gstRateBp: line.product.gstRateBp,
+      gstRateBp: bill.totals.lines[index]!.gstRateBp,
       stockQty: line.stockQty === null ? null : formatQuantity(line.stockQty),
       taxablePaise: bill.totals.lines[index]!.taxablePaise,
     })),
@@ -159,6 +176,10 @@ export function billView(bill: ComputedBill) {
     balanceAfterPaise: bill.balanceAfterPaise,
     changePaise: bill.changePaise,
     problems: bill.problems,
+    taxMode: bill.taxMode,
+    placeOfSupply: bill.placeOfSupply,
+    shopStateCode: bill.shopStateCode,
+    interStateSales: bill.interStateSales,
     expectedRates: bill.lines.map((line) => line.quote.saleUnitRatePaise),
   };
 }

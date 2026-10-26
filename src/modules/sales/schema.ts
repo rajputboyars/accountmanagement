@@ -30,6 +30,7 @@ import { createdAt, oneOf, paise, quantity } from "../../server/schema-helpers";
 export const INVOICE_STATUSES = ["issued", "cancelled"] as const;
 export const PRICE_LISTS = ["retail", "wholesale"] as const;
 export const CREDIT_NOTE_SETTLEMENTS = ["ledger", "cash", "upi", "bank"] as const;
+export const TAX_MODES = ["intra", "inter", "none"] as const;
 
 export const invoices = pgTable(
   "invoices",
@@ -55,6 +56,8 @@ export const invoices = pgTable(
     totalPaise: paise("total_paise").notNull(),
     paidNowPaise: paise("paid_now_paise").notNull().default(0),
     costComplete: boolean("cost_complete").notNull(), // false if any line has no cost: profit not shown
+    taxMode: text("tax_mode").$type<(typeof TAX_MODES)[number]>().notNull().default("intra"), // src/shared/gst.ts
+    placeOfSupply: char("place_of_supply", { length: 2 }), // GST state code; NULL on bills before Phase 15 = shop's state
     discountApprovalId: uuid("discount_approval_id").references(() => approvals.id),
     correctsInvoiceId: uuid("corrects_invoice_id").references((): AnyPgColumn => invoices.id),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
@@ -69,6 +72,8 @@ export const invoices = pgTable(
     index("invoices_shop_business_date_idx").on(t.shopId, t.businessDate),
     index("invoices_customer_business_date_idx").on(t.customerId, t.businessDate),
     check("invoices_status_check", oneOf(t.status, INVOICE_STATUSES)),
+    check("invoices_tax_mode_check", oneOf(t.taxMode, TAX_MODES)),
+    check("invoices_tax_mode_amounts_check", sql`(${t.taxMode} = 'intra' and ${t.igstPaise} = 0) or (${t.taxMode} = 'inter' and ${t.cgstPaise} = 0 and ${t.sgstPaise} = 0) or (${t.taxMode} = 'none' and ${t.cgstPaise} = 0 and ${t.sgstPaise} = 0 and ${t.igstPaise} = 0)`),
     check("invoices_price_list_check", oneOf(t.priceList, PRICE_LISTS)),
     check("invoices_round_off_check", sql`${t.roundOffPaise} between -50 and 50`),
     check("invoices_paid_now_check", sql`${t.paidNowPaise} between 0 and ${t.totalPaise}`),
@@ -98,6 +103,7 @@ export const invoiceLines = pgTable(
     gstRateBp: integer("gst_rate_bp").notNull(),
     cgstPaise: paise("cgst_paise").notNull(),
     sgstPaise: paise("sgst_paise").notNull(),
+    igstPaise: paise("igst_paise").notNull().default(0),
     unitCostPaise: paise("unit_cost_paise"), // per base unit at sale; NULL = unknown
     createdAt: createdAt(),
   },
@@ -124,6 +130,7 @@ export const creditNotes = pgTable(
     taxablePaise: paise("taxable_paise").notNull(),
     cgstPaise: paise("cgst_paise").notNull(),
     sgstPaise: paise("sgst_paise").notNull(),
+    igstPaise: paise("igst_paise").notNull().default(0),
     roundOffPaise: integer("round_off_paise").notNull(),
     totalPaise: paise("total_paise").notNull(),
     createdBy: uuid("created_by").notNull().references(() => users.id),
@@ -134,8 +141,8 @@ export const creditNotes = pgTable(
     check("credit_notes_settlement_check", oneOf(t.settlement, CREDIT_NOTE_SETTLEMENTS)),
     index("credit_notes_invoice_idx").on(t.invoiceId),
     check("credit_notes_round_off_check", sql`${t.roundOffPaise} between -50 and 50`),
-    check("credit_notes_total_check", sql`${t.totalPaise} = ${t.taxablePaise} + ${t.cgstPaise} + ${t.sgstPaise} + ${t.roundOffPaise}`),
-    check("credit_notes_amounts_check", sql`${t.taxablePaise} >= 0 and ${t.cgstPaise} >= 0 and ${t.sgstPaise} >= 0 and ${t.totalPaise} >= 0`),
+    check("credit_notes_total_check", sql`${t.totalPaise} = ${t.taxablePaise} + ${t.cgstPaise} + ${t.sgstPaise} + ${t.igstPaise} + ${t.roundOffPaise}`),
+    check("credit_notes_amounts_check", sql`${t.taxablePaise} >= 0 and ${t.cgstPaise} >= 0 and ${t.sgstPaise} >= 0 and ${t.igstPaise} >= 0 and ${t.totalPaise} >= 0`),
   ],
 );
 
@@ -149,6 +156,7 @@ export const creditNoteLines = pgTable(
     taxablePaise: paise("taxable_paise").notNull(),
     cgstPaise: paise("cgst_paise").notNull(),
     sgstPaise: paise("sgst_paise").notNull(),
+    igstPaise: paise("igst_paise").notNull().default(0),
     restock: boolean("restock").notNull(), // false = goes to damaged
     createdAt: createdAt(),
   },

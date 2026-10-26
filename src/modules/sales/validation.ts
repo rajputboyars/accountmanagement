@@ -71,6 +71,13 @@ export const billInputSchema = z
       .default({ cash: 0, upi: 0, card: 0, bank: 0 }),
     /** Cash handed over by the customer, only to work out change. Never saved. */
     cashReceived: rupees("cash received"),
+    /** GST state code where the goods are supplied. Empty = the shop's own state (counter sale). */
+    placeOfSupply: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => value || null)
+      .pipe(z.string().regex(/^\d{2}$/, "Choose the place of supply.").nullable()),
   })
   .superRefine((data, ctx) => {
     const seen = new Map<string, number>();

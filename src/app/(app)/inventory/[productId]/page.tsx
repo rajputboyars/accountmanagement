@@ -12,6 +12,7 @@ import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
 import { CATALOG_MANAGE, getProduct, listCategories, listUnits } from "@/modules/catalog";
 import { hasPermission } from "@/modules/identity";
+import { getBusinessSettings } from "@/modules/settings";
 import { requireSession } from "@/server/auth";
 import { NotFoundError } from "@/server/errors";
 import { paiseToRupeeInput } from "@/shared/money";
@@ -50,7 +51,7 @@ async function ProductDetailView({ params, searchParams }: Pick<Props, "params" 
     );
   }
 
-  const [canManage, units, categories] = await Promise.all([hasPermission(session, CATALOG_MANAGE), listUnits(session), listCategories(session)]);
+  const [canManage, units, categories, settings] = await Promise.all([hasPermission(session, CATALOG_MANAGE), listUnits(session), listCategories(session), getBusinessSettings(session)]);
   const baseUnit = units.find((unit) => unit.code === product.baseUnit);
   const saved = query.saved === "1";
 
@@ -118,6 +119,7 @@ async function ProductDetailView({ params, searchParams }: Pick<Props, "params" 
               categories={categories.map((category) => category.name)}
               canSeeCost={product.costVisible}
               baseUnitEditable={product.conversions.length === 0}
+              gstRates={settings.gst.gstRatesBp}
             />
           ) : (
             <dl className="grid gap-4 text-sm sm:grid-cols-2">

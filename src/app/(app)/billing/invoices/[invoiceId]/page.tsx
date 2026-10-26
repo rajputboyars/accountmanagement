@@ -7,6 +7,7 @@ import { PageContainer } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
+import { COMPOSITION_DECLARATION, documentTitle, GST_STATES, stateTaxLabel } from "@/shared/gst";
 import { buttonVariants } from "@/components/ui/button";
 import { getInvoice } from "@/modules/sales";
 import { requireSession } from "@/server/auth";
@@ -54,8 +55,11 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
   const creditPaise = invoice.totalPaise - invoice.paidNowPaise;
   const rateGroups = [...new Set(invoice.lines.map((line) => line.gstRateBp))].sort((a, b) => a - b).map((rate) => {
     const lines = invoice.lines.filter((line) => line.gstRateBp === rate);
-    return { rate, taxable: lines.reduce((sum, line) => sum + line.taxablePaise, 0), cgst: lines.reduce((sum, line) => sum + line.cgstPaise, 0), sgst: lines.reduce((sum, line) => sum + line.sgstPaise, 0) };
+    return { rate, taxable: lines.reduce((sum, line) => sum + line.taxablePaise, 0), cgst: lines.reduce((sum, line) => sum + line.cgstPaise, 0), sgst: lines.reduce((sum, line) => sum + line.sgstPaise, 0), igst: lines.reduce((sum, line) => sum + line.igstPaise, 0) };
   });
+  const mode = invoice.taxMode;
+  const stateTax = stateTaxLabel(invoice.shop.stateCode);
+  const place = invoice.placeOfSupply ?? invoice.shop.stateCode;
 
   return (
     <PageContainer className="max-w-4xl print:max-w-none print:p-0">
@@ -91,12 +95,12 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
             <p className="text-lg font-bold text-foreground">{invoice.shop.legalName ?? invoice.shop.name}</p>
             {invoice.shop.address ? <p className="text-sm text-muted-foreground">{invoice.shop.address}</p> : null}
             <p className="text-sm text-muted-foreground">
-              {invoice.shop.gstin ? `GSTIN ${invoice.shop.gstin}` : "GSTIN not set"} · State code {invoice.shop.stateCode}
+              {invoice.shop.gstin ? `GSTIN ${invoice.shop.gstin}` : invoice.shop.registration === "unregistered" ? "Not registered under GST" : "GSTIN not set"} · State {invoice.shop.stateCode} {GST_STATES[invoice.shop.stateCode] ?? ""}
               {invoice.shop.phone ? ` · ${invoice.shop.phone}` : ""}
             </p>
           </div>
           <div className="sm:text-right">
-            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Tax invoice</p>
+            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{documentTitle(mode)}</p>
             <p className="text-lg font-bold text-foreground">{invoice.number}</p>
             <p className="text-sm text-muted-foreground">{dateText(invoice.businessDate)}</p>
             <div className="mt-1 flex gap-1.5 sm:justify-end">
@@ -111,6 +115,11 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
           <p className="font-semibold text-foreground">{invoice.customer.name}</p>
           {invoice.customer.phone ? <p className="text-muted-foreground">{invoice.customer.phone}</p> : null}
           {invoice.customer.gstin ? <p className="text-muted-foreground">GSTIN {invoice.customer.gstin}</p> : null}
+          {mode !== "none" ? (
+            <p className="text-muted-foreground">
+              Place of supply: {place} {GST_STATES[place] ?? ""}
+            </p>
+          ) : null}
         </section>
 
         <div className="overflow-x-auto">
@@ -121,7 +130,7 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
                 <th className="py-2 pr-2 font-medium">Item</th>
                 <th className="py-2 pr-2 text-right font-medium">Qty</th>
                 <th className="py-2 pr-2 text-right font-medium">Rate</th>
-                <th className="py-2 pr-2 text-right font-medium">GST</th>
+                {mode !== "none" ? <th className="py-2 pr-2 text-right font-medium">GST</th> : null}
                 <th className="py-2 text-right font-medium">Amount</th>
               </tr>
             </thead>
@@ -140,7 +149,7 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
                   <td className="py-2 pr-2 text-right align-top">
                     <Money paise={line.ratePaise} withPaise />
                   </td>
-                  <td className="py-2 pr-2 text-right align-top text-muted-foreground">{formatBasisPoints(line.gstRateBp)}</td>
+                  {mode !== "none" ? <td className="py-2 pr-2 text-right align-top text-muted-foreground">{formatBasisPoints(line.gstRateBp)}</td> : null}
                   <td className="py-2 text-right align-top">
                     <Money paise={line.linePaise} withPaise />
                   </td>
@@ -151,41 +160,64 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
         </div>
 
         <div className="grid gap-5 sm:grid-cols-2">
-          <div className="text-sm">
-            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Tax summary</p>
-            <table className="mt-1 w-full text-xs">
-              <thead>
-                <tr className="text-left text-muted-foreground">
-                  <th className="py-1 font-medium">GST</th>
-                  <th className="py-1 text-right font-medium">Taxable</th>
-                  <th className="py-1 text-right font-medium">CGST</th>
-                  <th className="py-1 text-right font-medium">SGST</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rateGroups.map((group) => (
-                  <tr key={group.rate}>
-                    <td className="py-1">{formatBasisPoints(group.rate)}</td>
-                    <td className="py-1 text-right">
-                      <Money paise={group.taxable} withPaise />
-                    </td>
-                    <td className="py-1 text-right">
-                      <Money paise={group.cgst} withPaise />
-                    </td>
-                    <td className="py-1 text-right">
-                      <Money paise={group.sgst} withPaise />
-                    </td>
+          {mode === "none" ? (
+            <p className="text-sm text-muted-foreground">{invoice.shop.registration === "composition" ? COMPOSITION_DECLARATION : "Supplier not registered under GST; no GST charged."}</p>
+          ) : (
+            <div className="text-sm">
+              <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Tax summary</p>
+              <table className="mt-1 w-full text-xs">
+                <thead>
+                  <tr className="text-left text-muted-foreground">
+                    <th className="py-1 font-medium">GST</th>
+                    <th className="py-1 text-right font-medium">Taxable</th>
+                    {mode === "inter" ? (
+                      <th className="py-1 text-right font-medium">IGST</th>
+                    ) : (
+                      <>
+                        <th className="py-1 text-right font-medium">CGST</th>
+                        <th className="py-1 text-right font-medium">{stateTax}</th>
+                      </>
+                    )}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {rateGroups.map((group) => (
+                    <tr key={group.rate}>
+                      <td className="py-1">{formatBasisPoints(group.rate)}</td>
+                      <td className="py-1 text-right">
+                        <Money paise={group.taxable} withPaise />
+                      </td>
+                      {mode === "inter" ? (
+                        <td className="py-1 text-right">
+                          <Money paise={group.igst} withPaise />
+                        </td>
+                      ) : (
+                        <>
+                          <td className="py-1 text-right">
+                            <Money paise={group.cgst} withPaise />
+                          </td>
+                          <td className="py-1 text-right">
+                            <Money paise={group.sgst} withPaise />
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <dl className="flex flex-col gap-1 text-sm">
             <Row label="Subtotal" paise={invoice.subtotalPaise} />
             {invoice.discountPaise > 0 ? <Row label={`Discount ${formatBasisPoints(invoice.discountBp)}`} paise={-invoice.discountPaise} /> : null}
             <Row label="Taxable value" paise={invoice.taxablePaise} />
-            <Row label="CGST" paise={invoice.cgstPaise} />
-            <Row label="SGST" paise={invoice.sgstPaise} />
+            {mode === "intra" ? (
+              <>
+                <Row label="CGST" paise={invoice.cgstPaise} />
+                <Row label={stateTax} paise={invoice.sgstPaise} />
+              </>
+            ) : null}
+            {mode === "inter" ? <Row label="IGST" paise={invoice.igstPaise} /> : null}
             {invoice.roundOffPaise !== 0 ? <Row label="Round off" paise={invoice.roundOffPaise} /> : null}
             <div className="mt-1 flex items-baseline justify-between border-t border-border pt-2">
               <dt className="font-semibold text-foreground">Total</dt>
@@ -196,6 +228,14 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
             <p className="text-right text-xs text-muted-foreground">{rupeesInWords(invoice.totalPaise)}</p>
           </dl>
         </div>
+
+        {invoice.shop.upiId || invoice.shop.bankDetails || invoice.shop.terms ? (
+          <section aria-label="Terms and payment details" className="flex flex-col gap-1 border-t border-border pt-4 text-xs text-muted-foreground">
+            {invoice.shop.upiId ? <p>UPI: {invoice.shop.upiId}</p> : null}
+            {invoice.shop.bankDetails ? <p>Bank: {invoice.shop.bankDetails}</p> : null}
+            {invoice.shop.terms ? <p className="whitespace-pre-line">{invoice.shop.terms}</p> : null}
+          </section>
+        ) : null}
 
         <section aria-label="Payment" className="flex flex-col gap-1 border-t border-border pt-4 text-sm">
           <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Payment</p>

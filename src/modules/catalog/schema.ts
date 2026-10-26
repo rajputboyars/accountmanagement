@@ -65,7 +65,7 @@ export const products = pgTable(
     unique("products_shop_sku_key").on(t.shopId, t.sku),
     uniqueIndex("products_shop_barcode_key").on(t.shopId, t.barcode).where(sql`${t.barcode} is not null`),
     index("products_name_trgm").using("gin", t.name.op("gin_trgm_ops")),
-    check("products_gst_rate_check", sql`${t.gstRateBp} in (0, 500, 1200, 1800, 2800)`),
+    check("products_gst_rate_check", sql`${t.gstRateBp} in (0, 10, 25, 150, 300, 500, 1200, 1800, 2800, 4000)`), // STATUTORY_GST_RATES_BP
     check("products_cost_check", sql`${t.costPaise} >= 0`),
     check("products_retail_check", sql`${t.retailPaise} > 0`),
     check("products_wholesale_check", sql`${t.wholesalePaise} > 0`),

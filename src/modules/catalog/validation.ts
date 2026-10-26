@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { STATUTORY_GST_RATES_BP } from "@/shared/gst";
 import { parseRupeesToPaise } from "@/shared/money";
 import { parseQuantity, QuantityError, type Milli } from "@/shared/quantity";
 
 /** Server-side input rules for the catalog. Messages are written for shopkeepers. */
 
-export const GST_RATE_OPTIONS = [0, 500, 1200, 1800, 2800] as const;
+/** Any notified GST rate; the shop's own list (Settings → GST) is checked by the product service. */
+export const GST_RATE_OPTIONS = STATUTORY_GST_RATES_BP;
 
 const optionalText = (max: number, message: string) =>
   z

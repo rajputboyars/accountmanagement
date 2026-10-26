@@ -7,7 +7,7 @@ import { appendStockMovement, lockStockRows, stockOnHand } from "@/modules/inven
 import { appendLedgerEntry, lockPartyBalance, partyBalance } from "@/modules/ledger";
 import { ensureWalkInCustomer, findCustomer, listActiveCustomers, loadCustomerNames } from "@/modules/parties";
 import { paymentsForInvoice, recordCounterPayment, refundInvoicePayments } from "@/modules/payments";
-import { getCurrentShop, takeDocumentNumber } from "@/modules/settings";
+import { invoiceProfile, takeDocumentNumber } from "@/modules/settings";
 import { withIdempotency } from "@/modules/sync";
 import { getDb, withTransaction, type Transaction } from "@/server/db";
 import { lockDayForWrite } from "@/server/day-lock";
@@ -147,6 +147,8 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
         totalPaise: totals.totalPaise,
         paidNowPaise: computed.paidNowPaise,
         costComplete: computed.costComplete,
+        taxMode: computed.taxMode,
+        placeOfSupply: computed.placeOfSupply,
         discountApprovalId: consumedDiscountApprovalId,
       });
       await tx.insert(invoiceLines).values(
@@ -164,9 +166,10 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
           linePaise: line.quote.lineAmountPaise,
           lineDiscountPaise: totals.lines[index]!.discountPaise,
           taxablePaise: totals.lines[index]!.taxablePaise,
-          gstRateBp: line.product.gstRateBp,
+          gstRateBp: totals.lines[index]!.gstRateBp,
           cgstPaise: totals.lines[index]!.cgstPaise,
           sgstPaise: totals.lines[index]!.sgstPaise,
+          igstPaise: totals.lines[index]!.igstPaise,
           unitCostPaise: line.product.costPaise,
         })),
       );
@@ -305,6 +308,7 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
     reason: correction.reason,
     customerId: bill.customerId ?? null,
     priceList: bill.priceList ?? null,
+    placeOfSupply: bill.placeOfSupply ?? null,
     discountPercent: bill.discountPercent,
     payments: bill.payments,
     lines: bill.lines.map((line) => ({
@@ -483,6 +487,8 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
           totalPaise: totals.totalPaise,
           paidNowPaise: computed.paidNowPaise,
           costComplete: computed.costComplete,
+          taxMode: computed.taxMode,
+          placeOfSupply: computed.placeOfSupply,
           discountApprovalId: consumedDiscountApprovalId,
           correctsInvoiceId: original.id,
         });
@@ -502,9 +508,10 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
             linePaise: line.quote.lineAmountPaise,
             lineDiscountPaise: totals.lines[index]!.discountPaise,
             taxablePaise: totals.lines[index]!.taxablePaise,
-            gstRateBp: line.product.gstRateBp,
+            gstRateBp: totals.lines[index]!.gstRateBp,
             cgstPaise: totals.lines[index]!.cgstPaise,
             sgstPaise: totals.lines[index]!.sgstPaise,
+            igstPaise: totals.lines[index]!.igstPaise,
             unitCostPaise: line.product.costPaise,
           })),
         );
@@ -608,7 +615,7 @@ export async function getInvoice(session: SessionContext, invoiceId: string) {
     findCustomer(session.shopId, invoice.customerId),
     paymentsForInvoice(db, session.shopId, invoice.id),
     loadUserNames(session.shopId, [invoice.createdBy, ...(invoice.cancelledBy ? [invoice.cancelledBy] : [])]),
-    getCurrentShop(session),
+    invoiceProfile(session.shopId),
     hasPermission(session, INVOICE_CANCEL),
   ]);
   const balanceNowPaise = customer.type === "walkin" ? null : await partyBalance(session.shopId, "customer", customer.id);

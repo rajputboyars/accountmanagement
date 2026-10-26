@@ -331,3 +331,13 @@ Ties that the database already prevents (two active slabs or rules for the same 
 
 **Limitations.** No scheduler is bundled (call the job route from cron or a platform scheduler). Only dues reminders are sent by WhatsApp; staff alerts are in-app only. No SMS/email. Bulk overdue reminders exist as a service (`queueOverdueReminders`) without a screen yet.
 
+## Business settings & GST (Phase 15)
+
+**Screens.** `/settings` (owner, new `settings.edit`): business details (name, legal name, address, phone, state), GST (registration, GSTIN, inter-state sales, rates used on products) and invoice settings (prefix, starting number, UPI id, bank details, terms). Others see a read-only summary. Bills and credit notes print these saved details.
+
+**GST rules (src/shared/gst.ts), never guessed.** Not registered or composition scheme → "Bill of Supply", no GST (composition bills carry the CGST Rules 5(1) declaration). Regular → "Tax Invoice": CGST + SGST (UTGST for Chandigarh, Ladakh, Lakshadweep, A&N, DNH-DD) when the place of supply is the shop's state, IGST at the full rate when another state. Place of supply defaults to the shop's state (counter sale); another state is used only when chosen on the bill and only if the owner turned on inter-state sales (handoff B2 is open, so off by default); otherwise the bill is refused, not taxed as local. Each bill stores its tax mode and place of supply; credit notes follow the original bill. GSTINs are checked for format, state code and the mod-36 check digit, and must match the shop's state. Product rates must be one of the shop's enabled rates (subset of 0, 0.1, 0.25, 1.5, 3, 5, 12, 18, 28, 40%); the right rate per product still comes from its HSN code.
+
+**Numbering.** Invoice numbers are `PREFIX/26-27/00001` (prefix 1–4 letters, ≤ 16 characters). Prefix and starting number can change only before the financial year's first bill (one consecutive series per year); terms, UPI and bank details can change any time. All changes are audited with before/after.
+
+**Limitations.** No e-invoicing (IRN/QR) or e-way bills; no reverse charge, cess, export/SEZ or exempt-vs-nil distinctions; composition rates and returns are outside the app. Changing registration type mid-year is allowed but should follow the CA's advice; issued bills never change.
+
