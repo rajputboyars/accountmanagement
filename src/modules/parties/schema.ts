@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, integer, pgTable, text, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, check, integer, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 import { shops } from "../settings/schema";
 import { createdAt, id, oneOf, paise } from "../../server/schema-helpers";
 
@@ -18,6 +18,9 @@ export const customers = pgTable(
     area: text("area"),
     type: text("type").$type<(typeof CUSTOMER_TYPES)[number]>().notNull(),
     creditLimitPaise: paise("credit_limit_paise").notNull().default(0),
+    /** The customer agreed to payment reminders on WhatsApp. Reminders are never prepared without it. */
+    whatsappConsent: boolean("whatsapp_consent").notNull().default(false),
+    consentUpdatedAt: timestamp("consent_updated_at", { withTimezone: true }),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: createdAt(),
   },

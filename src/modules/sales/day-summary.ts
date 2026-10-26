@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, type Database, type Transaction } from "@/server/db";
 import { creditNotes, invoices } from "./schema";
 
@@ -44,4 +44,16 @@ export async function salesDaySummary(shopId: string, businessDate: string, db: 
     creditBills,
     creditNoteList,
   };
+}
+
+/** Invoice and credit note numbers for labelling ledger lines. Ids of other shops are ignored. */
+export async function documentNumbers(shopId: string, ids: { invoiceIds: string[]; creditNoteIds: string[] }, db: Database | Transaction = getDb()) {
+  const result = new Map<string, string>();
+  if (ids.invoiceIds.length) {
+    for (const row of await db.select({ id: invoices.id, number: invoices.number }).from(invoices).where(and(eq(invoices.shopId, shopId), inArray(invoices.id, ids.invoiceIds)))) result.set(row.id, row.number);
+  }
+  if (ids.creditNoteIds.length) {
+    for (const row of await db.select({ id: creditNotes.id, number: creditNotes.number }).from(creditNotes).where(and(eq(creditNotes.shopId, shopId), inArray(creditNotes.id, ids.creditNoteIds)))) result.set(row.id, row.number);
+  }
+  return result;
 }

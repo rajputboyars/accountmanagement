@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, type Database, type Transaction } from "@/server/db";
 import { goodsReceipts } from "./schema";
 
@@ -9,4 +9,11 @@ export async function purchasesDaySummary(shopId: string, businessDate: string, 
     .from(goodsReceipts)
     .where(and(eq(goodsReceipts.shopId, shopId), eq(goodsReceipts.receivedDate, businessDate), sql`${goodsReceipts.status} <> 'cancelled'`));
   return { purchasesPaise: receipts.reduce((sum, receipt) => sum + receipt.totalPaise, 0), receipts };
+}
+
+/** Goods receipt numbers for labelling supplier ledger lines. Ids of other shops are ignored. */
+export async function receiptNumbersFor(shopId: string, ids: string[], db: Database | Transaction = getDb()) {
+  if (ids.length === 0) return new Map<string, string>();
+  const rows = await db.select({ id: goodsReceipts.id, number: goodsReceipts.number }).from(goodsReceipts).where(and(eq(goodsReceipts.shopId, shopId), inArray(goodsReceipts.id, ids)));
+  return new Map(rows.map((row) => [row.id, row.number]));
 }

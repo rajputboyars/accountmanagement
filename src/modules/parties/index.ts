@@ -18,6 +18,7 @@ export type CustomerSummary = {
   phone: string | null;
   gstin: string | null;
   creditLimitPaise: number;
+  whatsappConsent: boolean;
   isActive: boolean;
 };
 
@@ -29,6 +30,7 @@ const summary = {
   phone: customers.phone,
   gstin: customers.gstin,
   creditLimitPaise: customers.creditLimitPaise,
+  whatsappConsent: customers.whatsappConsent,
   isActive: customers.isActive,
 };
 
@@ -125,3 +127,15 @@ export async function lockSupplier(tx: Transaction, shopId: string, supplierId: 
   if (!row) throw new NotFoundError("Supplier not found.");
   return row;
 }
+
+/** Every customer of the shop except the walk-in, by name (switched-off ones too when asked). */
+export async function listShopCustomers(shopId: string, options: { includeInactive?: boolean } = {}, db: Database | Transaction = getDb()): Promise<CustomerSummary[]> {
+  const rows = await db
+    .select(summary)
+    .from(customers)
+    .where(options.includeInactive ? eq(customers.shopId, shopId) : and(eq(customers.shopId, shopId), eq(customers.isActive, true)))
+    .orderBy(asc(customers.name));
+  return rows.filter((row) => row.type !== "walkin");
+}
+
+export { createCustomer, customerCreateSchema, updateCustomer } from "./customers";

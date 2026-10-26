@@ -59,6 +59,7 @@ To inspect what will run, read the pending files in `db/migrations/` and compare
 | `0007_credit_note_checks.sql` | generated | Credit notes: total = taxable + CGST + SGST + round off, round off within ±50 paise, non-negative amounts, index on invoice. Credit note lines: one per invoice line per note, non-negative amounts, index on invoice line (for remaining quantities) |
 | `0008_purchases_receiving.sql` | generated + hand-edited | Goods receipt lines keep unit, factor, quantity and cost as entered plus GST rate and amount; receipts get a status (received/cancelled) with who/why, a total check (total = value + GST) and indexes; the supplier-bill unique index now ignores cancelled receipts; `suppliers.is_active`; order indexes; `role_permissions` rows for the new `purchases.cancel` (owner) |
 | `0009_expenses_cashbook.sql` | generated | Expenses get an optional reference and void details (who, when, why) with checks: category is one of the fixed list, Other needs a note, a voided expense has a reason; date indexes on expenses and cash movements |
+| `0010_party_ledgers.sql` | generated + hand-edited | `customers.whatsapp_consent` and `consent_updated_at`; unique receipt numbers per shop and year; `role_permissions` rows for the new `payments.reverse` (owner) |
 
 ## Tables by owning module
 

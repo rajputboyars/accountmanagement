@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Database, Transaction } from "@/server/db";
 import { payments, PAYMENT_METHODS } from "./schema";
 
@@ -210,4 +210,25 @@ export async function paymentsOnDay(db: Database | Transaction, shopId: string, 
     .where(and(eq(payments.shopId, shopId), eq(payments.businessDate, businessDate)))
     .orderBy(payments.createdAt);
   return rows.map((row) => ({ ...row, category: row.category as PaymentCategory }));
+}
+
+export { PAYMENTS_RECORD, PAYMENTS_REVERSE, recordCustomerReceipt, reverseCustomerReceipt, type RecordedReceipt } from "./receipts";
+
+/** Payment details for labelling ledger lines (receipt number, method, links). Ids of other shops are ignored. */
+export async function paymentDetails(db: Database | Transaction, shopId: string, ids: string[]) {
+  if (ids.length === 0) return new Map<string, { receiptNumber: string | null; method: PaymentMethod; reference: string | null; direction: "in" | "out"; status: string; invoiceId: string | null; creditNoteId: string | null }>();
+  const rows = await db
+    .select({ id: payments.id, receiptNumber: payments.receiptNumber, method: payments.method, reference: payments.reference, direction: payments.direction, status: payments.status, invoiceId: payments.invoiceId, creditNoteId: payments.creditNoteId })
+    .from(payments)
+    .where(and(eq(payments.shopId, shopId), inArray(payments.id, ids)));
+  return new Map(rows.map(({ id, ...row }) => [id, row]));
+}
+
+/** A customer's receipts (money in not tied to a bill), newest first. */
+export async function customerReceipts(db: Database | Transaction, shopId: string, customerId: string) {
+  return db
+    .select({ id: payments.id, receiptNumber: payments.receiptNumber, method: payments.method, amountPaise: payments.amountPaise, reference: payments.reference, businessDate: payments.businessDate, status: payments.status, createdAt: payments.createdAt })
+    .from(payments)
+    .where(and(eq(payments.shopId, shopId), eq(payments.partyType, "customer"), eq(payments.partyId, customerId), sql`${payments.receiptNumber} is not null`))
+    .orderBy(sql`${payments.createdAt} desc`);
 }

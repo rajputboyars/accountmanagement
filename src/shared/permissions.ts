@@ -17,6 +17,7 @@ export const DEFAULT_PERMISSIONS = {
   "customers.edit": ["owner", "manager"],
   "payments.record": ["owner", "manager", "cashier"],
   "payments.view": ["owner", "manager", "cashier"],
+  "payments.reverse": ["owner"], // reverse a customer receipt entered by mistake
   "inventory.view": ["owner", "manager", "inventory"],
   "purchases.view": ["owner", "manager", "inventory"],
   "purchases.edit": ["owner", "manager", "inventory"],

@@ -286,3 +286,13 @@ Ties that the database already prevents (two active slabs or rules for the same 
 - No bank reconciliation, no WhatsApp daily report, no expense attachments.
 - A cash difference never blocks closing (spec decision); there is no alert above ₹500 yet.
 
+## Party ledgers & outstanding dues (Phase 10)
+
+**Screens.** `/customers` (to collect, overdue, advances, ageing buckets; add customer with optional go-live opening balance), `/customers/[id]` (unpaid bills oldest-first, statement with from/to, receipts, record payment, reminder, details), `/customers/[id]/statement` (print) and `/statement/csv` (download), `/suppliers` (payables and overdue past terms), `/suppliers/[id]/statement` (print, with unpaid bills and due dates).
+
+**Rules.** Balances are always `SUM(ledger_entries)`. Which bills are open and their age are worked out oldest-first when shown (`src/shared/ageing.ts`), never stored; a cancelled bill and its cancellation are left out as a pair. Customer bills are overdue after 30 days (spec §4 assumption); supplier bills after their payment terms. Customer receipts (`payments.record`): RCPT/26-27/00001, cash/UPI/bank/cheque (cheque needs its number), duplicate UPI/bank/cheque references refused, idempotent, day-locked; paying more than owed is kept as an advance (handoff C9). Reversing a receipt (bounce or mistake) is owner-only (`payments.reverse`, new) and adds a matching entry. Cash receipts show in the cashbook as "old dues paid" from the same row (no double count). Opening balance: one OPENING entry dated the oldest unpaid bill (spec §8).
+
+**Reminders.** Only for customers with recorded WhatsApp consent and a phone; the text holds only that customer's own balance and oldest bill. No WhatsApp provider is built: `src/modules/reporting/reminder-provider.ts` is the boundary (`WHATSAPP_PROVIDER` unset → manual Copy / Open WhatsApp). Sharing is audited as `reminder_shared_manually`; nothing claims delivery.
+
+**Limitations.** No automatic reminders or schedules; no SMS/email; statement PDF is the browser's print-to-PDF; customer opening balances are entered one by one (no import yet); receipts are not allocated to specific bills by hand (always oldest-first, per spec).
+

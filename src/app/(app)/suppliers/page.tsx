@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { getNavItem } from "@/config/navigation";
 import { hasPermission } from "@/modules/identity";
 import { listSuppliers, PURCHASES_EDIT } from "@/modules/purchasing";
+import { listPayables } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
 
 const item = getNavItem("suppliers");
@@ -26,7 +27,8 @@ export default function SuppliersPage() {
 
 async function Suppliers() {
   const session = await requireSession();
-  const [suppliers, canEdit] = await Promise.all([listSuppliers(session, { includeInactive: true }), hasPermission(session, PURCHASES_EDIT)]);
+  const [suppliers, canEdit, payables] = await Promise.all([listSuppliers(session, { includeInactive: true }), hasPermission(session, PURCHASES_EDIT), listPayables(session)]);
+  const overdue = new Map(payables.rows.map((row) => [row.id, row]));
   const totalOwed = suppliers.reduce((sum, supplier) => sum + Math.max(supplier.owedPaise, 0), 0);
   const owing = suppliers.filter((supplier) => supplier.owedPaise > 0).length;
 
@@ -39,7 +41,7 @@ async function Suppliers() {
           <Money paise={totalOwed} />
         </p>
         <p className="text-sm text-panel-muted">
-          {owing} of {suppliers.length} {suppliers.length === 1 ? "supplier" : "suppliers"} with dues
+          {owing} of {suppliers.length} {suppliers.length === 1 ? "supplier" : "suppliers"} with dues · past their payment terms: <Money paise={payables.totals.overduePaise} />
         </p>
       </section>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
@@ -59,6 +61,7 @@ async function Suppliers() {
                       <span className="block font-semibold text-foreground">{supplier.name}</span>
                       <span className="block text-xs text-muted-foreground">
                         {supplier.phone ?? "No phone"} · pays in {supplier.paymentTermsDays} days
+                        {overdue.get(supplier.id)?.overduePaise ? " · some bills past due" : overdue.get(supplier.id)?.nextDue ? ` · next due ${overdue.get(supplier.id)?.nextDue}` : ""}
                       </span>
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-1">

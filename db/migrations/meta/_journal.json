@@ -71,6 +71,13 @@
       "when": 1793012289904,
       "tag": "0009_expenses_cashbook",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793013948962,
+      "tag": "0010_party_ledgers",
+      "breakpoints": true
     }
   ]
 }

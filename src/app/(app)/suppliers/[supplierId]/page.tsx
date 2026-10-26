@@ -78,7 +78,16 @@ async function SupplierView({ params }: Pick<Props, "params">) {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-6">
-          <SectionCard title="Statement" description="Every entry on this supplier's account, oldest first, with what you owed after each." flush>
+          <SectionCard
+            title="Statement"
+            description="Every entry on this supplier's account, oldest first, with what you owed after each."
+            action={
+              <Link href={`/suppliers/${supplier.id}/statement`} className={buttonVariants({ variant: "ghost", size: "sm" })}>
+                Print
+              </Link>
+            }
+            flush
+          >
             {supplier.statement.length === 0 ? (
               <p className="px-5 pb-3 text-sm text-muted-foreground">No entries yet.</p>
             ) : (

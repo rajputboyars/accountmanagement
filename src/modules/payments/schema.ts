@@ -43,6 +43,7 @@ export const payments = pgTable(
       .on(t.shopId, t.method, t.reference)
       .where(sql`${t.reference} is not null and ${t.status} = 'recorded' and ${t.method} in ('upi', 'cheque', 'bank')`),
     index("payments_shop_business_date_idx").on(t.shopId, t.businessDate),
+    uniqueIndex("payments_receipt_number_key").on(t.shopId, t.fy, t.receiptNumber).where(sql`${t.receiptNumber} is not null`),
     index("payments_party_business_date_idx").on(t.partyType, t.partyId, t.businessDate),
     check("payments_direction_check", oneOf(t.direction, PAYMENT_DIRECTIONS)),
     check("payments_party_type_check", oneOf(t.partyType, PAYMENT_PARTY_TYPES)),

@@ -42,7 +42,7 @@ Expected cash = opening + cash sales + old dues in cash − cash expenses − ca
 
 ## Customers and dues (§4)
 
-Balance always from the ledger. Payments apply oldest bill first (ageing). Advance = negative balance, used first on the next bill. Receipts get RCPT numbers (not built yet).
+Balance always from the ledger. Payments apply oldest bill first (ageing). Advance = negative balance, used first on the next bill. Receipts get RCPT numbers (built, Phase 10). Overdue after 30 days; red > 30, amber > 10.
 
 ## Numbering
 
