@@ -6,14 +6,18 @@ export {
   listCategories,
   listProducts,
   PRODUCT_PAGE_SIZE,
+  searchShopProducts,
   setProductActive,
   trimFactor,
   updateProduct,
   type Conversion,
   type ProductDetail,
+  type ProductFilters,
+  type ProductPage,
   type ProductListItem,
   type ProductStatusFilter,
 } from "./products";
 export { addProductUnit, setProductUnitActive, updateProductUnitFactor } from "./product-units";
 export { createUnit, DEFAULT_UNITS, listUnits, seedDefaultUnits, setUnitActive, type Unit } from "./units";
 export { GST_RATE_OPTIONS } from "./validation";
+export { loadProductNames, loadProductPricingInputs, type ProductPricingInputs } from "./pricing-inputs";

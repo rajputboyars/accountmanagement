@@ -176,7 +176,7 @@ async function main() {
       if (units.length) await tx.insert(schema.productUnits).values(units).onConflictDoNothing();
 
       const slabs = PRODUCTS.flatMap((product) =>
-        (product.slabs ?? []).map((slab) => ({ id: sid(`slab:${product.sku}:${slab.minQty}`), productId: sid(`product:${product.sku}`), ...slab })),
+        (product.slabs ?? []).map((slab) => ({ id: sid(`slab:${product.sku}:${slab.minQty}`), shopId: SHOP_ID, productId: sid(`product:${product.sku}`), ...slab })),
       );
       if (slabs.length) await tx.insert(schema.priceSlabs).values(slabs).onConflictDoNothing();
 

@@ -82,15 +82,23 @@ async function conversionsFor(db: ReturnType<typeof getDb> | Transaction, shopId
   return byProduct;
 }
 
+export type ProductFilters = { q?: string; categoryId?: string; status?: ProductStatusFilter; page?: number };
+export type ProductPage = { items: ProductListItem[]; total: number; page: number; pageSize: number };
+
 /** Search and filter the shop's products. Inactive products are hidden unless asked for. */
-export async function listProducts(
-  session: SessionContext,
-  filters: { q?: string; categoryId?: string; status?: ProductStatusFilter; page?: number } = {},
-): Promise<{ items: ProductListItem[]; total: number; page: number; pageSize: number }> {
+export async function listProducts(session: SessionContext, filters: ProductFilters = {}): Promise<ProductPage> {
   await requirePermission(session, CATALOG_VIEW);
+  return searchShopProducts(session.shopId, filters);
+}
+
+/**
+ * The search behind listProducts, for other modules (pricing) that check their own permission
+ * first. Always scoped to `shopId`, which must come from the session.
+ */
+export async function searchShopProducts(shopId: string, filters: ProductFilters = {}): Promise<ProductPage> {
   const status = filters.status ?? "active";
   const page = Math.max(1, Math.floor(filters.page ?? 1));
-  const conditions: (SQL | undefined)[] = [eq(products.shopId, session.shopId)];
+  const conditions: (SQL | undefined)[] = [eq(products.shopId, shopId)];
   if (status !== "all") conditions.push(eq(products.isActive, status === "active"));
   if (filters.categoryId && /^[0-9a-f-]{36}$/i.test(filters.categoryId)) conditions.push(eq(products.categoryId, filters.categoryId));
   const q = filters.q?.trim().slice(0, 60);
@@ -123,7 +131,7 @@ export async function listProducts(
     .limit(PRODUCT_PAGE_SIZE)
     .offset((page - 1) * PRODUCT_PAGE_SIZE);
 
-  const conversions = await conversionsFor(db, session.shopId, rows.map((row) => row.id), false);
+  const conversions = await conversionsFor(db, shopId, rows.map((row) => row.id), false);
   return {
     items: rows.map((row) => ({ ...row, conversions: conversions.get(row.id) ?? [] })),
     total,

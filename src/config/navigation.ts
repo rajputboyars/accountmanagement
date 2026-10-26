@@ -5,6 +5,7 @@ import {
   PackagePlus,
   ReceiptText,
   Settings,
+  Tags,
   Truck,
   Users,
   type LucideIcon,
@@ -14,6 +15,7 @@ export type NavKey =
   | "dashboard"
   | "billing"
   | "inventory"
+  | "pricing"
   | "customers"
   | "purchases"
   | "suppliers"
@@ -76,6 +78,16 @@ export const NAV_ITEMS: readonly NavItem[] = [
       "Live stock from every sale, purchase and return",
       "Returns, damaged stock and stock-count fixes with reasons",
     ],
+  },
+  {
+    key: "pricing",
+    label: "Smart Pricing",
+    shortLabel: "Pricing",
+    href: "/pricing",
+    icon: Tags,
+    description: "Wholesale quantity slabs, customer prices and a price check.",
+    mobilePrimary: false,
+    planned: [],
   },
   {
     key: "customers",

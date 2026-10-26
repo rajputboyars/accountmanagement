@@ -142,3 +142,30 @@ Removes the container but keeps the data volume.
 - **Base unit lock.** The base unit can't change once a product has pack sizes. Stock movements and invoice lines will also need to lock it; that check is added with those modules.
 - **No brand field.** The schema has no brand column; include the brand in the product name or category.
 - **Out of scope here.** Quantity slabs, customer prices, opening stock, reorder levels and stock levels are not editable yet.
+
+## Smart Pricing (Phase 4B) rules and limitations
+
+**Who can do what.** `/pricing` and every slab or customer-rule change need `pricing.edit` (owner only by default). A price quote is read-only and is allowed with `billing.create` or `pricing.edit`; costs, margins and the below-cost flag need `profit.view`.
+
+**How a price is chosen** (spec §3, implemented once in `src/shared/pricing-engine.ts`):
+
+1. Price list: chosen by hand, otherwise from the customer type (wholesale customer → wholesale; walk-in, retail or no customer → retail).
+2. Retail list → the retail price. Slabs and customer rules never apply.
+3. Wholesale list → the wholesale price, then the active slab with the highest minimum that the **base quantity** reaches (a slab at 100 applies from exactly 100).
+4. The customer's active fixed price for this product with the highest reached minimum, used only if it is lower than the current rate.
+5. The customer's % off: a rule for this product beats a rule for all products. Rounded half-up to the paisa. At most one fixed and one % rule apply; they never stack further.
+6. Line amount = base quantity × base rate, rounded half-up to the paisa (so 3 boxes of 50 cost the same as 150 pieces). The box rate shown is base rate × factor, rounded half-up.
+
+Ties that the database already prevents (two active slabs or rules for the same scope) are still broken in a fixed order: highest minimum, then lowest price, then id.
+
+**Checks when saving.** Slab minimum more than 1 base unit (whole for units that can't be split); slab price above 0 and not above the wholesale price; any slab or fixed price below cost needs the owner to tick "I confirm" (recorded in the audit row). Customer % between 0.1% and 30%. Rules are retired, never deleted.
+
+**Limitations**
+- No effective dates: the spec has none ("price changes apply to new bills only"). A rule applies from when it is saved until it is retired.
+- No separate price per pack unit: a box is always base price × factor (the spec's "unless the owner sets a separate price" is not built).
+- A slab saved below the wholesale price stays in force if the wholesale price is later lowered beneath it; the slab is still used (spec order) and the screen does not yet warn about it.
+- The quote does not take a transaction yet. Billing must call the engine inside its own transaction and reject a client total that differs; the preview working does not make billing safe.
+- Server actions here (as in the catalog) do not send an `Idempotency-Key`; duplicate adds are blocked by unique indexes.
+- There is no `/api/v1/pricing/quote` route yet; the price check uses a server action. The route comes with billing.
+- The sidebar shows Smart Pricing to every role; other roles get "You don't have access" and the server refuses the data.
+

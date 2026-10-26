@@ -53,6 +53,7 @@ To inspect what will run, read the pending files in `db/migrations/` and compare
 | `0001_v1_schema.sql` | generated | 38 tables, keys, foreign keys (no cascades), unique/partial indexes, CHECK constraints |
 | `0002_journals_views_privileges.sql` | hand-written | Append-only triggers, `v_party_balance` and `v_stock` views, `nexora_app` grants |
 | `0003_catalog_units.sql` | generated + hand-edited | `units` table (per shop, unique short code), `products.description`, `product_units.is_active`; backfills default units (and any unit already used by a product) for existing shops before adding the `products (shop_id, base_unit) → units (shop_id, code)` foreign key; grants `units` to `nexora_app`. 39 tables in total |
+| `0004_pricing_rules.sql` | generated + hand-edited | `price_slabs.shop_id` (backfilled from the product, then NOT NULL) and `is_active`; the slab unique key becomes "one active slab per product and minimum"; customer rules get CHECKs (% between 0.1% and 30%, fixed price needs a product, minimum ≥ 0) and partial unique indexes (one active fixed price per customer/product/minimum, one active % per customer and product, one active % for all products per customer). A database with duplicate active rules or out-of-range % values must be cleaned before applying it |
 
 ## Tables by owning module
 
