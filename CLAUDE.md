@@ -2,77 +2,56 @@
 
 # Nexora Business OS
 
-Billing, pricing, stock, customer dues, purchases and daily closing for one Indian plumbing/building-materials shop (V1). Money and stock correctness matter more than speed of delivery.
+Billing, pricing, stock, dues, purchases and daily closing for one Indian plumbing/building-materials shop (V1). Money and stock correctness beat speed.
 
-## Source of truth
+## Token budget (read first)
 
-- `docs/implementation-handoff.md` — **final decisions, stack, folder structure, phases, Milestone 1 definition of done.** Read the relevant section before starting any task. It wins over every other document.
-- Product & Business Logic Spec (Claude Doc): https://claude.ai/artifact/KAduhdhWmTXX58qEPQbWrC — rules, formulas, test scenarios B1–A1.
-- Technical Architecture (Claude Doc): https://claude.ai/artifact/VEgirHZa4tNZYdV86FGiaJ — schema, transaction rules, API, testing.
-- UI prototype (artifact): https://claude.ai/artifact/2ZgT5smjrDkAJPU9yi8t5d — screens, workflows, copy.
+- **Spec rules and golden values: `docs/spec-digest.md`.** Open the claude.ai spec/architecture/prototype docs only when the digest doesn't answer the question, and then read just the section you need (they are ~180 KB).
+- **Never read whole long files.** `docs/implementation-handoff.md`, `docs/setup.md`, `docs/database.md`: Grep for the heading, then Read that range. Code files: Grep first, Read with offset/limit.
+- **Don't read generated files:** `db/migrations/meta/*`, `.next/`, `node_modules/` (except `node_modules/next/dist/docs` sections), `package-lock.json`.
+- **Tests:** run only the touched files (`npx vitest run tests/<area>`), then the full suite once at the end. Pipe long output: `| grep -E "Tests |FAIL|×|Error" | head`.
+- **Browser checks:** only when UI changed. Prefer `get_page_text`/`find` over screenshots; use `scale: 0.6` when a screenshot is needed. One width per change unless layout changed.
+- **Skills:** load a project skill once per task, not per step. Don't re-load `ui-ux-pro-max` unless asked.
+- **Replies:** short. Don't restate code you just wrote, don't re-read files you just edited.
 
-The three links are private claude.ai documents. They may not be readable in every session; if you can't open one, use the handoff and say so. Never invent details from a document you couldn't read.
+## Sources
 
-## Stack (locked — do not change or add alternatives)
+`docs/implementation-handoff.md` wins over everything (final decisions, phases §7). Then the Product spec (https://claude.ai/artifact/KAduhdhWmTXX58qEPQbWrC), Technical Architecture (https://claude.ai/artifact/VEgirHZa4tNZYdV86FGiaJ) and UI prototype (https://claude.ai/artifact/2ZgT5smjrDkAJPU9yi8t5d). If a doc can't be opened, say so; never invent its content.
 
-Next.js App Router (16.x, pinned) · React 19 · TypeScript strict · Tailwind CSS 4 · shadcn/ui · PostgreSQL 16 · **Drizzle ORM** (never Prisma) · Zod · own DB sessions with phone OTP · pg-boss (Phase 8+) · Dexie offline (Phase 10 only) · Vitest, Testcontainers, Playwright.
+## Stack (locked)
 
-Before adding any dependency, check that the handoff lists it. Otherwise, ask first.
+Next.js 16 App Router · React 19 · TS strict · Tailwind 4 · shadcn/ui · PostgreSQL 16 · **Drizzle** (never Prisma) · Zod · own phone-OTP sessions · Vitest + Testcontainers. New dependency only if the handoff lists it; otherwise ask.
 
-## Commands
+Scripts: `dev build start lint typecheck test test:watch secret db:up db:generate db:check db:migrate db:seed db:studio`. `npm test` needs Docker.
 
-Available: `npm run dev | build | start | lint | typecheck | test | test:watch | secret` and `db:up | db:generate | db:check | db:migrate | db:seed | db:studio` (see `docs/setup.md`, `docs/database.md`). `npm test` needs Docker (Testcontainers). Still to come: `test:e2e`, `check` (handoff §9). Use only scripts that exist in `package.json`.
+## Architecture
 
-## Architecture rules
+- Modules in `src/modules/<name>/`; a module owns its tables; others import only its `index.ts`.
+- `src/shared/**` is pure (no Node/DB): money, GST, pricing engine, invoice/credit-note/purchase/cashbook maths.
+- Services: `requirePermission` → Zod parse → `withTransaction` (+ `withIdempotency` for writes) → audit row in the same tx.
+- Day lock: `src/server/day-lock.ts` for every money write.
 
-- Modular monolith: one app, one database, 15 modules in `src/modules/<name>/` (identity, settings, catalog, pricing, parties, sales, payments, ledger, inventory, purchasing, cashbook, reporting, imports, sync, audit).
-- A module owns its tables. Other code imports only `src/modules/<name>/index.ts`, never its `repo.ts` or `schema.ts`.
-- Route handlers (`src/app/api/v1/**`) are thin: session → `requirePermission` → Zod parse → one service call → error mapping.
-- `src/shared/**` (money, GST, pricing engine, Zod schemas) has no Node or DB imports; browser and server run the same code.
-- Cross-module work in one transaction passes the same `tx` into each module's public service function.
+## Integrity (non-negotiable)
 
-## Financial and inventory integrity (non-negotiable)
-
-1. Balances are `SUM(ledger_entries)` and stock is `SUM(stock_movements)`. `party_balances` and `stock_levels` are caches, updated in the same transaction.
-2. Journals and `audit_log` are append-only. Fix mistakes with reversals, credit notes and adjustments, never UPDATE or DELETE.
-3. The server recomputes every price, discount, tax, total, balance and cost. Client totals are only compared.
-4. Money is integer paise (`bigint`); quantities are `numeric(14,3)` in the base unit; rates and discounts are basis points. No floats.
-5. Rounding is half-up per line and per GST rate group; the bill total rounds to the rupee.
-6. Every write is idempotent (`Idempotency-Key`), runs in one transaction, and writes its audit row inside that transaction.
-7. Lock order: day lock → document → `stock_levels` (sorted by product_id) → `party_balances` → `number_series`.
-8. Profit is reported only when every line has a cost (`reliable: false` otherwise). Never show an estimated profit figure as profit.
-
-Use the `nexora-integrity-review` skill on any change touching money, stock, ledger, numbering or approvals.
+1. Balance = `SUM(ledger_entries)`, stock = `SUM(stock_movements)`; `party_balances`/`stock_levels` are caches written in the same tx.
+2. Journals and `audit_log` are append-only; fix with reversals/credit notes/adjustments.
+3. Server recomputes every price, tax, total, balance, cost; client values are only compared.
+4. Integer paise, `numeric(14,3)` base-unit quantities, basis points. No floats.
+5. Half-up per line and per GST rate group; bill total to the rupee.
+6. Lock order: day lock → document → products → `stock_levels` (id order) → `party_balances` → `number_series`.
+7. Profit only when every line has a cost.
+8. Every query filters by the session's `shop_id`; never trust IDs, roles or prices from the browser.
 
 ## Security
 
-- Never read, print or commit real secrets. `.env*` files are blocked for Claude; only `.env.example` (placeholders) is committed.
-- No production database access from this environment. Migrations and seeds run against local Docker or Testcontainers only. The seed refuses to run in production.
-- Every query filters by `shop_id` from the session; IDs in the request body are never trusted.
-- Owner-only actions (cancel, close, reopen, permissions, import, supplier payments) are checked on the server, not only hidden in the UI.
+Never read/print/commit secrets (`.env*` blocked). No production DB access. Owner-only actions are checked on the server.
 
-## Design system
+## Design
 
-- Follow the UI prototype: light mode by default with a dark toggle; navy `#14243A` · teal `#0D9488` (`#0F766E` for text and filled buttons) · amber `#F5A623` · page `#F7F9FC`; Inter; white rounded cards; icon rail on desktop and tablet, bottom bar on phones; one navy feature panel per screen.
-- shadcn/ui components and Tailwind tokens only; no ad-hoc colours. Motion for small UI motion, GSAP only for scroll or complex sequences; respect `prefers-reduced-motion`.
-- ₹ amounts use Indian grouping (₹1,00,000) and tabular numbers. Every screen designs its loading, empty, error, offline and access-denied states.
-- Check at 1440, 1024 and 390 px, in light and dark mode. Use the `nexora-frontend` skill for UI work.
+Light default + dark toggle; navy `#14243A`, teal `#0D9488`/`#0F766E`, amber `#F5A623`, page `#F7F9FC`; Inter; shadcn + Tailwind tokens only; one navy panel per screen; ₹ with Indian grouping; design loading/empty/error/denied states; works at 1440/1024/390.
 
 ## Workflow
 
-1. Work in the phase order from handoff §7, one module or screen at a time, on a feature branch (never commit to `master`).
-2. Start by naming the spec scenario IDs (for example B2, C1) the change must satisfy.
-3. Money, stock and schema code: write or extend tests first, then implement.
-4. Schema changes: `nexora-db-review` before merging. A merged migration is never edited.
-5. Finish with `nexora-test-review`: run the checks, map results to scenario IDs, review the diff.
-6. Commit small and descriptive. Push, open pull requests or run destructive commands (drop, reset, force-push, deleting files) only after the user approves.
+Feature branch per phase (never `master`). Name the spec scenario IDs. Tests first for money/stock/schema. Forward-only migrations. Finish with lint, typecheck, test, build, `db:check`. Stage specific files only; never stage `.claude/skills/ui-ux-pro-max/` or `.env*`. Push/PR/destructive commands only after approval.
 
-## Project skills
-
-| Skill | Use when |
-| --- | --- |
-| `nexora-frontend` | Building or changing any screen or component |
-| `nexora-db-review` | Adding or reviewing Drizzle schema, migrations or seed data |
-| `nexora-integrity-review` | Any change to billing, payments, ledger, stock, pricing, numbering, approvals or closing |
-| `nexora-test-review` | Before calling a feature done: tests, verification, code review |
-| `ui-ux-pro-max` | Extra UI/UX reference data (palettes, UX guidelines); project rules above win |
+Skills: `nexora-frontend` (UI), `nexora-db-review` (schema), `nexora-integrity-review` (money/stock), `nexora-test-review` (before done).
