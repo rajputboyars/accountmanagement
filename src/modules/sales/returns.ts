@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, ilike, inArray, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, is, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, loadProductsForStock } from "@/modules/catalog";
 import { loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
@@ -206,7 +206,7 @@ export async function previewReturn(session: SessionContext, input: unknown): Pr
       tx.rollback();
     });
   } catch (error) {
-    if (!(error instanceof TransactionRollbackError)) throw error;
+    if (!is(error, TransactionRollbackError)) throw error; // instanceof misses it when the bundle loads two copies of drizzle
   }
   return view!;
 }

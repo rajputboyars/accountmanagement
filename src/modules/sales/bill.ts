@@ -8,7 +8,7 @@ import type { Transaction } from "@/server/db";
 import { ConflictError } from "@/server/errors";
 import { formatPaise } from "@/shared/money";
 import { resolveTaxMode, type TaxMode } from "@/shared/gst";
-import { computeInvoiceTotals, DISCOUNT_LIMIT_BP, type InvoiceTotals } from "@/shared/invoice";
+import { cashChange, computeInvoiceTotals, DISCOUNT_LIMIT_BP, type InvoiceTotals } from "@/shared/invoice";
 import { formatBasisPoints } from "@/shared/pricing-engine";
 import { formatQuantity } from "@/shared/quantity";
 import type { billInputSchema } from "./validation";
@@ -123,11 +123,9 @@ export async function computeBill(
     }
   }
 
-  let changePaise: number | null = null;
-  if (input.cashReceived > 0) {
-    if (input.cashReceived < pay.cash) problems.push({ code: "CASH_SHORT", field: "cashReceived", message: "Cash received is less than the cash amount of the bill." });
-    else changePaise = input.cashReceived - pay.cash;
-  }
+  const change = cashChange(pay.cash, input.cashReceived);
+  if (change && change.shortPaise > 0) problems.push({ code: "CASH_SHORT", field: "cashReceived", message: `Cash received is ${money(change.shortPaise)} less than the cash amount of the bill.` });
+  const changePaise = change && change.shortPaise === 0 ? change.changePaise : null;
 
   return {
     customer: customer ? { id: customer.id, name: customer.name, type: customer.type, creditLimitPaise: customer.creditLimitPaise, gstin: customer.gstin } : null,

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, ilike, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, is, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, searchShopProducts } from "@/modules/catalog";
 import { ANY_TARGET, consumeApproval, consumeMatchingApproval, hasPermission, loadUserNames, requirePermission, verifyOwnerPin, type SessionContext } from "@/modules/identity";
@@ -76,7 +76,7 @@ export async function previewBill(session: SessionContext, input: unknown): Prom
       tx.rollback();
     });
   } catch (error) {
-    if (!(error instanceof TransactionRollbackError)) throw error;
+    if (!is(error, TransactionRollbackError)) throw error; // instanceof misses it when the bundle loads two copies of drizzle
   }
   return view!;
 }
@@ -97,9 +97,12 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
   await requirePermission(session, BILLING_CREATE);
   const bill = billInputSchema.parse(input);
   const save = saveBillSchema.parse(input);
+  // Cash received only works out change and is never saved, so a retry with a different amount
+  // typed there is still the same bill and must replay, not save a second one.
   const requestBody = {
     action: "sales.invoice",
     ...bill,
+    cashReceived: undefined,
     lines: bill.lines.map((line) => ({ ...line, quantity: line.quantity.toString() })),
     expectedTotalPaise: save.expectedTotalPaise,
     expectedRates: save.expectedRates,

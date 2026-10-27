@@ -128,6 +128,15 @@ export function computeInvoiceTotals(lines: readonly InvoiceLineInput[], discoun
   };
 }
 
+/**
+ * Change for the cash part of a bill: received − cash due. Change is handed back, so it is never
+ * revenue, a discount or a payment. Nothing received yet → no change and nothing short.
+ */
+export function cashChange(cashDuePaise: Paise, receivedPaise: Paise): { changePaise: Paise; shortPaise: Paise } | null {
+  if (receivedPaise <= 0) return null;
+  return receivedPaise >= cashDuePaise ? { changePaise: receivedPaise - cashDuePaise, shortPaise: 0 } : { changePaise: 0, shortPaise: cashDuePaise - receivedPaise };
+}
+
 /** Default bill-discount limits by role (handoff decisions 17–19): Cashier 3%, Manager 7%, Owner unlimited. */
 export const DISCOUNT_LIMIT_BP: Record<string, number> = { cashier: 300, manager: 700, owner: 10000, inventory: 0 };
 

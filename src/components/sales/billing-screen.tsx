@@ -4,7 +4,7 @@ import { cn } from "cn";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { GST_STATE_LIST, stateTaxLabel } from "@/shared/gst";
-import { CircleAlert, LoaderCircle, Minus, Plus, ReceiptText, Search, Trash2 } from "lucide-react";
+import { CircleAlert, FilePlus2, LoaderCircle, Minus, Plus, ReceiptText, Search, Trash2 } from "lucide-react";
 import { previewBillAction, saveBillAction, searchProductsAction, type BillInputPayload } from "@/app/(app)/billing/actions";
 import { Field, selectClass } from "@/components/catalog/form-bits";
 import { Money } from "@/components/nexora/money";
@@ -12,12 +12,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { paiseToRupeeInput } from "@/shared/money";
+import { cashSummary, emptyDraft, type Draft, type DraftLine, type Method } from "./billing-draft";
 import type { BillView } from "@/modules/sales";
 
 type Product = Awaited<ReturnType<typeof searchProductsAction>>["products"][number];
-type Line = { key: number; product: Product; unit: string; quantity: string };
+type Line = DraftLine<Product>;
 type Customer = { id: string; name: string; type: string; area: string | null };
-type Method = "cash" | "upi" | "card" | "bank";
 
 const METHODS: { key: Method; label: string }[] = [
   { key: "cash", label: "Cash" },
@@ -25,8 +25,6 @@ const METHODS: { key: Method; label: string }[] = [
   { key: "card", label: "Card" },
   { key: "bank", label: "Bank" },
 ];
-
-const newKey = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID().replace(/-/g, "") : `${Date.now()}${Math.random().toString(36).slice(2)}`);
 
 /** Adds 1 to a quantity typed as text, without floating-point maths (whole part only). */
 function bump(quantity: string, by: number): string {
@@ -36,25 +34,45 @@ function bump(quantity: string, by: number): string {
   return `${next}${match[2] ?? ""}`;
 }
 
+/**
+ * Cache Components keeps visited pages alive (hidden) between navigations, so without this the last
+ * draft would come back. Keying by `bfcacheId` starts a fresh bill on every "New bill" link or push,
+ * while browser back/forward still restores an unfinished draft.
+ */
 export function BillingScreen({ customers }: { customers: Customer[] }) {
+  const { bfcacheId } = useRouter();
+  return <BillDraft key={bfcacheId} customers={customers} />;
+}
+
+function BillDraft({ customers }: { customers: Customer[] }) {
   const router = useRouter();
-  const [customerId, setCustomerId] = useState("");
-  const [priceList, setPriceList] = useState("");
-  const [discountPercent, setDiscountPercent] = useState("");
-  const [placeOfSupply, setPlaceOfSupply] = useState("");
-  const [lines, setLines] = useState<Line[]>([]);
-  const [payments, setPayments] = useState<Record<Method, string>>({ cash: "", upi: "", card: "", bank: "" });
-  const [cashReceived, setCashReceived] = useState("");
+  const [draft, setDraft] = useState<Draft<Product>>(emptyDraft);
+  const { customerId, priceList, discountPercent, placeOfSupply, lines, payments, cashReceived, idempotencyKey } = draft;
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
   const [bill, setBill] = useState<BillView | null>(null);
   const [billFor, setBillFor] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [idempotencyKey, setIdempotencyKey] = useState(newKey);
   const [saving, startSaving] = useTransition();
   const [previewing, setPreviewing] = useState(false);
+  const savingRef = useRef(false);
   const nextKey = useRef(1);
+
+  const update = (patch: Partial<Draft<Product>>) => setDraft((current) => ({ ...current, ...patch }));
+  const setLines = (change: (current: Line[]) => Line[]) => setDraft((current) => ({ ...current, lines: change(current.lines) }));
+  const setPayment = (method: Method, value: string) => setDraft((current) => ({ ...current, payments: { ...current.payments, [method]: value } }));
+
+  /** Starts a fresh bill with a new Idempotency-Key. Saved bills live on the server and are untouched. */
+  const resetBill = () => {
+    setDraft(emptyDraft());
+    setQuery("");
+    setResults([]);
+    setBill(null);
+    setBillFor("");
+    setError(null);
+    setFieldErrors({});
+  };
 
   const payload: BillInputPayload = useMemo(
     () => ({ customerId, priceList, discountPercent, lines: lines.map((line) => ({ productId: line.product.id, unit: line.unit, quantity: line.quantity })), payments, cashReceived, placeOfSupply }),
@@ -73,13 +91,15 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
     return () => clearTimeout(timer);
   }, [query]);
 
-  // Live preview from the server whenever the bill changes, debounced.
+  // Live preview from the server whenever the bill changes, debounced. Keyed on the payload's text
+  // so a re-render that rebuilds an equal payload doesn't ask again.
   useEffect(() => {
-    if (payload.lines.length === 0) return;
+    const body = JSON.parse(payloadKey) as BillInputPayload;
+    if (body.lines.length === 0) return;
     let stale = false;
     const timer = setTimeout(async () => {
       setPreviewing(true);
-      const result = await previewBillAction(payload);
+      const result = await previewBillAction(body);
       if (stale) return;
       setPreviewing(false);
       if (result.bill) {
@@ -97,7 +117,7 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
       stale = true;
       clearTimeout(timer);
     };
-  }, [payload, payloadKey]);
+  }, [payloadKey]);
 
   const addProduct = (product: Product) => {
     setLines((current) => {
@@ -110,32 +130,53 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
   };
 
   const setLine = (key: number, patch: Partial<Line>) => setLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
-  const current = bill && billFor === payloadKey && lines.length > 0 ? bill : null;
-  const problems = current?.problems ?? [];
+  // `shown` keeps the last server bill on screen while the next preview is on its way, so the
+  // summary and payment inputs don't blink, get disabled or lose focus on every keystroke. Only
+  // `current`, the bill for exactly what is typed now, can be saved.
+  const shown = lines.length > 0 ? bill : null;
+  const current = shown && billFor === payloadKey ? shown : null;
+  const problems = shown?.problems ?? [];
   const lineProblem = (index: number) => problems.find((problem) => problem.field === `lines.${index}.quantity`)?.message ?? fieldErrors[`lines.${index}.quantity`];
-  const canSave = Boolean(current) && problems.length === 0 && !saving && !previewing;
+  const cash = payments.cash ? cashSummary(payments.cash, cashReceived) : null;
+  const cashShort = (cash?.shortPaise ?? 0) > 0;
+  const canSave = Boolean(current) && problems.length === 0 && !cashShort && !saving && !previewing;
 
   const fillPayment = (method: Method | "credit") => {
-    if (!current) return;
+    if (!shown) return;
     const empty = { cash: "", upi: "", card: "", bank: "" };
-    setPayments(method === "credit" ? empty : { ...empty, [method]: paiseToRupeeInput(current.totals.totalPaise) });
+    update({ payments: method === "credit" ? empty : { ...empty, [method]: paiseToRupeeInput(shown.totals.totalPaise) }, ...(method === "cash" ? {} : { cashReceived: "" }) });
   };
 
   const save = () => {
-    if (!current) return;
+    // The ref stops a second click that lands before React re-renders with `saving` set. The server
+    // is the real guard: the same Idempotency-Key replays the saved bill instead of saving again.
+    if (!current || savingRef.current) return;
+    savingRef.current = true;
     startSaving(async () => {
-      const result = await saveBillAction({ ...payload, idempotencyKey, expectedTotalPaise: current.totals.totalPaise, expectedRates: current.expectedRates });
-      if (result.invoiceId) {
-        router.push(`/billing/invoices/${result.invoiceId}?new=1`);
-        return;
+      try {
+        const result = await saveBillAction({ ...payload, idempotencyKey, expectedTotalPaise: current.totals.totalPaise, expectedRates: current.expectedRates });
+        if (result.invoiceId) {
+          resetBill();
+          router.push(`/billing/invoices/${result.invoiceId}?new=1`);
+          return;
+        }
+        if (result.bill) {
+          // Prices, stock or dues changed: show the server's new bill; the cashier saves again after checking.
+          setBill(result.bill);
+          setBillFor(payloadKey);
+        }
+        // The key stays with the draft. A refused bill saved nothing, so the key is free to use again;
+        // changing it here could save a bill twice when the first save was only slow.
+        setError(
+          result.code === "IDEMPOTENCY_CONFLICT"
+            ? "This bill was already saved, then changed. Check Bills before saving again, or start a new bill."
+            : (result.error ?? "The bill was not saved."),
+        );
+      } catch {
+        setError("Couldn't reach the server. Check the connection and press Save again. The bill won't be saved twice.");
+      } finally {
+        savingRef.current = false;
       }
-      if (result.bill) {
-        // Prices, stock or dues changed: show the server's new bill; the cashier saves again after checking.
-        setBill(result.bill);
-        setBillFor(payloadKey);
-      }
-      setError(result.error ?? "The bill was not saved.");
-      if (result.code !== "PRICE_CHANGED") setIdempotencyKey(newKey());
     });
   };
 
@@ -144,6 +185,13 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(20rem,1fr)]">
       <section aria-label="Items" className="flex min-w-0 flex-col gap-4 rounded-2xl border border-border bg-card p-4 sm:p-5">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="font-semibold text-foreground">Items{lines.length > 0 ? ` (${lines.length})` : ""}</h2>
+          <Button type="button" variant="outline" size="touch" onClick={resetBill} disabled={saving}>
+            <FilePlus2 aria-hidden="true" />
+            New bill
+          </Button>
+        </div>
         <div className="relative">
           <label className="relative block">
             <span className="sr-only">Search products</span>
@@ -176,7 +224,7 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
         ) : (
           <ul className="flex flex-col divide-y divide-border">
             {lines.map((line, index) => {
-              const priced = current?.lines[index];
+              const priced = shown?.lines[index]?.productId === line.product.id ? shown.lines[index] : undefined;
               const problem = lineProblem(index);
               return (
                 <li key={line.key} className="flex flex-col gap-2 py-3 first:pt-0">
@@ -245,7 +293,7 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
       <section aria-label="Bill summary" className="flex flex-col gap-4 self-start rounded-2xl border border-border bg-card p-4 sm:p-5 lg:sticky lg:top-20">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Customer" className="col-span-2" error={problems.find((problem) => problem.field === "customerId")?.message}>
-            <select value={customerId} onChange={(event) => setCustomerId(event.target.value)} className={selectClass}>
+            <select value={customerId} onChange={(event) => update({ customerId: event.target.value })} className={selectClass}>
               <option value="">Walk-in customer</option>
               {customers.map((option) => (
                 <option key={option.id} value={option.id}>
@@ -255,18 +303,18 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
             </select>
           </Field>
           <Field label="Price list">
-            <select value={priceList} onChange={(event) => setPriceList(event.target.value)} className={selectClass}>
+            <select value={priceList} onChange={(event) => update({ priceList: event.target.value })} className={selectClass}>
               <option value="">{customer?.type === "wholesale" ? "Wholesale (auto)" : "Retail (auto)"}</option>
               <option value="retail">Retail</option>
               <option value="wholesale">Wholesale</option>
             </select>
           </Field>
           <Field label="Bill discount (%)" error={problems.find((problem) => problem.field === "discountPercent")?.message ?? fieldErrors.discountPercent}>
-            <Input value={discountPercent} onChange={(event) => setDiscountPercent(event.target.value)} inputMode="decimal" placeholder="0" className="h-11 tabular-nums" />
+            <Input value={discountPercent} onChange={(event) => update({ discountPercent: event.target.value })} inputMode="decimal" placeholder="0" className="h-11 tabular-nums" />
           </Field>
           {bill?.interStateSales || placeOfSupply ? (
             <Field label="Place of supply" error={problems.find((problem) => problem.field === "placeOfSupply")?.message}>
-              <select value={placeOfSupply} onChange={(event) => setPlaceOfSupply(event.target.value)} className={selectClass}>
+              <select value={placeOfSupply} onChange={(event) => update({ placeOfSupply: event.target.value })} className={selectClass}>
                 <option value="">This shop&apos;s state (counter sale)</option>
                 {GST_STATE_LIST
                   .filter(([code]) => code !== bill?.shopStateCode)
@@ -281,24 +329,24 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
         </div>
 
         <dl className="flex flex-col gap-1.5 border-t border-border pt-3 text-sm">
-          {current ? (
+          {shown ? (
             <>
-              <Row label="Subtotal" paise={current.totals.subtotalPaise} />
-              {current.totals.discountPaise > 0 ? <Row label={`Discount`} paise={-current.totals.discountPaise} /> : null}
-              <Row label="Taxable value" paise={current.totals.taxablePaise} />
-              {current.taxMode === "intra" ? (
+              <Row label="Subtotal" paise={shown.totals.subtotalPaise} />
+              {shown.totals.discountPaise > 0 ? <Row label={`Discount`} paise={-shown.totals.discountPaise} /> : null}
+              <Row label="Taxable value" paise={shown.totals.taxablePaise} />
+              {shown.taxMode === "intra" ? (
                 <>
-                  <Row label="CGST" paise={current.totals.cgstPaise} />
-                  <Row label={stateTaxLabel(current.shopStateCode)} paise={current.totals.sgstPaise} />
+                  <Row label="CGST" paise={shown.totals.cgstPaise} />
+                  <Row label={stateTaxLabel(shown.shopStateCode)} paise={shown.totals.sgstPaise} />
                 </>
               ) : null}
-              {current.taxMode === "inter" ? <Row label="IGST" paise={current.totals.igstPaise} /> : null}
-              {current.taxMode === "none" ? <p className="text-xs text-muted-foreground">Bill of Supply: no GST is charged.</p> : null}
-              {current.totals.roundOffPaise !== 0 ? <Row label="Round off" paise={current.totals.roundOffPaise} /> : null}
+              {shown.taxMode === "inter" ? <Row label="IGST" paise={shown.totals.igstPaise} /> : null}
+              {shown.taxMode === "none" ? <p className="text-xs text-muted-foreground">Bill of Supply: no GST is charged.</p> : null}
+              {shown.totals.roundOffPaise !== 0 ? <Row label="Round off" paise={shown.totals.roundOffPaise} /> : null}
               <div className="mt-1 flex items-baseline justify-between border-t border-border pt-2">
                 <dt className="font-semibold text-foreground">Total</dt>
                 <dd className="text-2xl font-bold text-foreground">
-                  <Money paise={current.totals.totalPaise} />
+                  <Money paise={shown.totals.totalPaise} />
                 </dd>
               </div>
             </>
@@ -307,7 +355,7 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
           )}
         </dl>
 
-        <fieldset className="flex flex-col gap-2 border-t border-border pt-3" disabled={!current}>
+        <fieldset className="flex flex-col gap-2 border-t border-border pt-3" disabled={!shown}>
           <legend className="text-sm font-semibold text-foreground">Payment now</legend>
           <div className="flex flex-wrap gap-2">
             {METHODS.slice(0, 2).map((method) => (
@@ -322,26 +370,30 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
           <div className="grid grid-cols-2 gap-2">
             {METHODS.map((method) => (
               <Field key={method.key} label={`${method.label} (₹)`}>
-                <Input value={payments[method.key]} onChange={(event) => setPayments((all) => ({ ...all, [method.key]: event.target.value }))} inputMode="decimal" placeholder="0" className="h-11 tabular-nums" />
+                <Input value={payments[method.key]} onChange={(event) => setPayment(method.key, event.target.value)} inputMode="decimal" placeholder="0" className="h-11 tabular-nums" />
               </Field>
             ))}
           </div>
           {payments.cash ? (
-            <Field label="Cash received (₹)" hint="Only to work out change. Not saved." error={problems.find((problem) => problem.field === "cashReceived")?.message}>
-              <Input value={cashReceived} onChange={(event) => setCashReceived(event.target.value)} inputMode="decimal" className="h-11 tabular-nums" />
+            <Field
+              label="Cash received (₹)"
+              hint="Only to work out change. Not saved."
+              error={cashShort ? `₹${paiseToRupeeInput(cash!.shortPaise)} short. Take more cash or put the rest on UPI or credit.` : problems.find((problem) => problem.field === "cashReceived")?.message}
+            >
+              <Input value={cashReceived} onChange={(event) => update({ cashReceived: event.target.value })} inputMode="decimal" placeholder={payments.cash} className="h-11 tabular-nums" />
             </Field>
           ) : null}
-          {current ? (
+          {shown ? (
             <div className="flex flex-col gap-1 text-sm">
-              <Row label="Paid now" paise={current.paidNowPaise} />
-              <Row label="On credit" paise={current.creditPaise} />
-              {current.changePaise !== null && current.changePaise > 0 ? <Row label="Change to return" paise={current.changePaise} strong /> : null}
-              {current.balanceAfterPaise !== null ? <Row label="Customer dues after this bill" paise={current.balanceAfterPaise} /> : null}
+              <Row label="Paid now" paise={shown.paidNowPaise} />
+              <Row label="On credit" paise={shown.creditPaise} />
+              {cash && !cashShort ? <Row label="Change to return" paise={cash.changePaise} strong /> : null}
+              {shown.balanceAfterPaise !== null ? <Row label="Customer dues after this bill" paise={shown.balanceAfterPaise} /> : null}
             </div>
           ) : null}
         </fieldset>
 
-        {problems.filter((problem) => !problem.field?.startsWith("lines.")).length > 0 || error ? (
+        {problems.filter((problem) => !problem.field?.startsWith("lines.") && problem.field !== "cashReceived").length > 0 || error ? (
           <div role="alert" className="flex flex-col gap-1 rounded-xl bg-danger-soft px-4 py-3 text-sm text-danger">
             {error ? (
               <p className="flex gap-2">
@@ -350,7 +402,7 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
               </p>
             ) : null}
             {problems
-              .filter((problem) => !problem.field?.startsWith("lines.") && problem.message !== error)
+              .filter((problem) => !problem.field?.startsWith("lines.") && problem.field !== "cashReceived" && problem.message !== error)
               .map((problem) => (
                 <p key={problem.code}>{problem.message}</p>
               ))}
@@ -359,8 +411,8 @@ export function BillingScreen({ customers }: { customers: Customer[] }) {
 
         <Button type="button" size="touch" className="h-12 text-base" disabled={!canSave} onClick={save}>
           {saving ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
-          {current ? "Save bill · " : "Save bill"}
-          {current ? <Money paise={current.totals.totalPaise} /> : null}
+          {shown ? "Save bill · " : "Save bill"}
+          {shown ? <Money paise={shown.totals.totalPaise} /> : null}
         </Button>
         <p className="text-xs text-muted-foreground">Prices, stock and dues are checked again when you save. If anything changed, nothing is saved and the new total is shown.</p>
       </section>

@@ -232,6 +232,62 @@ describe("concurrency and duplicates", () => {
     const numbers = (await db.owner.select({ number: invoices.number }).from(invoices).where(eq(invoices.shopId, shopA.shopId))).map((row) => Number(row.number.slice(-5))).sort((a, b) => a - b);
     expect(numbers).toEqual(numbers.map((_, index) => numbers[0]! + index));
   });
+
+  it("double clicks and retries of one bill save one invoice, one payment and one stock deduction", async () => {
+    const session = await owner();
+    const id = await product(shopA, { retail: "100", wholesale: "90", gst: "0", stock: "10" });
+    const input: BillInput = { lines: [{ productId: id, unit: "pc", quantity: "2" }], payments: { cash: "200" }, cashReceived: "500" };
+    const preview = await previewBill(session, input);
+    const idempotencyKey = key();
+    const before = await counts(shopA.shopId);
+    const submit = (extra: Partial<BillInput> = {}) => createInvoice(session, { ...input, ...extra, idempotencyKey, expectedTotalPaise: preview.totals.totalPaise, expectedRates: preview.expectedRates });
+    const clicks = await Promise.all([submit(), submit(), submit(), submit(), submit()]);
+    expect(new Set(clicks.map((bill) => bill.id)).size).toBe(1);
+    expect(clicks.filter((bill) => !bill.replayed)).toHaveLength(1);
+    // A retry after the cashier retyped the cash handed over is still the same bill: change is never saved.
+    expect(await submit({ cashReceived: "1000" })).toMatchObject({ id: clicks[0]!.id, replayed: true });
+    const after = await counts(shopA.shopId);
+    expect({ i: after.i - before.i, m: after.m - before.m, p: after.p - before.p }).toEqual({ i: 1, m: 1, p: 1 });
+    expect((await getProductStock(session, id)).qty).toBe("8");
+  });
+
+  it("a refused save leaves the bill's key free, so fixing the bill and saving again saves it once", async () => {
+    const session = await owner();
+    const input: BillInput = { lines: [{ productId: valve, unit: "pc", quantity: "1" }], payments: { cash: "378" }, cashReceived: "300" };
+    const idempotencyKey = key();
+    await expect(sell(session, input, { idempotencyKey })).rejects.toBeTruthy();
+    const saved = await sell(session, { ...input, cashReceived: "400" }, { idempotencyKey });
+    expect(saved.replayed).toBe(false);
+    expect(await sell(session, { ...input, cashReceived: "400" }, { idempotencyKey })).toMatchObject({ id: saved.id, replayed: true });
+  });
+});
+
+describe("cash received and change", () => {
+  it("₹444 bill with ₹500 handed over: ₹56 change, and only ₹444 is recorded as paid", async () => {
+    const session = await owner();
+    const geetakshi = await customer(shopA, "wholesale");
+    await addCustomerRule(session, { kind: "pct", customerId: geetakshi, productId: "", percent: "20" });
+    const input: BillInput = { customerId: geetakshi, lines: [{ productId: pipe, unit: "pc", quantity: "1" }], payments: { cash: "444" }, cashReceived: "500" };
+    const preview = await previewBill(session, input);
+    expect(preview.lines[0]).toMatchObject({ ratePaise: 37600 }); // wholesale ₹470 − 20%
+    expect(preview).toMatchObject({ totals: { totalPaise: 44400 }, paidNowPaise: 44400, creditPaise: 0, changePaise: 5600, problems: [] });
+    const result = await sell(session, input);
+    const rows = await db.owner.select().from(payments).where(eq(payments.invoiceId, result.id));
+    expect(rows.map((row) => [row.method, row.amountPaise])).toEqual([["cash", 44400]]);
+    const [invoice] = await db.owner.select().from(invoices).where(eq(invoices.id, result.id));
+    expect(invoice).toMatchObject({ totalPaise: 44400, discountPaise: 0 });
+    await cacheMatchesLedger(geetakshi);
+    expect(await partyBalance(shopA.shopId, "customer", geetakshi)).toBe(0);
+  });
+
+  it("refuses to save a cash bill when the cash handed over is short, and saves nothing", async () => {
+    const session = await owner();
+    const input: BillInput = { lines: [{ productId: valve, unit: "pc", quantity: "1" }], payments: { cash: "378" }, cashReceived: "350" };
+    expect((await previewBill(session, input)).problems).toEqual([expect.objectContaining({ code: "CASH_SHORT", message: expect.stringContaining("₹28") })]);
+    const before = await counts(shopA.shopId);
+    await expect(sell(session, input)).rejects.toBeTruthy();
+    expect(await counts(shopA.shopId)).toEqual(before);
+  });
 });
 
 describe("cancelling a bill", () => {
