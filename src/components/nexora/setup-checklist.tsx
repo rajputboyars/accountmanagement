@@ -9,7 +9,8 @@ import type { Onboarding, OnboardingStepKey } from "@/modules/reporting";
 
 const STEP_TEXT: Record<OnboardingStepKey, { title: string; detail: string; action: string }> = {
   business: { title: "Add your shop's address and phone", detail: "They are printed on every bill.", action: "Open settings" },
-  product: { title: "Add your first product", detail: "Name, selling price and stock. You can add the rest later.", action: "Add a product" },
+  product: { title: "Add your first product", detail: "Name and selling price. You can add the rest later.", action: "Add a product" },
+  stock: { title: "Enter how much stock you have", detail: "Count what is on the shelf (opening stock), so bills can check it.", action: "Enter stock" },
   bill: { title: "Make your first bill", detail: "Bill a walk-in customer, or pick a customer to give udhaar (credit).", action: "New bill" },
 };
 

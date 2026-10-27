@@ -209,3 +209,9 @@ export async function listOpeningCandidates(session: SessionContext) {
       })),
   };
 }
+
+/** Whether any stock has been entered in the shop yet (the setup checklist). No permission check: yes/no only. */
+export async function shopHasStockEntries(shopId: string): Promise<boolean> {
+  const [row] = await getDb().select({ id: stockMovements.id }).from(stockMovements).where(eq(stockMovements.shopId, shopId)).limit(1);
+  return Boolean(row);
+}

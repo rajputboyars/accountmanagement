@@ -226,7 +226,7 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
               <>
                 <p className="font-semibold text-foreground">Add a product first</p>
                 <p className="max-w-sm text-sm text-muted-foreground">
-                  {firstRun.canAddProducts ? "A bill needs at least one product with a selling price. Add your first product, then come back here to bill it." : "There are no products to sell yet. Ask the owner to add products first."}
+                  {firstRun.canAddProducts ? "A bill needs a product with a selling price and some stock. Add your first product and its opening stock, then come back here to bill it." : "There are no products to sell yet. Ask the owner to add products first."}
                 </p>
                 {firstRun.canAddProducts ? (
                   <Link href="/inventory/new" className={buttonVariants({ size: "touch" })}>

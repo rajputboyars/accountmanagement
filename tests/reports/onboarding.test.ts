@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { checklistMode, stepHint, type TodaySummary } from "@/components/nexora/setup-checklist";
 import { createProduct, shopHasProducts } from "@/modules/catalog";
-import { recordOpeningStock } from "@/modules/inventory";
+import { recordOpeningStock, shopHasStockEntries } from "@/modules/inventory";
 import { getDashboard, getOnboarding } from "@/modules/reporting";
 import { cancelInvoice, createInvoice, previewBill, shopHasInvoices, type BillInput } from "@/modules/sales";
 import { updateBusinessProfile } from "@/modules/settings";
@@ -33,40 +33,43 @@ describe("first-run setup checklist", () => {
     await updateBusinessProfile(owner, { name: `Onboarding ${n}`, address: "", phone: "98290 12345", stateCode: "08" });
     expect((await done(owner)).business).toBe(false); // address still missing
     await updateBusinessProfile(owner, { name: `Onboarding ${n}`, address: "12 MI Road, Jaipur", phone: "98290 12345", stateCode: "08" });
-    expect(await done(owner)).toEqual({ business: true, product: false, bill: false });
+    expect(await done(owner)).toEqual({ business: true, product: false, stock: false, bill: false });
 
     const { id } = await createProduct(owner, { name: `Tap ${n}`, sku: `OB-${n}`, baseUnit: "pc", hsn: "8481", gstRateBp: "0", retailPaise: "100", wholesalePaise: "90", costPaise: "60" });
+    // A product alone can't be billed yet: billing refuses items with no stock entered.
+    expect(await done(owner)).toEqual({ business: true, product: true, stock: false, bill: false });
+    expect((await previewBill(owner, { lines: [{ productId: id, unit: "pc", quantity: "1" }], payments: { cash: "100" } })).problems).toEqual([expect.objectContaining({ message: expect.stringContaining("no stock entered yet") })]);
     await recordOpeningStock(owner, { idempotencyKey: key(), movementDate: indiaDate(), lines: [{ productId: id, unit: "pc", quantity: "10" }] });
-    expect(await done(owner)).toEqual({ business: true, product: true, bill: false });
+    expect(await done(owner)).toEqual({ business: true, product: true, stock: true, bill: false });
 
     const bill = await sell(owner, { lines: [{ productId: id, unit: "pc", quantity: "1" }], payments: { cash: "100" } });
-    expect(await getOnboarding(owner)).toMatchObject({ doneCount: 3, complete: true, hasBills: true });
+    expect(await getOnboarding(owner)).toMatchObject({ doneCount: 4, complete: true, hasBills: true });
     // A cancelled first bill still means the owner has billed: the checklist doesn't go backwards.
     await cancelInvoice(owner, bill.id, { reason: "Practice bill" });
     expect(await getOnboarding(owner)).toMatchObject({ complete: true, hasBills: true });
 
     // Another shop's progress is its own.
     expect(await getOnboarding(outsider)).toMatchObject({ doneCount: 0, hasBills: false });
-    expect([await shopHasProducts(other.shopId), await shopHasInvoices(other.shopId)]).toEqual([false, false]);
+    expect([await shopHasProducts(other.shopId), await shopHasStockEntries(other.shopId), await shopHasInvoices(other.shopId)]).toEqual([false, false, false]);
   });
 
   it("only offers each step to people allowed to do it", async () => {
     n += 1;
     const shop = await createTestShop(db, `Onboarding roles ${n}`);
     const canAct = async (role: "owner" | "cashier" | "inventory") => Object.fromEntries((await getOnboarding((await signInAs(shop.users[role])).session)).steps.map((step) => [step.key, step.canAct]));
-    expect(await canAct("owner")).toEqual({ business: true, product: true, bill: true });
-    expect(await canAct("cashier")).toEqual({ business: false, product: false, bill: true });
+    expect(await canAct("owner")).toEqual({ business: true, product: true, stock: true, bill: true });
+    expect(await canAct("cashier")).toEqual({ business: false, product: false, stock: false, bill: true });
     const cashierSteps = (await getOnboarding((await signInAs(shop.users.cashier)).session)).steps;
     expect(stepHint(cashierSteps.find((step) => step.key === "business")!)).toBe("Ask the owner to do this.");
     expect(stepHint(cashierSteps.find((step) => step.key === "bill")!)).toContain("udhaar");
   });
 
   it("shows steps until setup is done, then today's summary only on the today view", () => {
-    const steps = (doneCount: number) => ({ steps: [], doneCount, complete: doneCount === 3, hasBills: doneCount === 3 });
+    const steps = (doneCount: number) => ({ steps: [], doneCount, complete: doneCount === 4, hasBills: doneCount === 4 });
     const today: TodaySummary = { billedPaise: 10000, billCount: 1, collectedPaise: 10000, receivablePaise: 0, expensesPaise: 0, profit: { reliable: false } };
     expect(checklistMode(steps(1), today)).toBe("steps");
-    expect(checklistMode(steps(3), today)).toBe("done");
-    expect(checklistMode(steps(3), null)).toBe("hidden");
+    expect(checklistMode(steps(4), today)).toBe("done");
+    expect(checklistMode(steps(4), null)).toBe("hidden");
   });
 });
 

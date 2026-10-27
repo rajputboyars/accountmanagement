@@ -8,6 +8,7 @@ export {
   listStock,
   MOVEMENTS_PAGE_SIZE,
   rebuildStockCache,
+  shopHasStockEntries,
   STOCK_PAGE_SIZE,
   STOCK_STATUS_FILTERS,
   stockAlerts,
