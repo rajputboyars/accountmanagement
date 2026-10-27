@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "regions": ["bom1"],
+  "regions": ["sin1"],
   "buildCommand": "npm run build:deploy"
 }
