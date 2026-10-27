@@ -7,7 +7,7 @@ import { countUnreadNotifications, decideApproval, getNotificationPreferences, l
 import { notifications } from "@/modules/identity/schema";
 import { recordOpeningStock } from "@/modules/inventory";
 import { createCustomer, updateCustomer } from "@/modules/parties";
-import { applyWhatsAppStatuses, MAX_ATTEMPTS, metaCloudProvider, processWhatsAppOutbox, ProviderError, queueDuesReminder, queueOverdueReminders, refreshBusinessAlerts, retryDelayMinutes, verifyWebhookSignature, type ReminderProvider } from "@/modules/reporting";
+import { applyWhatsAppStatuses, getDashboard, MAX_ATTEMPTS, metaCloudProvider, processWhatsAppOutbox, ProviderError, queueDuesReminder, queueOverdueReminders, raiseBusinessAlerts, refreshBusinessAlerts, retryDelayMinutes, verifyWebhookSignature, type ReminderProvider } from "@/modules/reporting";
 import { whatsappMessages } from "@/modules/reporting/schema";
 import { ForbiddenError } from "@/server/errors";
 import { indiaDate } from "@/shared/financial-year";
@@ -102,6 +102,26 @@ describe("in-app notifications", () => {
     expect(kinds).toEqual(["dues_overdue", "low_stock"]);
     expect((await listNotifications(manager)).map((row) => row.kind).sort()).toEqual(["dues_overdue", "low_stock"]);
     expect(await listNotifications(cashier)).toEqual([]); // cashier can't edit customers or see stock levels
+  });
+});
+
+describe("business alerts from the dashboard", () => {
+  it("raises the same alerts from the figures the dashboard loaded, once, without loading them again", async () => {
+    const { owner, manager, cashier } = await setup();
+    const { id: productId } = await createProduct(owner, { name: `Tap ${n}`, sku: `DT-${n}`, baseUnit: "pc", hsn: "8481", gstRateBp: "0", retailPaise: "100", wholesalePaise: "90", costPaise: "50" });
+    await db.owner.execute(`update products set reorder_level = 100 where id = '${productId}'`);
+    await recordOpeningStock(owner, { idempotencyKey: `k_${productId.replace(/-/g, "")}`, movementDate: today, lines: [{ productId, unit: "pc", quantity: "10" }] });
+    await debtor(owner);
+    const { alerts } = await getDashboard(owner);
+    expect(alerts.stockCounts).toMatchObject({ reorder: 1 });
+    expect(alerts.receivables?.rows.some((row) => row.overduePaise > 0)).toBe(true);
+    expect(await raiseBusinessAlerts(owner, alerts)).toBeGreaterThan(0);
+    expect(await raiseBusinessAlerts(owner, alerts)).toBe(0); // dashboard reloaded: deduplicated
+    expect(await refreshBusinessAlerts(manager)).toBe(0); // the notifications page agrees it is already raised
+    expect((await listNotifications(owner)).map((row) => row.kind).sort()).toEqual(["dues_overdue", "low_stock"]);
+    expect(await listNotifications(cashier)).toEqual([]);
+    // Nothing the viewer may not see → nothing raised.
+    expect(await raiseBusinessAlerts(owner, { stockCounts: null, receivables: null })).toBe(0);
   });
 });
 

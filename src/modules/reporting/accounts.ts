@@ -1,7 +1,7 @@
 import { recordAudit } from "@/modules/audit";
 import { getCurrentShop } from "@/modules/settings";
 import { hasPermission, requirePermission, type SessionContext } from "@/modules/identity";
-import { partyStatement, type StatementLine } from "@/modules/ledger";
+import { partyStatement, partyStatements, type StatementLine } from "@/modules/ledger";
 import { findCustomer, findSupplier, listShopCustomers, listShopSuppliers } from "@/modules/parties";
 import { customerReceipts, paymentDetails, PAYMENTS_RECORD, PAYMENTS_REVERSE } from "@/modules/payments";
 import { receiptNumbersFor } from "@/modules/purchasing";
@@ -79,16 +79,14 @@ function describe(line: StatementLine, labels: Map<string, string>) {
 
 export async function listReceivables(session: SessionContext, asOf = indiaDate()) {
   await requirePermission(session, CUSTOMERS_VIEW);
-  const customers = await listShopCustomers(session.shopId, { includeInactive: true });
-  const rows = await Promise.all(
-    customers.map(async (customer) => {
-      const lines = await partyStatement(session.shopId, "customer", customer.id);
-      const balancePaise = lines.at(-1)?.balancePaise ?? 0;
-      const ageing = ageOpenItems(ageingEntries(lines, 1, new Map()), asOf, CUSTOMER_TERMS_DAYS);
-      const oldest = ageing.open[0]?.ageDays ?? null;
-      return { ...customer, balancePaise, overduePaise: ageing.overduePaise, oldestDueDays: oldest, tone: dueTone(oldest, balancePaise), buckets: ageing.buckets };
-    }),
-  );
+  const [customers, statements] = await Promise.all([listShopCustomers(session.shopId, { includeInactive: true }), partyStatements(session.shopId, "customer")]);
+  const rows = customers.map((customer) => {
+    const lines = statements.get(customer.id) ?? [];
+    const balancePaise = lines.at(-1)?.balancePaise ?? 0;
+    const ageing = ageOpenItems(ageingEntries(lines, 1, new Map()), asOf, CUSTOMER_TERMS_DAYS);
+    const oldest = ageing.open[0]?.ageDays ?? null;
+    return { ...customer, balancePaise, overduePaise: ageing.overduePaise, oldestDueDays: oldest, tone: dueTone(oldest, balancePaise), buckets: ageing.buckets };
+  });
   rows.sort((a, b) => b.balancePaise - a.balancePaise);
   const sum = (pick: (row: (typeof rows)[number]) => number) => rows.reduce((total, row) => total + pick(row), 0);
   return {
@@ -154,15 +152,13 @@ export async function getCustomerAccount(session: SessionContext, customerId: st
 
 export async function listPayables(session: SessionContext, asOf = indiaDate()) {
   await requirePermission(session, SUPPLIERS_VIEW);
-  const suppliers = await listShopSuppliers(session.shopId, { includeInactive: true });
-  const rows = await Promise.all(
-    suppliers.map(async (supplier) => {
-      const lines = await partyStatement(session.shopId, "supplier", supplier.id);
-      const owedPaise = -(lines.at(-1)?.balancePaise ?? 0) || 0;
-      const ageing = ageOpenItems(ageingEntries(lines, -1, new Map()), asOf, supplier.paymentTermsDays);
-      return { id: supplier.id, name: supplier.name, owedPaise, overduePaise: ageing.overduePaise, nextDue: ageing.open.find((item) => item.daysPastDue === 0)?.dueDate ?? null, buckets: ageing.buckets };
-    }),
-  );
+  const [suppliers, statements] = await Promise.all([listShopSuppliers(session.shopId, { includeInactive: true }), partyStatements(session.shopId, "supplier")]);
+  const rows = suppliers.map((supplier) => {
+    const lines = statements.get(supplier.id) ?? [];
+    const owedPaise = -(lines.at(-1)?.balancePaise ?? 0) || 0;
+    const ageing = ageOpenItems(ageingEntries(lines, -1, new Map()), asOf, supplier.paymentTermsDays);
+    return { id: supplier.id, name: supplier.name, owedPaise, overduePaise: ageing.overduePaise, nextDue: ageing.open.find((item) => item.daysPastDue === 0)?.dueDate ?? null, buckets: ageing.buckets };
+  });
   return {
     rows,
     totals: { payablePaise: rows.reduce((sum, row) => sum + Math.max(row.owedPaise, 0), 0), overduePaise: rows.reduce((sum, row) => sum + row.overduePaise, 0) },

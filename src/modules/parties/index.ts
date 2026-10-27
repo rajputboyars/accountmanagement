@@ -91,6 +91,16 @@ export async function findSupplier(shopId: string, supplierId: string, db: Datab
   return row;
 }
 
+/** Names of suppliers of `shopId`, for labelling. Ids of other shops are ignored. */
+export async function loadSupplierNames(shopId: string, supplierIds: string[], db: Database | Transaction = getDb()): Promise<Map<string, string>> {
+  if (supplierIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: suppliers.id, name: suppliers.name })
+    .from(suppliers)
+    .where(and(eq(suppliers.shopId, shopId), inArray(suppliers.id, supplierIds)));
+  return new Map(rows.map((row) => [row.id, row.name]));
+}
+
 export async function listShopSuppliers(shopId: string, options: { includeInactive?: boolean } = {}, db: Database | Transaction = getDb()): Promise<SupplierRow[]> {
   return db
     .select(supplierColumns)

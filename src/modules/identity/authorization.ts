@@ -30,6 +30,18 @@ export async function hasPermission(
   return row?.allowed === true;
 }
 
+/**
+ * Every permission the session's role holds, in one query: for screens that check several at once
+ * instead of one round trip each. Same deny-by-default rule as hasPermission.
+ */
+export async function loadPermissions(session: Pick<SessionContext, "shopId" | "role">, db: Database | Transaction = getDb()): Promise<ReadonlySet<Permission>> {
+  const rows = await db
+    .select({ permission: rolePermissions.permission })
+    .from(rolePermissions)
+    .where(and(eq(rolePermissions.shopId, session.shopId), eq(rolePermissions.role, session.role), eq(rolePermissions.allowed, true)));
+  return new Set(rows.map((row) => row.permission).filter(isPermission));
+}
+
 /** Throws ForbiddenError unless the session's role holds the permission. */
 export async function requirePermission(
   session: Pick<SessionContext, "shopId" | "role">,

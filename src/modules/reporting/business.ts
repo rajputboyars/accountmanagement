@@ -1,12 +1,12 @@
 import { cashFlowsForRange, expenseBreakdown, expensesInRange } from "@/modules/cashbook";
 import { loadProductNames } from "@/modules/catalog";
-import { hasPermission, requirePermission, type SessionContext } from "@/modules/identity";
+import { loadPermissions, requirePermission, type SessionContext } from "@/modules/identity";
 import { stockAlerts } from "@/modules/inventory";
-import { listShopCustomers, listShopSuppliers } from "@/modules/parties";
+import { listShopCustomers, listShopSuppliers, loadCustomerNames, loadSupplierNames } from "@/modules/parties";
 import { collectionsByDay, paymentKindTotals, paymentsInRange, recentPayments, type PaymentReportKind } from "@/modules/payments";
 import { purchasesRangeSummary } from "@/modules/purchasing";
 import { creditNotesInRange, invoicesInRange, profitInputs, recentInvoices, salesByDay, salesRangeSummary, topSellingProducts } from "@/modules/sales";
-import { NotFoundError } from "@/server/errors";
+import { ForbiddenError, NotFoundError } from "@/server/errors";
 import { EXPENSE_CATEGORIES } from "@/shared/cashbook";
 import { csvRupees, toCsv } from "@/shared/csv";
 import { indiaDate } from "@/shared/financial-year";
@@ -99,19 +99,15 @@ async function partyNames(shopId: string) {
 export type RangeInput = { range?: string; from?: string; to?: string };
 
 export async function getDashboard(session: SessionContext, input: RangeInput = {}) {
-  await requirePermission(session, REPORTS_VIEW);
+  // One query for every permission the dashboard checks, read fresh from role_permissions each load.
+  const granted = await loadPermissions(session);
+  if (!granted.has(REPORTS_VIEW)) throw new ForbiddenError();
   const today = indiaDate();
   const range = resolveRange(input, today);
   const shopId = session.shopId;
-  const [canProfit, canCustomers, canSuppliers, canStock, canCash] = await Promise.all([
-    hasPermission(session, PROFIT_VIEW),
-    hasPermission(session, "customers.view"),
-    hasPermission(session, "purchases.view"),
-    hasPermission(session, "inventory.view"),
-    hasPermission(session, "cash.record"),
-  ]);
+  const [canProfit, canCustomers, canSuppliers, canStock, canCash] = [PROFIT_VIEW, "customers.view", "purchases.view", "inventory.view", "cash.record"].map((key) => granted.has(key as Permission));
   const window = trendWindow(range);
-  const [sales, money, expenses, cash, purchases, daySales, dayCollections, top, receivables, payables, stock, profit, names, bills, pays] = await Promise.all([
+  const [sales, money, expenses, cash, purchases, daySales, dayCollections, top, receivables, payables, stock, profit, bills, pays] = await Promise.all([
     salesRangeSummary(shopId, range.from, range.to),
     paymentKindTotals(shopId, range.from, range.to).then(moneySummary),
     expenseBreakdown(shopId, range.from, range.to),
@@ -124,11 +120,17 @@ export async function getDashboard(session: SessionContext, input: RangeInput = 
     canSuppliers ? listPayables(session, today) : null,
     canStock ? stockAlerts(session, 6) : null,
     canProfit ? profitInputs(shopId, range.from, range.to) : null,
-    partyNames(shopId),
     recentInvoices(shopId, 6),
     recentPayments(shopId, 6),
   ]);
-  const productNames = await loadProductNames(shopId, [...new Set([...top.map((row) => row.productId), ...(profit?.missingCostProductIds ?? [])])]);
+  // Names only for what is on screen, not every customer and supplier of the shop.
+  const partyIds = (type: "customer" | "supplier") => [...new Set([...(type === "customer" ? bills.map((bill) => bill.customerId) : []), ...pays.filter((pay) => (pay.partyType === "supplier") === (type === "supplier") && pay.partyId).map((pay) => pay.partyId!)])];
+  const [productNames, customerNames, supplierNames] = await Promise.all([
+    loadProductNames(shopId, [...new Set([...top.map((row) => row.productId), ...(profit?.missingCostProductIds ?? [])])]),
+    loadCustomerNames(shopId, partyIds("customer")),
+    loadSupplierNames(shopId, partyIds("supplier")),
+  ]);
+  const names = { customers: customerNames, suppliers: supplierNames };
 
   const expenseTotals = new Map<string, number>();
   for (const row of expenses) expenseTotals.set(row.category, (expenseTotals.get(row.category) ?? 0) + row.totalPaise);
@@ -170,6 +172,8 @@ export async function getDashboard(session: SessionContext, input: RangeInput = 
     stock,
     profit: profit ? profitFrom(profit, profit.missingCostProductIds.map((id) => productNames.get(id)?.name ?? "Unknown product")) : null,
     recent,
+    // What the business alerts need, already loaded under the same permissions (see raiseBusinessAlerts).
+    alerts: { stockCounts: stock?.counts ?? null, receivables },
   };
 }
 

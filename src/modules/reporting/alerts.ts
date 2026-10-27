@@ -13,10 +13,24 @@ import { listReceivables } from "./accounts";
  */
 export async function refreshBusinessAlerts(session: SessionContext) {
   const today = indiaDate();
+  const [canStock, canCustomers] = await Promise.all([hasPermission(session, "inventory.view"), hasPermission(session, "customers.view")]);
+  const [stock, receivables] = await Promise.all([canStock ? stockAlerts(session, 0) : null, canCustomers ? listReceivables(session, today) : null]);
+  return raiseBusinessAlerts(session, { stockCounts: stock?.counts ?? null, receivables }, today);
+}
+
+export type BusinessAlertInputs = {
+  stockCounts: { out: number; reorder: number; low: number } | null;
+  receivables: Awaited<ReturnType<typeof listReceivables>> | null;
+};
+
+/**
+ * Raises the alerts from figures the caller already loaded (null = the viewer may not see them), so
+ * the dashboard can run this after its response without loading stock and dues a second time.
+ */
+export async function raiseBusinessAlerts(session: SessionContext, { stockCounts: counts, receivables }: BusinessAlertInputs, today = indiaDate()) {
   const weekStart = addDays(today, -((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7)); // Monday
   let raised = 0;
-  if (await hasPermission(session, "inventory.view")) {
-    const { counts } = await stockAlerts(session, 0);
+  if (counts) {
     if (counts.out + counts.reorder > 0) {
       raised += await raiseNotification({
         shopId: session.shopId,
@@ -29,8 +43,8 @@ export async function refreshBusinessAlerts(session: SessionContext) {
       });
     }
   }
-  if (await hasPermission(session, "customers.view")) {
-    const { rows, totals } = await listReceivables(session, today);
+  if (receivables) {
+    const { rows, totals } = receivables;
     const overdue = rows.filter((row) => row.overduePaise > 0);
     if (overdue.length > 0) {
       raised += await raiseNotification({

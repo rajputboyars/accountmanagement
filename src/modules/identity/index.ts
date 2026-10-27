@@ -1,5 +1,5 @@
 /** Public API of the identity module. Other modules and the app import only from here. */
-export { hasPermission, requirePermission } from "./authorization";
+export { hasPermission, loadPermissions, requirePermission } from "./authorization";
 export { bootstrapOwner, signOut } from "./bootstrap";
 export {
   OTP_MAX_ATTEMPTS,

@@ -88,3 +88,22 @@ export async function partyStatement(shopId: string, partyType: "customer" | "su
     return { ...row, balancePaise: running };
   });
 }
+
+/**
+ * partyStatement for every customer (or supplier) of the shop in one query instead of one per party:
+ * the same entries, order and running balance, grouped by party. Parties without entries are absent.
+ */
+export async function partyStatements(shopId: string, partyType: "customer" | "supplier", db: Database | Transaction = getDb()): Promise<Map<string, StatementLine[]>> {
+  const rows = await db
+    .select({ partyId: ledgerEntries.partyId, id: ledgerEntries.id, entryDate: ledgerEntries.entryDate, kind: ledgerEntries.kind, sourceType: ledgerEntries.sourceType, sourceId: ledgerEntries.sourceId, debitPaise: ledgerEntries.debitPaise, creditPaise: ledgerEntries.creditPaise })
+    .from(ledgerEntries)
+    .where(and(eq(ledgerEntries.shopId, shopId), eq(ledgerEntries.partyType, partyType)))
+    .orderBy(asc(ledgerEntries.entryDate), asc(ledgerEntries.id));
+  const byParty = new Map<string, StatementLine[]>();
+  for (const { partyId, ...row } of rows) {
+    const lines = byParty.get(partyId) ?? [];
+    lines.push({ ...row, balancePaise: (lines.at(-1)?.balancePaise ?? 0) + row.debitPaise - row.creditPaise });
+    byParty.set(partyId, lines);
+  }
+  return byParty;
+}

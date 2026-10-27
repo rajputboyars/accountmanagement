@@ -1,6 +1,6 @@
 # Deployment, backups and rollback
 
-Hosting (handoff T1): **Vercel** (Node runtime, region `bom1` Mumbai) and **managed PostgreSQL 16** in Mumbai (`ap-south-1`). Nothing here deploys by itself: every step below is run by the owner or their developer, with their own accounts and billing.
+Hosting (handoff T1): **Vercel** (Node runtime, region `bom1` Mumbai) and **managed PostgreSQL 16** in Mumbai (`ap-south-1`). The free public demo instead runs in `sin1` (Singapore, `vercel.json`) because its free Neon database is in Singapore: keep the function region next to the database, since every page makes several database round trips. Nothing here deploys by itself: every step below is run by the owner or their developer, with their own accounts and billing.
 
 ## 1. One-time setup
 

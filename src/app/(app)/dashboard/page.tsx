@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { after } from "next/server";
 import { ArrowUpRight, Clock, Plus } from "lucide-react";
 import { KpiCard } from "@/components/nexora/kpi-card";
 import { Money } from "@/components/nexora/money";
@@ -11,7 +12,7 @@ import { TrendChart } from "@/components/reports/trend-chart";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { countPendingApprovals } from "@/modules/identity";
-import { getDashboard, refreshBusinessAlerts } from "@/modules/reporting";
+import { getDashboard, raiseBusinessAlerts } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
 import { formatPaise } from "@/shared/money";
 import { rangeQuery } from "@/shared/report-range";
@@ -54,9 +55,10 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
   const [data, pendingApprovalsCount] = await Promise.all([
     getDashboard(session, { range: one(query.range), from: one(query.from), to: one(query.to) }),
     session.role === "owner" ? countPendingApprovals(session) : 0,
-    // Raises today's stock / this week's dues alerts at most once (deduplicated); never blocks the page.
-    refreshBusinessAlerts(session).catch(() => 0),
   ]);
+  // Today's stock / this week's dues alerts (deduplicated) are raised after the page is sent, from the
+  // figures just loaded, so they never delay it or query stock and dues twice.
+  after(() => raiseBusinessAlerts(session, data.alerts).catch((error: unknown) => console.error(JSON.stringify({ level: "error", event: "business_alerts_failed", message: error instanceof Error ? error.message : String(error) }))));
   const { range, sales, money, expenses, cash, receivables, payables, stock, profit } = data;
   const q = rangeQuery(range);
   const report = (kind: string, withRange = true) => `/reports/${kind}${withRange ? `?${q}` : ""}`;

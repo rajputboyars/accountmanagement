@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import pg from "pg";
 import { describe, expect, it } from "vitest";
 import { recordExpense } from "@/modules/cashbook";
 import { createProduct } from "@/modules/catalog";
 import { recordOpeningStock } from "@/modules/inventory";
-import { partyBalance } from "@/modules/ledger";
+import { partyBalance, partyStatement, partyStatements } from "@/modules/ledger";
+import { rolePermissions } from "@/modules/identity/schema";
 import { createCustomer } from "@/modules/parties";
 import { recordCustomerReceipt, reverseCustomerReceipt } from "@/modules/payments";
 import { getDashboard, getReport, reportToCsv } from "@/modules/reporting";
+import { listReceivables } from "@/modules/reporting/accounts";
 import { createInvoice, createReturn, getReturnableInvoice, previewBill, previewReturn, type BillInput } from "@/modules/sales";
 import { invoices } from "@/modules/sales/schema";
 import { ForbiddenError, NotFoundError } from "@/server/errors";
@@ -130,6 +133,44 @@ describe("owner dashboard", () => {
     await expect(getDashboard((await signInAs(shop.users.cashier)).session)).rejects.toBeInstanceOf(ForbiddenError);
     await expect(getReport((await signInAs(shop.users.inventory)).session, "stock")).rejects.toBeInstanceOf(ForbiddenError);
     await expect(getReport(session, "nope")).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("labels recent activity with the right party names and follows a revoked grant on the next load", async () => {
+    const { shop, session, productId } = await setup();
+    const buyer = await customer(session);
+    await sell(session, { customerId: buyer, lines: [{ productId, unit: "pc", quantity: "1" }], payments: { cash: "100" } });
+    await sell(session, { lines: [{ productId, unit: "pc", quantity: "1" }], payments: { cash: "100" } }); // walk-in
+    const labels = (await getDashboard(session)).recent.map((row) => row.label);
+    expect(labels.some((label) => label.endsWith(`· Customer ${n}`))).toBe(true);
+    expect(labels.some((label) => label.endsWith("· Walk-in customer"))).toBe(true);
+    // Permissions are read fresh on every load, never cached: the manager loses dues the moment it is revoked.
+    const manager = (await signInAs(shop.users.manager)).session;
+    expect((await getDashboard(manager)).receivables).not.toBeNull();
+    await db.owner.update(rolePermissions).set({ allowed: false }).where(and(eq(rolePermissions.shopId, shop.shopId), eq(rolePermissions.role, "manager"), eq(rolePermissions.permission, "customers.view")));
+    const after = await getDashboard(manager);
+    expect(after.receivables).toBeNull();
+    expect(after.alerts.receivables).toBeNull();
+  });
+
+  it("works out every customer's dues from one ledger query, matching each customer's own statement", async () => {
+    const { session, productId } = await setup();
+    const ids = [await customer(session, { openingOwed: "700", oldestBillDate: daysAgo(40) }), await customer(session), await customer(session, { openingOwed: "50" })];
+    await sell(session, { customerId: ids[1]!, lines: [{ productId, unit: "pc", quantity: "3" }] });
+    await recordCustomerReceipt(session, { idempotencyKey: key(), customerId: ids[0]!, amount: "200", method: "cash" });
+    const statements = await partyStatements(session.shopId, "customer");
+    for (const id of ids) expect(statements.get(id) ?? []).toEqual(await partyStatement(session.shopId, "customer", id));
+    for (const id of ids) expect((await listReceivables(session)).rows.find((row) => row.id === id)?.balancePaise).toBe(await partyBalance(session.shopId, "customer", id));
+    // No query per customer: ten more customers with dues cost no extra round trips.
+    const queries = async () => {
+      let count = 0;
+      const query = pg.Client.prototype.query;
+      pg.Client.prototype.query = function (this: pg.Client, ...args: Parameters<typeof query>) { count += 1; return query.apply(this, args); } as typeof query;
+      try { await listReceivables(session); } finally { pg.Client.prototype.query = query; }
+      return count;
+    };
+    const before = await queries();
+    for (let i = 0; i < 10; i++) await customer(session, { openingOwed: "10" });
+    expect(await queries()).toBe(before);
   });
 
   it("never shows another shop's records", async () => {
