@@ -7,7 +7,8 @@ import { ConfigurationError } from "@/server/errors";
  */
 export interface OtpSender {
   readonly name: string;
-  send(message: { phone: string; code: string }): Promise<void>;
+  /** `displayCode` is returned only by the demo sender, to show the code on screen. */
+  send(message: { phone: string; code: string }): Promise<void | { displayCode: string }>;
 }
 
 export function maskPhone(phone: string): string {
@@ -59,11 +60,26 @@ export class Msg91OtpSender implements OtpSender {
   }
 }
 
+/**
+ * Public demo only (SMS_PROVIDER=demo, allowed only with DEMO_MODE=true): nothing is sent; the code
+ * is handed back so the sign-in page can show it. Anyone who knows a staff number can sign in, so the
+ * demo must hold sample data only.
+ */
+export class DemoOtpSender implements OtpSender {
+  readonly name = "demo";
+
+  async send({ code }: { phone: string; code: string }): Promise<{ displayCode: string }> {
+    return { displayCode: code };
+  }
+}
+
 export function getOtpSender(): OtpSender {
   const env = getAuthEnv();
   switch (env.SMS_PROVIDER) {
     case "console":
       return new ConsoleOtpSender();
+    case "demo":
+      return new DemoOtpSender();
     case "msg91":
       return new Msg91OtpSender({ authKey: env.MSG91_AUTH_KEY!, templateId: env.MSG91_TEMPLATE_ID!, otpVariable: env.MSG91_OTP_VARIABLE });
   }

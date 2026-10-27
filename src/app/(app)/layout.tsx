@@ -3,6 +3,7 @@ import { AppHeader } from "@/components/nexora/app-header";
 import { HeaderAccount, HeaderShopName } from "@/components/nexora/header-account";
 import { MobileNav } from "@/components/nexora/mobile-nav";
 import { Sidebar } from "@/components/nexora/sidebar";
+import { isDemoMode } from "@/server/env";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   // The sidebar, header and bottom bar read the pathname, which on routes with dynamic params
@@ -27,6 +28,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             }
           />
         </Suspense>
+        {isDemoMode() ? (
+          <p role="note" className="border-b border-amber/40 bg-amber-soft px-4 py-1.5 text-center text-xs font-medium text-amber-ink">
+            Demo with sample data. Don&apos;t enter real customer or business information.
+          </p>
+        ) : null}
         {/* Each page checks the session itself through <ProtectedPage>. */}
         <main id="main" className="flex-1 pb-24 md:pb-0">
           {children}

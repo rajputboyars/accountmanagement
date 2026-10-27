@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { isSetupComplete } from "@/modules/settings";
 import { getCurrentSession, homePathForRole } from "@/server/auth";
 import { LoginForm } from "./login-form";
+import { isDemoMode } from "@/server/env";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -24,7 +25,7 @@ async function LoginGate({ searchParams }: { searchParams: PageProps<"/login">["
   if (session) redirect(homePathForRole(session.role));
   const params = await searchParams;
   const showDevHint = process.env.NODE_ENV !== "production" && (process.env.SMS_PROVIDER ?? "console") === "console";
-  return <LoginForm showDevHint={showDevHint} setupDone={params.setup === "done"} />;
+  return <LoginForm showDevHint={showDevHint} demo={isDemoMode()} setupDone={params.setup === "done"} />;
 }
 
 function FormSkeleton() {

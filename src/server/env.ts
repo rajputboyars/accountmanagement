@@ -34,7 +34,9 @@ const authEnvSchema = z
       .string()
       .regex(/^[a-z_]{3,32}$/, "SESSION_COOKIE_NAME may only use lowercase letters and _")
       .default("nx_session"),
-    SMS_PROVIDER: z.enum(["console", "msg91"]).default("console"),
+    SMS_PROVIDER: z.enum(["console", "msg91", "demo"]).default("console"),
+    // Public demo only: sign-in codes are shown on screen. Never use with real shop data.
+    DEMO_MODE: z.enum(["true", "false", ""]).optional().transform((value) => value === "true"),
     // MSG91 (DLT-registered OTP template). Required when SMS_PROVIDER=msg91.
     MSG91_AUTH_KEY: z.string().trim().optional(),
     MSG91_TEMPLATE_ID: z.string().trim().optional(),
@@ -43,6 +45,9 @@ const authEnvSchema = z
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && env.SMS_PROVIDER === "console") {
       ctx.addIssue({ code: "custom", path: ["SMS_PROVIDER"], message: "The console OTP provider is not allowed in production." });
+    }
+    if (env.SMS_PROVIDER === "demo" && !env.DEMO_MODE) {
+      ctx.addIssue({ code: "custom", path: ["SMS_PROVIDER"], message: "SMS_PROVIDER=demo needs DEMO_MODE=true (public demo with sample data only)." });
     }
     if (env.SMS_PROVIDER === "msg91") {
       if (!env.MSG91_AUTH_KEY || env.MSG91_AUTH_KEY.length < 16) ctx.addIssue({ code: "custom", path: ["MSG91_AUTH_KEY"], message: "MSG91_AUTH_KEY is not set." });
@@ -81,4 +86,9 @@ export function databaseHost(url: string): string {
 
 export function isLocalDatabase(url: string): boolean {
   return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(databaseHost(url));
+}
+
+/** True only on the public demo deployment (DEMO_MODE=true): shows a banner and sign-in codes on screen. */
+export function isDemoMode(source: Record<string, string | undefined> = process.env): boolean {
+  return source.DEMO_MODE === "true";
 }

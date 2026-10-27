@@ -25,12 +25,14 @@ export async function loginAction(previous: LoginState, formData: FormData): Pro
 
   if (intent === "request") {
     try {
-      const { resendAfterSeconds } = await requestSignInCode({ phone });
+      const { resendAfterSeconds, demoCode } = await requestSignInCode({ phone });
       return {
         step: "code",
         phone,
         resendAt: Date.now() + resendAfterSeconds * 1000,
-        notice: "If this number belongs to a staff account, we've sent a 6-digit code. It works for 5 minutes.",
+        notice: demoCode
+          ? `Demo: your code is ${demoCode}. (A real shop gets it by SMS.)`
+          : "If this number belongs to a staff account, we've sent a 6-digit code. It works for 5 minutes.",
       };
     } catch (error) {
       unstable_rethrow(error);

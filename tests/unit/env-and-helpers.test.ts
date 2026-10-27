@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { maskPhone, validatePinStrength } from "@/modules/identity";
-import { Msg91OtpSender } from "@/modules/identity/otp-provider";
-import { getAuthEnv, getDbEnv } from "@/server/env";
+import { DemoOtpSender, Msg91OtpSender } from "@/modules/identity/otp-provider";
+import { getAuthEnv, getDbEnv, isDemoMode } from "@/server/env";
 import { financialYearLabel } from "@/shared/financial-year";
 import { defaultPermissionRows, PERMISSIONS, ROLE_NAMES } from "@/shared/permissions";
 
@@ -22,6 +22,14 @@ describe("environment validation", () => {
     expect(() => getAuthEnv({ NODE_ENV: "production", OTP_PEPPER: pepper, SMS_PROVIDER: "console" })).toThrow(/not allowed in production/);
     expect(() => getAuthEnv({ NODE_ENV: "production", OTP_PEPPER: pepper, SMS_PROVIDER: "msg91" })).toThrow(/MSG91_AUTH_KEY/);
     expect(getAuthEnv({ NODE_ENV: "production", OTP_PEPPER: pepper, SMS_PROVIDER: "msg91", MSG91_AUTH_KEY: "k".repeat(24), MSG91_TEMPLATE_ID: "tpl123" })).toMatchObject({ SMS_PROVIDER: "msg91", MSG91_OTP_VARIABLE: "otp" });
+  });
+
+  it("allows the on-screen demo sender only on a demo deployment", async () => {
+    expect(() => getAuthEnv({ NODE_ENV: "production", OTP_PEPPER: pepper, SMS_PROVIDER: "demo" })).toThrow(/DEMO_MODE=true/);
+    expect(getAuthEnv({ NODE_ENV: "production", OTP_PEPPER: pepper, SMS_PROVIDER: "demo", DEMO_MODE: "true" })).toMatchObject({ SMS_PROVIDER: "demo", DEMO_MODE: true });
+    expect(await new DemoOtpSender().send({ phone: "9876543210", code: "654321" })).toEqual({ displayCode: "654321" });
+    expect(isDemoMode({ DEMO_MODE: "true" })).toBe(true);
+    expect(isDemoMode({})).toBe(false);
   });
 
   it("sends the code through MSG91's DLT template without logging it, and reports refusals", async () => {

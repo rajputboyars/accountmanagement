@@ -91,3 +91,7 @@ where sl.qty_base <> coalesce(sm.t, 0);
 - [ ] Owner PIN set; staff accounts per person; nobody shares the owner login.
 - [ ] HTTPS only (HSTS is sent in production); custom domain with Vercel-managed certificate.
 - [ ] Backups and PITR on; first restore drill done.
+
+## 7. Free public demo (sample data only)
+
+Vercel Hobby + Neon free Postgres. Set on the Vercel project (Production): `DEMO_MODE=true`, `SMS_PROVIDER=demo` (sign-in code shown on screen, allowed only with `DEMO_MODE`), `DEMO_SEED=true` (each deploy loads the idempotent sample shop after migrations), `OTP_PEPPER` (`npm run secret`). Add Neon from Vercel → Storage; it provides `DATABASE_URL` (pooled, used by the app) and `DATABASE_URL_UNPOOLED` (used for migrations). Anyone who knows a sample staff number (owner `9000000001`) can sign in, so never put real data in the demo; a banner says so on every screen.

@@ -9,6 +9,8 @@ if (!production) {
   console.log("[deploy] Not a production deploy: skipping migrations.");
   process.exit(0);
 }
+// Neon on Vercel provides DATABASE_URL_UNPOOLED (direct connection, best for migrations).
+process.env.DATABASE_MIGRATION_URL ||= process.env.DATABASE_URL_UNPOOLED || "";
 if (!process.env.DATABASE_MIGRATION_URL) {
   console.error("[deploy] DATABASE_MIGRATION_URL is not set; refusing to build without applying migrations.");
   process.exit(1);
@@ -27,3 +29,13 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 console.log("[deploy] Migrations applied.");
+
+// Public demo only: load the sample shop (idempotent) so the demo has data to show.
+if (process.env.DEMO_MODE === "true" && process.env.DEMO_SEED === "true") {
+  console.log("[deploy] Demo mode: loading the sample shop…");
+  const seed = spawnSync("npx", ["tsx", "db/seed/sample-shop.ts"], { stdio: "inherit", shell: process.platform === "win32" });
+  if (seed.status !== 0) {
+    console.error("[deploy] Loading the sample shop failed.");
+    process.exit(seed.status ?? 1);
+  }
+}

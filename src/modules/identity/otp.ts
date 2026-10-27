@@ -39,7 +39,7 @@ const lockPhone = (phone: string) => sql`select pg_advisory_xact_lock(hashtext($
 export async function requestSignInCode(
   input: { phone: string },
   deps: { sender?: OtpSender } = {},
-): Promise<{ resendAfterSeconds: number }> {
+): Promise<{ resendAfterSeconds: number; demoCode?: string }> {
   const phone = phoneSchema.parse(input.phone);
   const sender = deps.sender ?? getOtpSender();
 
@@ -75,8 +75,8 @@ export async function requestSignInCode(
   });
 
   // Sent after commit, so a code is never delivered for a request that did not persist.
-  if (code) await sender.send({ phone, code });
-  return { resendAfterSeconds: OTP_RESEND_COOLDOWN_SECONDS };
+  const sent = code ? await sender.send({ phone, code }) : undefined;
+  return { resendAfterSeconds: OTP_RESEND_COOLDOWN_SECONDS, ...(sent && "displayCode" in sent ? { demoCode: sent.displayCode } : {}) };
 }
 
 export type SignInFailure = "invalid_code" | "expired" | "too_many_attempts" | "no_active_code";

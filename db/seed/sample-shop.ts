@@ -87,6 +87,10 @@ const SUPPLIERS = [
 ] as const;
 
 function assertSafeToSeed(url: string) {
+  // The public demo deployment (DEMO_MODE=true and DEMO_SEED=true, set together on purpose) holds
+  // sample data only, so it may be seeded although it runs as production on a hosted database.
+  const demo = process.env.DEMO_MODE === "true" && process.env.DEMO_SEED === "true";
+  if (demo && url) return;
   if (process.env.NODE_ENV === "production") throw new Error("Refusing to seed: NODE_ENV is production.");
   if (process.env.SEED_ALLOW !== "true") throw new Error('Refusing to seed: set SEED_ALLOW="true" in your local .env.');
   if (!url) throw new Error("Refusing to seed: DATABASE_MIGRATION_URL or DATABASE_URL is not set.");

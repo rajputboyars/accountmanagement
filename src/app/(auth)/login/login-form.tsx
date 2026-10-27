@@ -31,7 +31,7 @@ function useSecondsUntil(timestamp?: number) {
   return timestamp ? Math.max(0, Math.ceil((timestamp - now) / 1000)) : 0;
 }
 
-export function LoginForm({ showDevHint, setupDone }: { showDevHint: boolean; setupDone: boolean }) {
+export function LoginForm({ showDevHint, demo, setupDone }: { showDevHint: boolean; demo: boolean; setupDone: boolean }) {
   const [state, formAction] = useActionState(loginAction, initialState);
   const resendIn = useSecondsUntil(state.resendAt);
   const needsNewCode = state.reason === "expired" || state.reason === "too_many_attempts" || state.reason === "no_active_code";
@@ -137,6 +137,14 @@ export function LoginForm({ showDevHint, setupDone }: { showDevHint: boolean; se
         )}
       </form>
 
+      {demo ? (
+        <div className="rounded-xl border border-dashed border-amber/60 bg-amber-soft px-4 py-3 text-xs text-amber-ink">
+          <p className="font-semibold">Demo with sample data. The sign-in code is shown on screen.</p>
+          <p className="mt-1">
+            Try owner <span className="font-mono">9000000001</span>, manager <span className="font-mono">9000000002</span>, cashier <span className="font-mono">9000000003</span> or stock <span className="font-mono">9000000005</span>.
+          </p>
+        </div>
+      ) : null}
       {showDevHint ? (
         <p className="rounded-xl border border-dashed border-amber/60 bg-amber-soft px-4 py-3 text-xs text-amber-ink">
           Development mode: codes are printed in the terminal running <code className="font-mono">npm run dev</code>, not sent by SMS.
