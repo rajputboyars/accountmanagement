@@ -9,6 +9,7 @@ export {
   PRODUCT_PAGE_SIZE,
   searchShopProducts,
   setProductActive,
+  shopHasProducts,
   trimFactor,
   updateProduct,
   type Conversion,

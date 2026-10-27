@@ -7,12 +7,13 @@ import { Money } from "@/components/nexora/money";
 import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
+import { SetupChecklist } from "@/components/nexora/setup-checklist";
 import { RangeFilter } from "@/components/reports/range-filter";
 import { TrendChart } from "@/components/reports/trend-chart";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { countPendingApprovals } from "@/modules/identity";
-import { getDashboard, raiseBusinessAlerts } from "@/modules/reporting";
+import { getDashboard, getOnboarding, raiseBusinessAlerts } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
 import { formatPaise } from "@/shared/money";
 import { rangeQuery } from "@/shared/report-range";
@@ -52,9 +53,10 @@ function ViewAll({ href, label = "View all" }: { href: string; label?: string })
 async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
   const query = await searchParams;
   const session = await requireSession();
-  const [data, pendingApprovalsCount] = await Promise.all([
+  const [data, pendingApprovalsCount, onboarding] = await Promise.all([
     getDashboard(session, { range: one(query.range), from: one(query.from), to: one(query.to) }),
     session.role === "owner" ? countPendingApprovals(session) : 0,
+    getOnboarding(session),
   ]);
   // Today's stock / this week's dues alerts (deduplicated) are raised after the page is sent, from the
   // figures just loaded (and their date, even if midnight passes), so they never delay it or query twice.
@@ -91,6 +93,17 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
         </div>
       ) : null}
 
+      <SetupChecklist
+        shopId={session.shopId}
+        onboarding={onboarding}
+        // The "set up" card's figures are today's, so it only appears on the today view.
+        today={
+          range.from === data.today && range.to === data.today
+            ? { billedPaise: sales.billedPaise, billCount: sales.billCount, collectedPaise: money.collectedPaise, receivablePaise: receivables?.receivablePaise ?? null, expensesPaise: expenses.totalPaise, profit: profit ? (profit.reliable ? { reliable: true, grossProfitPaise: profit.grossProfitPaise } : { reliable: false }) : null }
+            : null
+        }
+      />
+
       <RangeFilter basePath="/dashboard" range={range} today={data.today} />
 
       <section aria-label="Billed sales" className="grid gap-4 rounded-2xl bg-panel p-5 text-panel-foreground sm:p-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,2fr)] lg:items-end">
@@ -100,7 +113,9 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
             <Money paise={sales.billedPaise} />
           </span>
           <span className="inline-flex items-center gap-1 text-sm text-panel-muted group-hover:text-panel-foreground">
-            {sales.billCount} {sales.billCount === 1 ? "bill" : "bills"} incl. GST{sales.cancelledCount ? ` · ${sales.cancelledCount} cancelled, not counted` : ""}
+            {onboarding.hasBills
+              ? `${sales.billCount} ${sales.billCount === 1 ? "bill" : "bills"} incl. GST${sales.cancelledCount ? ` · ${sales.cancelledCount} cancelled, not counted` : ""}`
+              : "No bills yet. Your first bill will show here."}
             <ArrowUpRight className="size-3.5" aria-hidden="true" />
           </span>
         </Link>

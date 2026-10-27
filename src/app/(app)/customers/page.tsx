@@ -7,6 +7,7 @@ import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { getNavItem } from "@/config/navigation";
 import { listReceivables } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
@@ -76,6 +77,12 @@ async function Customers() {
             <div className="flex flex-col items-center gap-2 border-t border-border px-5 py-12 text-center">
               <Users className="size-8 text-muted-foreground" aria-hidden="true" />
               <p className="font-semibold text-foreground">No customers yet</p>
+              <p className="max-w-sm text-sm text-muted-foreground">Add the people who buy on udhaar (credit) or come back often, so their dues are tracked. Walk-in cash sales don&apos;t need a customer.</p>
+              {canAdd ? (
+                <a href="#section-add-a-customer" className={buttonVariants({ variant: "outline", size: "touch" })}>
+                  Add your first customer
+                </a>
+              ) : null}
             </div>
           ) : (
             <ul className="flex flex-col divide-y divide-border border-t border-border">

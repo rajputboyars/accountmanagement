@@ -57,3 +57,9 @@ export async function documentNumbers(shopId: string, ids: { invoiceIds: string[
   }
   return result;
 }
+
+/** Whether the shop has saved any bill yet, cancelled ones included (the setup checklist). */
+export async function shopHasInvoices(shopId: string, db: Database | Transaction = getDb()): Promise<boolean> {
+  const [row] = await db.select({ id: invoices.id }).from(invoices).where(eq(invoices.shopId, shopId)).limit(1);
+  return Boolean(row);
+}

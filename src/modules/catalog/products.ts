@@ -369,3 +369,9 @@ export async function exportProducts(session: SessionContext) {
     .orderBy(asc(products.name));
   return { costVisible, rows: rows.map((row) => ({ ...row, costPaise: costVisible ? row.costPaise : null })) };
 }
+
+/** Whether the shop has added any product yet (the setup checklist). No permission check: yes/no only. */
+export async function shopHasProducts(shopId: string): Promise<boolean> {
+  const [row] = await getDb().select({ id: products.id }).from(products).where(eq(products.shopId, shopId)).limit(1);
+  return Boolean(row);
+}

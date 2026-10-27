@@ -71,6 +71,7 @@ async function InvoiceList({ searchParams }: { searchParams: Search }) {
           <div className="flex flex-col items-center gap-2 border-t border-border px-5 py-12 text-center">
             <ReceiptText className="size-8 text-muted-foreground" aria-hidden="true" />
             <p className="font-semibold text-foreground">{q || date ? "No bills match" : "No bills yet"}</p>
+            <p className="max-w-sm text-sm text-muted-foreground">{q || date ? "Try another bill number or date." : "Every bill you save shows up here, newest first, so you can print, return or cancel it later."}</p>
             <Link href={q || date ? "/billing/invoices" : "/billing"} className={buttonVariants({ variant: "outline", size: "touch" })}>
               {q || date ? "Clear search" : "Make the first bill"}
             </Link>

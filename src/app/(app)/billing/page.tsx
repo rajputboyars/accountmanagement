@@ -7,6 +7,7 @@ import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { buttonVariants } from "@/components/ui/button";
 import { getNavItem } from "@/config/navigation";
+import { CATALOG_MANAGE, shopHasProducts } from "@/modules/catalog";
 import { hasPermission } from "@/modules/identity";
 import { BILLING_CREATE, listBillingCustomers } from "@/modules/sales";
 import { homePathForRole, requireSession } from "@/server/auth";
@@ -32,7 +33,7 @@ async function NewBill() {
       </PageContainer>
     );
   }
-  const customers = await listBillingCustomers(session);
+  const [customers, hasProducts, canAddProducts] = await Promise.all([listBillingCustomers(session), shopHasProducts(session.shopId), hasPermission(session, CATALOG_MANAGE)]);
   return (
     <PageContainer>
       <PageIntro
@@ -50,7 +51,7 @@ async function NewBill() {
           </>
         }
       />
-      <BillingScreen customers={customers} />
+      <BillingScreen customers={customers} firstRun={{ noProducts: !hasProducts, canAddProducts }} />
     </PageContainer>
   );
 }

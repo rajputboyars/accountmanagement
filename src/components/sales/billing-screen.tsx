@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "cn";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { GST_STATE_LIST, stateTaxLabel } from "@/shared/gst";
@@ -9,7 +10,7 @@ import { previewBillAction, saveBillAction, searchProductsAction, type BillInput
 import { Field, selectClass } from "@/components/catalog/form-bits";
 import { Money } from "@/components/nexora/money";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { paiseToRupeeInput } from "@/shared/money";
 import { cashSummary, emptyDraft, type Draft, type DraftLine, type Method } from "./billing-draft";
@@ -39,12 +40,15 @@ function bump(quantity: string, by: number): string {
  * draft would come back. Keying by `bfcacheId` starts a fresh bill on every "New bill" link or push,
  * while browser back/forward still restores an unfinished draft.
  */
-export function BillingScreen({ customers }: { customers: Customer[] }) {
+/** `noProducts`: the shop has no products yet, so the empty bill says what to do first. */
+type FirstRun = { noProducts: boolean; canAddProducts: boolean };
+
+export function BillingScreen({ customers, firstRun = { noProducts: false, canAddProducts: false } }: { customers: Customer[]; firstRun?: FirstRun }) {
   const { bfcacheId } = useRouter();
-  return <BillDraft key={bfcacheId} customers={customers} />;
+  return <BillDraft key={bfcacheId} customers={customers} firstRun={firstRun} />;
 }
 
-function BillDraft({ customers }: { customers: Customer[] }) {
+function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: FirstRun }) {
   const router = useRouter();
   const [draft, setDraft] = useState<Draft<Product>>(emptyDraft);
   const { customerId, priceList, discountPercent, placeOfSupply, lines, payments, cashReceived, idempotencyKey } = draft;
@@ -218,8 +222,24 @@ function BillDraft({ customers }: { customers: Customer[] }) {
         {lines.length === 0 ? (
           <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border px-4 py-12 text-center">
             <ReceiptText className="size-8 text-muted-foreground" aria-hidden="true" />
-            <p className="font-semibold text-foreground">No items yet</p>
-            <p className="text-sm text-muted-foreground">Search above to add products. Adding the same product again adds 1 to its quantity.</p>
+            {firstRun.noProducts ? (
+              <>
+                <p className="font-semibold text-foreground">Add a product first</p>
+                <p className="max-w-sm text-sm text-muted-foreground">
+                  {firstRun.canAddProducts ? "A bill needs at least one product with a selling price. Add your first product, then come back here to bill it." : "There are no products to sell yet. Ask the owner to add products first."}
+                </p>
+                {firstRun.canAddProducts ? (
+                  <Link href="/inventory/new" className={buttonVariants({ size: "touch" })}>
+                    Add your first product
+                  </Link>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <p className="font-semibold text-foreground">No items yet</p>
+                <p className="text-sm text-muted-foreground">Search above to add products. Adding the same product again adds 1 to its quantity.</p>
+              </>
+            )}
           </div>
         ) : (
           <ul className="flex flex-col divide-y divide-border">
