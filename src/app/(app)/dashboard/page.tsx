@@ -57,8 +57,8 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
     session.role === "owner" ? countPendingApprovals(session) : 0,
   ]);
   // Today's stock / this week's dues alerts (deduplicated) are raised after the page is sent, from the
-  // figures just loaded, so they never delay it or query stock and dues twice.
-  after(() => raiseBusinessAlerts(session, data.alerts).catch((error: unknown) => console.error(JSON.stringify({ level: "error", event: "business_alerts_failed", message: error instanceof Error ? error.message : String(error) }))));
+  // figures just loaded (and their date, even if midnight passes), so they never delay it or query twice.
+  after(() => raiseBusinessAlerts(session, data.alerts, data.today).catch((error: unknown) => console.error(JSON.stringify({ level: "error", event: "business_alerts_failed", message: error instanceof Error ? error.message : String(error) }))));
   const { range, sales, money, expenses, cash, receivables, payables, stock, profit } = data;
   const q = rangeQuery(range);
   const report = (kind: string, withRange = true) => `/reports/${kind}${withRange ? `?${q}` : ""}`;
