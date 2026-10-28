@@ -143,6 +143,15 @@ export function SetupChecklist({ shopId, onboarding, today }: { shopId: string; 
           );
         })}
       </ol>
+      {onboarding.canImport ? (
+        <p className="text-sm text-muted-foreground">
+          Already have a list in Excel or another app?{" "}
+          <Link href="/settings/setup#import" className="font-semibold text-teal-strong hover:underline">
+            Import products, customers and suppliers from a spreadsheet
+          </Link>
+          . Every row is checked before anything is saved.
+        </p>
+      ) : null}
     </section>
   );
 }

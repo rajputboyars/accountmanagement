@@ -12,7 +12,8 @@ import { getCurrentShop, SETTINGS_EDIT } from "@/modules/settings";
  */
 export type OnboardingStepKey = "business" | "product" | "stock" | "bill";
 export type OnboardingStep = { key: OnboardingStepKey; done: boolean; href: string; canAct: boolean };
-export type Onboarding = { steps: OnboardingStep[]; doneCount: number; complete: boolean; hasBills: boolean };
+/** `canImport`: may use Go-live setup to import products, customers and suppliers from spreadsheets. */
+export type Onboarding = { steps: OnboardingStep[]; doneCount: number; complete: boolean; hasBills: boolean; canImport: boolean };
 
 export async function getOnboarding(session: SessionContext): Promise<Onboarding> {
   const [shop, hasProducts, hasStock, hasBills, granted] = await Promise.all([getCurrentShop(session), shopHasProducts(session.shopId), shopHasStockEntries(session.shopId), shopHasInvoices(session.shopId), loadPermissions(session)]);
@@ -23,5 +24,5 @@ export async function getOnboarding(session: SessionContext): Promise<Onboarding
     { key: "bill", done: hasBills, href: "/billing", canAct: granted.has(BILLING_CREATE) },
   ];
   const doneCount = steps.filter((step) => step.done).length;
-  return { steps, doneCount, complete: doneCount === steps.length, hasBills };
+  return { steps, doneCount, complete: doneCount === steps.length, hasBills, canImport: granted.has("import.run") };
 }

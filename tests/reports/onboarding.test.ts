@@ -59,13 +59,16 @@ describe("first-run setup checklist", () => {
     const canAct = async (role: "owner" | "cashier" | "inventory") => Object.fromEntries((await getOnboarding((await signInAs(shop.users[role])).session)).steps.map((step) => [step.key, step.canAct]));
     expect(await canAct("owner")).toEqual({ business: true, product: true, stock: true, bill: true });
     expect(await canAct("cashier")).toEqual({ business: false, product: false, stock: false, bill: true });
+    // Only the owner is offered spreadsheet import (import.run), the same as the Go-live setup page.
+    expect((await getOnboarding((await signInAs(shop.users.owner)).session)).canImport).toBe(true);
+    expect((await getOnboarding((await signInAs(shop.users.manager)).session)).canImport).toBe(false);
     const cashierSteps = (await getOnboarding((await signInAs(shop.users.cashier)).session)).steps;
     expect(stepHint(cashierSteps.find((step) => step.key === "business")!)).toBe("Ask the owner to do this.");
     expect(stepHint(cashierSteps.find((step) => step.key === "bill")!)).toContain("udhaar");
   });
 
   it("shows steps until setup is done, then today's summary only on the today view", () => {
-    const steps = (doneCount: number) => ({ steps: [], doneCount, complete: doneCount === 4, hasBills: doneCount === 4 });
+    const steps = (doneCount: number) => ({ steps: [], doneCount, complete: doneCount === 4, hasBills: doneCount === 4, canImport: true });
     const today: TodaySummary = { billedPaise: 10000, billCount: 1, collectedPaise: 10000, receivablePaise: 0, expensesPaise: 0, profit: { reliable: false } };
     expect(checklistMode(steps(1), today)).toBe("steps");
     expect(checklistMode(steps(4), today)).toBe("done");
