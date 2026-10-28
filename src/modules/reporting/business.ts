@@ -58,7 +58,11 @@ export function moneySummary(rows: Awaited<ReturnType<typeof paymentKindTotals>>
     if (row.kind === "receipt_reversed") byMethod[row.method] = (byMethod[row.method] ?? 0) - row.totalPaise;
   }
   const reversedPaise = total(["receipt_reversed"]);
+  const cashPaise = byMethod.cash ?? 0;
+  const upiPaise = byMethod.upi ?? 0;
   return {
+    /** Money actually received, split for the owner: cash in hand, UPI, and card/bank/cheque together. */
+    split: { cashPaise, upiPaise, otherPaise: Object.values(byMethod).reduce((sum, paise) => sum + paise, 0) - cashPaise - upiPaise },
     collectedPaise: total(["bill", "collection"]) - reversedPaise,
     onBillsPaise: total(["bill"]),
     oldDuesPaise: total(["collection"]) - reversedPaise,
@@ -163,9 +167,9 @@ export async function getDashboard(session: SessionContext, input: RangeInput = 
     purchases,
     trend: trendRows(window.from, window.to, daySales, dayCollections),
     topProducts: top.map((row) => ({ ...row, name: productNames.get(row.productId)?.name ?? "Unknown product", unit: productNames.get(row.productId)?.baseUnit ?? "" })),
-    receivables: receivables
-      ? { ...receivables.totals, customersOwing: receivables.rows.filter((row) => row.balancePaise > 0).length, top: receivables.rows.filter((row) => row.balancePaise > 0).slice(0, 5).map((row) => ({ id: row.id, name: row.name, balancePaise: row.balancePaise, oldestDueDays: row.oldestDueDays, tone: row.tone })) }
-      : null,
+    receivables: receivables ? pendingCollections(receivables.rows, receivables.totals) : null,
+    // Quick actions this viewer may use; each opens the existing screen for it.
+    actions: { sale: granted.has("billing.create"), collect: canCustomers && granted.has("payments.record"), expense: granted.has("cash.record"), purchase: granted.has("stock.receive") },
     payables: payables
       ? { ...payables.totals, top: payables.rows.filter((row) => row.owedPaise > 0).sort((a, b) => b.owedPaise - a.owedPaise).slice(0, 5).map((row) => ({ id: row.id, name: row.name, owedPaise: row.owedPaise, overduePaise: row.overduePaise, nextDue: row.nextDue })) }
       : null,
@@ -178,6 +182,23 @@ export async function getDashboard(session: SessionContext, input: RangeInput = 
 }
 
 export type Dashboard = Awaited<ReturnType<typeof getDashboard>>;
+
+type ReceivableRow = { id: string; name: string; phone: string | null; balancePaise: number; overduePaise: number; oldestDueDays: number | null; tone: string };
+
+/**
+ * Customers to collect from: overdue first (most overdue money first), then the largest balances,
+ * capped so the owner sees a short list. Figures are the ledger balances listReceivables worked out.
+ */
+export function pendingCollections<T extends Record<string, unknown>>(rows: ReceivableRow[], totals: T, limit = 5) {
+  const owing = rows.filter((row) => row.balancePaise > 0);
+  const ordered = [...owing].sort((a, b) => b.overduePaise - a.overduePaise || b.balancePaise - a.balancePaise || a.name.localeCompare(b.name));
+  return {
+    ...totals,
+    customersOwing: owing.length,
+    overdueCustomers: owing.filter((row) => row.overduePaise > 0).length,
+    top: ordered.slice(0, limit).map((row) => ({ id: row.id, name: row.name, phone: row.phone, balancePaise: row.balancePaise, overduePaise: row.overduePaise, oldestDueDays: row.oldestDueDays, tone: row.tone })),
+  };
+}
 
 // ── Detailed reports (drill-down and CSV) ────────────────────────────────────
 

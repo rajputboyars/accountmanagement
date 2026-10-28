@@ -5,6 +5,7 @@ import { CustomerForm, ReceiptForm, ReminderCard, ReverseReceipt } from "@/compo
 import { Money } from "@/components/nexora/money";
 import { PageContainer } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
+import { ScrollIntoViewOnHash } from "@/components/nexora/scroll-into-view";
 import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -219,6 +220,7 @@ async function Account({ params, searchParams }: Pick<Props, "params" | "searchP
           {account.canRecord ? (
             <SectionCard title="Record a payment" description="Money received against dues. It's applied to the oldest bills first.">
               <ReceiptForm customerId={customer.id} balanceText={formatPaise(account.balancePaise, { withPaise: true })} />
+              <ScrollIntoViewOnHash anchorId="section-record-a-payment" />
             </SectionCard>
           ) : null}
           {account.canRecord && account.balancePaise > 0 ? (

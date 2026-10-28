@@ -5,6 +5,7 @@ import { CashMovementForm, CloseDayForm, ExpenseForm, ReopenDayForm, VoidExpense
 import { Money } from "@/components/nexora/money";
 import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
+import { ScrollIntoViewOnHash } from "@/components/nexora/scroll-into-view";
 import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -298,6 +299,7 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
           <>
             <SectionCard title="Add an expense" description="Tea, transport, rent… Cash expenses come out of the drawer.">
               <ExpenseForm date={book.date} />
+              <ScrollIntoViewOnHash anchorId="section-add-an-expense" />
             </SectionCard>
             <SectionCard title="Cash in or out" description="Bank deposits, cash the owner takes, or change put in.">
               <CashMovementForm date={book.date} />

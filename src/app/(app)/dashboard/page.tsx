@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
+import { cn } from "cn";
 import Link from "next/link";
 import { after } from "next/server";
-import { ArrowUpRight, Clock, Plus } from "lucide-react";
+import { ArrowUpRight, Clock, HandCoins, ReceiptText, Truck, Wallet } from "lucide-react";
 import { KpiCard } from "@/components/nexora/kpi-card";
 import { Money } from "@/components/nexora/money";
 import { PageContainer, PageIntro } from "@/components/nexora/page-container";
@@ -13,7 +14,7 @@ import { TrendChart } from "@/components/reports/trend-chart";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { countPendingApprovals } from "@/modules/identity";
-import { getDashboard, getOnboarding, raiseBusinessAlerts } from "@/modules/reporting";
+import { getDashboard, getOnboarding, raiseBusinessAlerts, type Dashboard } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
 import { formatPaise } from "@/shared/money";
 import { rangeQuery } from "@/shared/report-range";
@@ -31,7 +32,6 @@ export default function DashboardPage({ searchParams }: Props) {
 }
 
 const one = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
-const METHOD: Record<string, string> = { cash: "Cash", upi: "UPI", bank: "Bank", cheque: "Cheque", card: "Card" };
 const STATUS: Record<string, { label: string; variant: "danger" | "warning" | "neutral" }> = {
   out: { label: "Out", variant: "danger" },
   reorder: { label: "Reorder now", variant: "danger" },
@@ -62,6 +62,7 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
   // figures just loaded (and their date, even if midnight passes), so they never delay it or query twice.
   after(() => raiseBusinessAlerts(session, data.alerts, data.today).catch((error: unknown) => console.error(JSON.stringify({ level: "error", event: "business_alerts_failed", message: error instanceof Error ? error.message : String(error) }))));
   const { range, sales, money, expenses, cash, receivables, payables, stock, profit } = data;
+  const isToday = range.from === data.today && range.to === data.today;
   const q = rangeQuery(range);
   const report = (kind: string, withRange = true) => `/reports/${kind}${withRange ? `?${q}` : ""}`;
   const methods = Object.entries(money.byMethod).filter(([, paise]) => paise !== 0);
@@ -69,15 +70,9 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
 
   return (
     <PageContainer>
-      <PageIntro
-        description={`${range.label} · what was billed, what came in and what is owed are kept separate`}
-        actions={
-          <Link href="/billing" className={buttonVariants({ size: "touch" })}>
-            <Plus aria-hidden="true" />
-            New bill
-          </Link>
-        }
-      />
+      <PageIntro description={`${range.label} · what was billed, what came in and what is owed are kept separate`} />
+
+      <QuickActions actions={data.actions} />
 
       {pendingApprovalsCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-amber/40 bg-amber-soft px-4 py-3 text-sm text-amber-ink">
@@ -113,9 +108,11 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
             <Money paise={sales.billedPaise} />
           </span>
           <span className="inline-flex items-center gap-1 text-sm text-panel-muted group-hover:text-panel-foreground">
-            {onboarding.hasBills
-              ? `${sales.billCount} ${sales.billCount === 1 ? "bill" : "bills"} incl. GST${sales.cancelledCount ? ` · ${sales.cancelledCount} cancelled, not counted` : ""}`
-              : "No bills yet. Your first bill will show here."}
+            {!onboarding.hasBills
+              ? "No bills yet. Your first bill will show here."
+              : sales.billCount === 0
+                ? `No bills ${isToday ? "today yet" : "in this period"}.${sales.cancelledCount ? ` ${sales.cancelledCount} cancelled.` : ""}`
+                : `${sales.billCount} ${sales.billCount === 1 ? "bill" : "bills"} incl. GST${sales.cancelledCount ? ` · ${sales.cancelledCount} cancelled, not counted` : ""}`}
             <ArrowUpRight className="size-3.5" aria-hidden="true" />
           </span>
         </Link>
@@ -138,10 +135,27 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
 
       <section aria-label="Money and dues" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
-          label="Collected"
+          label="Money received"
           href={report("collections")}
           value={<Money paise={money.collectedPaise} />}
-          detail={methods.length ? <span className="tabular-nums">{methods.map(([method, paise]) => `${METHOD[method] ?? method} ${formatPaise(paise)}`).join(" · ")}</span> : "Nothing received yet"}
+          detail={
+            methods.length ? (
+              <dl className="grid grid-cols-3 gap-2 pt-1">
+                {[
+                  { label: "Cash", paise: money.split.cashPaise },
+                  { label: "UPI", paise: money.split.upiPaise },
+                  { label: "Card/bank", paise: money.split.otherPaise },
+                ].map((item) => (
+                  <div key={item.label} className="flex flex-col">
+                    <dt className="text-xs">{item.label}</dt>
+                    <dd className="font-semibold text-foreground tabular-nums">{formatPaise(item.paise)}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : (
+              "Nothing received yet. Credit sales are not counted until paid."
+            )
+          }
           footer={
             <div className="flex flex-wrap gap-1.5">
               <Badge variant="neutral">Old dues {formatPaise(money.oldDuesPaise)}</Badge>
@@ -202,6 +216,8 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
         ) : null}
       </section>
 
+      {receivables ? <PendingCollections receivables={receivables} canCollect={data.actions.collect} viewAllHref={report("customer-dues", false)} /> : null}
+
       <div className="grid gap-4 xl:grid-cols-3">
         <SectionCard title={`Billed vs collected`} description={data.trend.by === "day" ? (range.days < 7 ? "Last 7 days" : range.label) : `${range.label}, by month`} className="xl:col-span-2" action={<ViewAll href={report("collections")} label="Payments" />}>
           <TrendChart points={data.trend.points} by={data.trend.by} />
@@ -229,30 +245,6 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-        {receivables ? (
-          <SectionCard title="Customer dues" description="Highest balances today" action={<ViewAll href={report("customer-dues", false)} />} flush>
-            {receivables.top.length === 0 ? (
-              <p className="px-5 pb-5 text-sm text-muted-foreground">No customer owes you anything.</p>
-            ) : (
-              <ul className="flex flex-col divide-y divide-border pb-2">
-                {receivables.top.map((row) => (
-                  <li key={row.id}>
-                    <Link href={`/customers/${row.id}`} className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm hover:bg-muted/50">
-                      <span className="min-w-0">
-                        <span className="font-medium text-foreground">{row.name}</span>
-                        {row.oldestDueDays !== null ? <span className="block text-xs text-muted-foreground">Oldest bill {row.oldestDueDays} days</span> : null}
-                      </span>
-                      <span className="flex items-center gap-2">
-                        {row.tone === "red" ? <Badge variant="danger">Overdue</Badge> : row.tone === "amber" ? <Badge variant="warning">Due soon</Badge> : null}
-                        <Money paise={row.balancePaise} className="font-semibold" />
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </SectionCard>
-        ) : null}
         {payables ? (
           <SectionCard title="Supplier dues" description="What you owe, highest first" action={<ViewAll href={report("supplier-dues", false)} />} flush>
             {payables.top.length === 0 ? (
@@ -348,5 +340,77 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
         </SectionCard>
       </div>
     </PageContainer>
+  );
+}
+
+const QUICK_ACTIONS = [
+  { key: "sale", label: "New sale", hint: "Make a bill", href: "/billing", icon: ReceiptText },
+  { key: "collect", label: "Collect udhaar", hint: "Payment against dues", href: "/customers", icon: HandCoins },
+  { key: "expense", label: "Add expense", hint: "Tea, rent, transport", href: "/cashbook#section-add-an-expense", icon: Wallet },
+  { key: "purchase", label: "Add purchase", hint: "Goods received", href: "/purchases/receive", icon: Truck },
+] as const;
+
+/** The day's four main jobs, as large buttons. Only the ones this person may do are shown. */
+function QuickActions({ actions }: { actions: Dashboard["actions"] }) {
+  const shown = QUICK_ACTIONS.filter((action) => actions[action.key]);
+  if (shown.length === 0) return null;
+  return (
+    <nav aria-label="Quick actions" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {shown.map(({ key, label, hint, href, icon: Icon }, index) => (
+        <Link
+          key={key}
+          href={href}
+          className={cn(
+            "flex min-h-16 items-center gap-3 rounded-2xl border p-3 transition-colors focus-visible:outline-2 sm:p-4",
+            index === 0 ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90" : "border-border bg-card text-foreground hover:border-teal/50",
+          )}
+        >
+          <span className={cn("grid size-10 shrink-0 place-items-center rounded-xl", index === 0 ? "bg-primary-foreground/15" : "bg-teal-soft text-teal-strong")}>
+            <Icon className="size-5" aria-hidden="true" />
+          </span>
+          <span className="flex min-w-0 flex-col">
+            <span className="leading-snug font-semibold">{label}</span>
+            <span className={cn("hidden text-xs sm:block", index === 0 ? "text-primary-foreground/80" : "text-muted-foreground")}>{hint}</span>
+          </span>
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+/** Who to collect from: overdue first, then the biggest balances, each with a direct "Collect" button. */
+function PendingCollections({ receivables, canCollect, viewAllHref }: { receivables: NonNullable<Dashboard["receivables"]>; canCollect: boolean; viewAllHref: string }) {
+  const description =
+    receivables.customersOwing === 0
+      ? "Nobody owes you money"
+      : `${formatPaise(receivables.receivablePaise)} from ${receivables.customersOwing} ${receivables.customersOwing === 1 ? "customer" : "customers"}${receivables.overdueCustomers ? ` · ${receivables.overdueCustomers} overdue` : ""}`;
+  return (
+    <SectionCard title="Pending collections (udhaar)" description={description} action={<ViewAll href={viewAllHref} />} flush>
+      {receivables.top.length === 0 ? (
+        <p className="px-5 pb-5 text-sm text-muted-foreground">No pending udhaar. When you sell on credit, the customer shows here so you can collect the payment.</p>
+      ) : (
+        <ul className="flex flex-col divide-y divide-border pb-2">
+          {receivables.top.map((row) => (
+            <li key={row.id} className="flex items-center justify-between gap-3 px-5 py-3">
+              <Link href={`/customers/${row.id}`} className="min-w-0 rounded-lg focus-visible:outline-2">
+                <span className="block truncate font-medium text-foreground">{row.name}</span>
+                <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  {row.overduePaise > 0 ? <Badge variant="danger">{formatPaise(row.overduePaise)} overdue</Badge> : row.tone === "amber" ? <Badge variant="warning">Due soon</Badge> : null}
+                  {row.oldestDueDays !== null ? <span>Oldest bill {row.oldestDueDays} days</span> : null}
+                </span>
+              </Link>
+              <span className="flex shrink-0 items-center gap-3">
+                <Money paise={row.balancePaise} className="font-semibold" />
+                {canCollect ? (
+                  <Link href={`/customers/${row.id}#section-record-a-payment`} className={buttonVariants({ variant: "outline", size: "touch" })} aria-label={`Collect from ${row.name}`}>
+                    Collect
+                  </Link>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SectionCard>
   );
 }
