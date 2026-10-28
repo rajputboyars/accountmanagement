@@ -5,19 +5,20 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Ellipsis } from "lucide-react";
 import { cn } from "cn";
-import { NAV_ITEMS, findNavItemByPath } from "@/config/navigation";
+import { NAV_ITEMS, findNavItemByPath, type NavKey } from "@/config/navigation";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { NavLink } from "./nav-link";
 
-const primaryItems = NAV_ITEMS.filter((item) => item.mobilePrimary);
-const moreItems = NAV_ITEMS.filter((item) => !item.mobilePrimary);
 
 const tabClass =
   "flex min-h-12 min-w-14 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[11px] font-semibold transition-colors";
 
 /** Phone bottom bar (below 768px): four main destinations plus a "More" sheet. */
-export function MobileNav() {
+export function MobileNav({ allowed }: { allowed: readonly NavKey[] }) {
   const pathname = usePathname();
+  const items = NAV_ITEMS.filter((item) => allowed.includes(item.key));
+  const primaryItems = items.filter((item) => item.mobilePrimary);
+  const moreItems = items.filter((item) => !item.mobilePrimary);
   const activeKey = findNavItemByPath(pathname)?.key;
   const [moreOpen, setMoreOpen] = useState(false);
   const moreActive = moreItems.some((item) => item.key === activeKey);
@@ -51,7 +52,7 @@ export function MobileNav() {
           <SheetContent side="bottom" className="rounded-t-3xl pb-[calc(1rem+env(safe-area-inset-bottom))]">
             <SheetHeader>
               <SheetTitle>More</SheetTitle>
-              <SheetDescription>Purchases, suppliers, reports and settings.</SheetDescription>
+              <SheetDescription>{moreItems.map((item) => item.label).join(", ")}</SheetDescription>
             </SheetHeader>
             <div className="flex flex-col gap-1 px-4">
               {moreItems.map((item) => (

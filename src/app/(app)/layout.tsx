@@ -4,6 +4,7 @@ import { HeaderAccount, HeaderShopName } from "@/components/nexora/header-accoun
 import { MobileNav } from "@/components/nexora/mobile-nav";
 import { Sidebar } from "@/components/nexora/sidebar";
 import { isDemoMode } from "@/server/env";
+import { getNavAccess } from "@/server/nav-access";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   // The sidebar, header and bottom bar read the pathname, which on routes with dynamic params
@@ -11,7 +12,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-dvh">
       <Suspense fallback={<div aria-hidden="true" className="sticky top-0 hidden h-dvh w-[84px] shrink-0 border-r border-sidebar-border bg-sidebar md:block xl:w-64" />}>
-        <Sidebar />
+        <SessionSidebar />
       </Suspense>
       <div className="flex min-w-0 flex-1 flex-col">
         <Suspense fallback={<div aria-hidden="true" className="sticky top-0 z-30 h-16 border-b border-border bg-background" />}>
@@ -39,8 +40,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <Suspense fallback={null}>
-        <MobileNav />
+        <SessionMobileNav />
       </Suspense>
     </div>
   );
+}
+
+/** The menus list only the sections this person's role may open. */
+async function SessionSidebar() {
+  const { allowed, homeHref } = await getNavAccess();
+  return <Sidebar allowed={allowed} homeHref={homeHref} />;
+}
+
+async function SessionMobileNav() {
+  const { allowed } = await getNavAccess();
+  return <MobileNav allowed={allowed} />;
 }

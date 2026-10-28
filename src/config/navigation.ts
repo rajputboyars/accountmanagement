@@ -12,6 +12,7 @@ import {
   Wallet,
   type LucideIcon,
 } from "lucide-react";
+import type { Permission } from "@/shared/permissions";
 
 export type NavKey =
   | "dashboard"
@@ -40,6 +41,33 @@ export type NavItem = {
   /** What the finished screen will do, shown on not-yet-built pages. */
   planned: readonly string[];
 };
+
+/**
+ * The permission each section's page requires (the one its <ProtectedPage> checks), so the
+ * navigation only offers sections the person can open. null = every signed-in person (each part of
+ * Settings and Approvals checks its own permission). The server still enforces every page and action.
+ */
+export const NAV_PERMISSION: Record<NavKey, Permission | null> = {
+  dashboard: "reports.view",
+  billing: "billing.view",
+  inventory: "inventory.view",
+  pricing: "pricing.edit",
+  customers: "customers.view",
+  purchases: "purchases.view",
+  suppliers: "purchases.view",
+  cashbook: "cash.record",
+  reports: "reports.view",
+  approvals: "approvals.view",
+  settings: null,
+};
+
+/** Sections this person may open, in menu order. */
+export function navKeysFor(granted: ReadonlySet<string>): NavKey[] {
+  return NAV_ITEMS.filter((item) => {
+    const permission = NAV_PERMISSION[item.key];
+    return permission === null || granted.has(permission);
+  }).map((item) => item.key);
+}
 
 export const NAV_ITEMS: readonly NavItem[] = [
   {
