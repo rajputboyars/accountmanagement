@@ -30,7 +30,7 @@ async function NotificationsContent() {
   const unread = items.filter((item) => !item.readAt).length;
   return (
     <PageContainer className="max-w-4xl">
-      <PageIntro description="Alerts for you: low stock, overdue dues, approvals and WhatsApp messages that failed. Nothing here is sent to your phone." />
+      <PageIntro description="Alerts for you: low stock, overdue customer dues, supplier bills past their terms, approvals, finished imports and WhatsApp messages that failed. Nothing here is sent to your phone." />
       <SectionCard
         title="Inbox"
         description={unread ? `${unread} unread` : "All read"}

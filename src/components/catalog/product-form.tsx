@@ -17,6 +17,7 @@ export type ProductFormValues = {
   retailPrice: string;
   wholesalePrice: string;
   costPrice: string;
+  reorderLevel: string;
 };
 
 const gstLabel = (rate: number) => (rate === 0 ? "0% (nil / exempt)" : `${(rate / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}%`);
@@ -127,6 +128,10 @@ export function ProductForm({ mode, initial, units, categories, productId, versi
           </Field>
         ) : null}
       </fieldset>
+
+      <Field label="Low-stock alert at" hint="When stock falls to this many (in the base unit), the product shows as Low and you get a reminder. New products start at 10." error={errors.reorderLevel}>
+        <Input name="reorderLevel" defaultValue={values.reorderLevel} inputMode="decimal" aria-invalid={invalid("reorderLevel")} placeholder="e.g. 10" className="h-11 max-w-40 tabular-nums" />
+      </Field>
 
       <FormAlert error={state.fieldErrors ? "Please fix the highlighted fields above." : state.error} message={state.message} />
 

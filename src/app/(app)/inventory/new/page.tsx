@@ -32,7 +32,7 @@ async function NewProduct() {
       <SectionCard title="Add product" description="You can add pack sizes such as Box or Bundle after saving.">
         <ProductForm
           mode="create"
-          initial={{ name: "", sku: "", barcode: "", categoryName: "", description: "", baseUnit: "pc", hsn: "", gstRateBp: "1800", retailPrice: "", wholesalePrice: "", costPrice: "" }}
+          initial={{ name: "", sku: "", barcode: "", categoryName: "", description: "", baseUnit: "pc", hsn: "", gstRateBp: "1800", retailPrice: "", wholesalePrice: "", costPrice: "", reorderLevel: "10" }}
           units={units.map((unit) => ({ code: unit.code, name: unit.name }))}
           categories={categories.map((category) => category.name)}
           canSeeCost

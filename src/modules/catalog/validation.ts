@@ -81,6 +81,22 @@ export const productInputSchema = z.object({
       }
       return paise;
     }),
+  /** Low-stock alert level in the base unit. Empty = keep the current level (new products start at 10). */
+  reorderLevel: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value, ctx): Milli | null => {
+      if (!value) return null;
+      try {
+        const parsed = parseQuantity(value);
+        if (parsed < BigInt(0)) throw new QuantityError("The low-stock level can't be below 0.");
+        return parsed;
+      } catch (error) {
+        ctx.addIssue({ code: "custom", message: error instanceof QuantityError ? error.message : "Enter the low-stock level as a number, like 10." });
+        return z.NEVER;
+      }
+    }),
 });
 
 export type ProductInput = z.output<typeof productInputSchema>;

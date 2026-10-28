@@ -111,7 +111,7 @@ export async function getDashboard(session: SessionContext, input: RangeInput = 
   const shopId = session.shopId;
   const [canProfit, canCustomers, canSuppliers, canStock, canCash] = [PROFIT_VIEW, "customers.view", "purchases.view", "inventory.view", "cash.record"].map((key) => granted.has(key as Permission));
   const window = trendWindow(range);
-  const [sales, money, expenses, cash, purchases, daySales, dayCollections, top, receivables, payables, stock, profit, bills, pays] = await Promise.all([
+  const [sales, money, expenses, cash, purchases, daySales, dayCollections, top, receivables, payablesData, stock, profit, bills, pays] = await Promise.all([
     salesRangeSummary(shopId, range.from, range.to),
     paymentKindTotals(shopId, range.from, range.to).then(moneySummary),
     expenseBreakdown(shopId, range.from, range.to),
@@ -170,14 +170,14 @@ export async function getDashboard(session: SessionContext, input: RangeInput = 
     receivables: receivables ? pendingCollections(receivables.rows, receivables.totals) : null,
     // Quick actions this viewer may use; each opens the existing screen for it.
     actions: { sale: granted.has("billing.create"), collect: canCustomers && granted.has("payments.record"), expense: granted.has("cash.record"), purchase: granted.has("stock.receive") },
-    payables: payables
-      ? { ...payables.totals, top: payables.rows.filter((row) => row.owedPaise > 0).sort((a, b) => b.owedPaise - a.owedPaise).slice(0, 5).map((row) => ({ id: row.id, name: row.name, owedPaise: row.owedPaise, overduePaise: row.overduePaise, nextDue: row.nextDue })) }
+    payables: payablesData
+      ? { ...payablesData.totals, top: payablesData.rows.filter((row) => row.owedPaise > 0).sort((a, b) => b.owedPaise - a.owedPaise).slice(0, 5).map((row) => ({ id: row.id, name: row.name, owedPaise: row.owedPaise, overduePaise: row.overduePaise, nextDue: row.nextDue })) }
       : null,
     stock,
     profit: profit ? profitFrom(profit, profit.missingCostProductIds.map((id) => productNames.get(id)?.name ?? "Unknown product")) : null,
     recent,
     // What the business alerts need, already loaded under the same permissions (see raiseBusinessAlerts).
-    alerts: { stockCounts: stock?.counts ?? null, receivables },
+    alerts: { stockCounts: stock?.counts ?? null, receivables, payables: payablesData },
   };
 }
 

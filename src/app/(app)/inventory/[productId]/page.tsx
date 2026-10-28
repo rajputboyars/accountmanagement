@@ -114,6 +114,7 @@ async function ProductDetailView({ params, searchParams }: Pick<Props, "params" 
                 retailPrice: paiseToRupeeInput(product.retailPaise),
                 wholesalePrice: paiseToRupeeInput(product.wholesalePaise),
                 costPrice: product.costPaise === null ? "" : paiseToRupeeInput(product.costPaise),
+                reorderLevel: product.reorderLevel,
               }}
               units={units.filter((unit) => unit.isActive || unit.code === product.baseUnit).map((unit) => ({ code: unit.code, name: unit.name }))}
               categories={categories.map((category) => category.name)}

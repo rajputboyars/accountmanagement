@@ -17,6 +17,7 @@ import type { SessionContext } from "./sessions";
 export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
   low_stock: "Low or out of stock",
   dues_overdue: "Customer dues overdue",
+  supplier_overdue: "Supplier bills past their payment terms",
   approval_requested: "Approval requests",
   approval_decided: "Approval decisions",
   whatsapp_failed: "WhatsApp messages that failed",

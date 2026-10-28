@@ -31,7 +31,7 @@ export type CatalogFormState = {
 
 const text = (formData: FormData, name: string) => String(formData.get(name) ?? "");
 
-const PRODUCT_FIELDS = ["name", "sku", "barcode", "categoryName", "description", "baseUnit", "hsn", "gstRateBp", "retailPrice", "wholesalePrice", "costPrice"] as const;
+const PRODUCT_FIELDS = ["name", "sku", "barcode", "categoryName", "description", "baseUnit", "hsn", "gstRateBp", "retailPrice", "wholesalePrice", "costPrice", "reorderLevel"] as const;
 
 function productInput(formData: FormData) {
   const values = Object.fromEntries(PRODUCT_FIELDS.map((field) => [field, text(formData, field)]));
@@ -49,6 +49,7 @@ function productInput(formData: FormData) {
       retailPaise: values.retailPrice,
       wholesalePaise: values.wholesalePrice,
       costPaise: values.costPrice,
+      reorderLevel: values.reorderLevel,
     },
   };
 }

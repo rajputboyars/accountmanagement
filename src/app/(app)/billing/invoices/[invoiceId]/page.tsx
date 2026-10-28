@@ -9,6 +9,8 @@ import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
 import { COMPOSITION_DECLARATION, documentTitle, GST_STATES, stateTaxLabel } from "@/shared/gst";
 import { buttonVariants } from "@/components/ui/button";
+import { ShareBill } from "@/components/sales/share-bill";
+import { billShareText } from "@/shared/reminder";
 import { getInvoice } from "@/modules/sales";
 import { requireSession } from "@/server/auth";
 import { NotFoundError } from "@/server/errors";
@@ -69,6 +71,12 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
           Bills
         </Link>
         <div className="flex flex-wrap gap-2">
+          {invoice.status === "issued" ? (
+            <ShareBill
+              phone={invoice.customer.type === "walkin" ? null : invoice.customer.phone}
+              text={billShareText({ shopName: invoice.shop.name, shopPhone: invoice.shop.phone, upiId: invoice.shop.upiId, customerName: invoice.customer.type === "walkin" ? null : invoice.customer.name, number: invoice.number, date: invoice.businessDate, totalPaise: invoice.totalPaise, paidPaise: invoice.paidNowPaise })}
+            />
+          ) : null}
           <PrintButton />
           <Link href="/billing" className={buttonVariants({ size: "touch" })}>
             <Plus aria-hidden="true" />

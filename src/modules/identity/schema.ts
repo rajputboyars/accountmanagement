@@ -88,7 +88,7 @@ export const approvals = pgTable("approvals", {
 });
 
 /** In-app alerts, one row per recipient; `dedupe_key` stops the same alert being raised twice. */
-export const NOTIFICATION_KINDS = ["low_stock", "dues_overdue", "approval_requested", "approval_decided", "whatsapp_failed", "import_finished"] as const;
+export const NOTIFICATION_KINDS = ["low_stock", "dues_overdue", "supplier_overdue", "approval_requested", "approval_decided", "whatsapp_failed", "import_finished"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
 export const notifications = pgTable(

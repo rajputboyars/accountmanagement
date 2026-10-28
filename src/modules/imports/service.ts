@@ -3,7 +3,7 @@ import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { ZodError, type ZodType } from "zod";
 import { recordAudit } from "@/modules/audit";
 import { createProduct, exportProducts, listShopProductsForStock, listUnits, productInputSchema } from "@/modules/catalog";
-import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
+import { hasPermission, loadUserNames, raiseNotification, requirePermission, type SessionContext } from "@/modules/identity";
 import { openingLineSchema, recordOpeningStock, stockOnHand } from "@/modules/inventory";
 import { createCustomer, customerCreateSchema, listShopCustomers, listShopSuppliers } from "@/modules/parties";
 import { createSupplier, supplierInputSchema } from "@/modules/purchasing";
@@ -363,6 +363,19 @@ export async function commitImport(session: SessionContext, jobId: string) {
     await withTransaction(async (tx) => {
       await tx.update(importJobs).set({ status: "committed", summary }).where(eq(importJobs.id, job.id));
       await recordAudit(tx, { shopId: session.shopId, userId: session.userId, role: session.role }, { action: "imports.committed", entityType: "import_job", entityId: job.id, after: { type: job.type, fileName: job.fileName, ...summary, headers: undefined } });
+      // Tell the person who ran it how it went, once per import (the dedupe key is the job).
+      await raiseNotification(
+        {
+          shopId: session.shopId,
+          kind: "import_finished",
+          title: `${IMPORT_TYPE_LABELS[job.type]} import finished`,
+          body: `${summary.created} saved · ${summary.skipped} skipped · ${summary.errors} with errors${summary.errors + summary.skipped > 0 ? ". Download the rows left out to fix them." : "."}`,
+          href: `/settings/setup/imports/${job.id}`,
+          dedupeKey: `import:${job.id}`,
+          to: { userIds: [session.userId] },
+        },
+        tx,
+      );
     });
   } catch (error) {
     if (!isUniqueViolation(error, "import_jobs_committed_file_key")) throw error;

@@ -3,7 +3,7 @@ import { stockAlerts } from "@/modules/inventory";
 import { indiaDate } from "@/shared/financial-year";
 import { formatPaise } from "@/shared/money";
 import { addDays } from "@/shared/report-range";
-import { listReceivables } from "./accounts";
+import { listPayables, listReceivables } from "./accounts";
 
 /**
  * Business alerts worked out from the authoritative records (stock movements, the ledger) when an
@@ -13,21 +13,23 @@ import { listReceivables } from "./accounts";
  */
 export async function refreshBusinessAlerts(session: SessionContext) {
   const today = indiaDate();
-  const [canStock, canCustomers] = await Promise.all([hasPermission(session, "inventory.view"), hasPermission(session, "customers.view")]);
-  const [stock, receivables] = await Promise.all([canStock ? stockAlerts(session, 0) : null, canCustomers ? listReceivables(session, today) : null]);
-  return raiseBusinessAlerts(session, { stockCounts: stock?.counts ?? null, receivables }, today);
+  const [canStock, canCustomers, canSuppliers] = await Promise.all([hasPermission(session, "inventory.view"), hasPermission(session, "customers.view"), hasPermission(session, "purchases.view")]);
+  const [stock, receivables, payables] = await Promise.all([canStock ? stockAlerts(session, 0) : null, canCustomers ? listReceivables(session, today) : null, canSuppliers ? listPayables(session, today) : null]);
+  return raiseBusinessAlerts(session, { stockCounts: stock?.counts ?? null, receivables, payables }, today);
 }
 
 export type BusinessAlertInputs = {
   stockCounts: { out: number; reorder: number; low: number } | null;
   receivables: Awaited<ReturnType<typeof listReceivables>> | null;
+  /** Optional so callers that don't load supplier dues can leave it out. */
+  payables?: Awaited<ReturnType<typeof listPayables>> | null;
 };
 
 /**
  * Raises the alerts from figures the caller already loaded (null = the viewer may not see them), so
  * the dashboard can run this after its response without loading stock and dues a second time.
  */
-export async function raiseBusinessAlerts(session: SessionContext, { stockCounts: counts, receivables }: BusinessAlertInputs, today = indiaDate()) {
+export async function raiseBusinessAlerts(session: SessionContext, { stockCounts: counts, receivables, payables }: BusinessAlertInputs, today = indiaDate()) {
   const weekStart = addDays(today, -((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7)); // Monday
   let raised = 0;
   if (counts) {
@@ -55,6 +57,21 @@ export async function raiseBusinessAlerts(session: SessionContext, { stockCounts
         href: "/reports/customer-dues",
         dedupeKey: `dues_overdue:${weekStart}`,
         to: { permission: "customers.edit" },
+      });
+    }
+  }
+  if (payables) {
+    const late = payables.rows.filter((row) => row.overduePaise > 0).sort((a, b) => b.overduePaise - a.overduePaise);
+    if (late.length > 0) {
+      raised += await raiseNotification({
+        shopId: session.shopId,
+        kind: "supplier_overdue",
+        title: `${late.length} ${late.length === 1 ? "supplier bill is" : "suppliers' bills are"} past the payment terms`,
+        body: `${formatPaise(payables.totals.overduePaise)} is overdue to suppliers. Most overdue: ${late[0]!.name}.`,
+        href: "/reports/supplier-dues",
+        dedupeKey: `supplier_overdue:${weekStart}`,
+        // Only people who pay suppliers are told; the amounts stay with them.
+        to: { permission: "suppliers.pay" },
       });
     }
   }

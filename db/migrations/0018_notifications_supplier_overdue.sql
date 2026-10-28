@@ -1,0 +1,4 @@
+ALTER TABLE "notification_preferences" DROP CONSTRAINT "notification_preferences_kind_check";--> statement-breakpoint
+ALTER TABLE "notifications" DROP CONSTRAINT "notifications_kind_check";--> statement-breakpoint
+ALTER TABLE "notification_preferences" ADD CONSTRAINT "notification_preferences_kind_check" CHECK ("notification_preferences"."kind" in ('low_stock', 'dues_overdue', 'supplier_overdue', 'approval_requested', 'approval_decided', 'whatsapp_failed', 'import_finished'));--> statement-breakpoint
+ALTER TABLE "notifications" ADD CONSTRAINT "notifications_kind_check" CHECK ("notifications"."kind" in ('low_stock', 'dues_overdue', 'supplier_overdue', 'approval_requested', 'approval_decided', 'whatsapp_failed', 'import_finished'));

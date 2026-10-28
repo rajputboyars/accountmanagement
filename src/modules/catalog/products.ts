@@ -4,6 +4,7 @@ import { hasPermission, requirePermission, type SessionContext } from "@/modules
 import { getDb, withTransaction, type Transaction } from "@/server/db";
 import { isUniqueViolation } from "@/server/db-errors";
 import { ConflictError, NotFoundError } from "@/server/errors";
+import { toDbQuantity } from "@/shared/quantity";
 import { CATALOG_MANAGE, CATALOG_VIEW, COST_VIEW } from "./permissions";
 import { categories, productCostHistory, productUnits, products, units } from "./schema";
 import { requireActiveUnit } from "./units";
@@ -37,6 +38,8 @@ export type ProductDetail = ProductListItem & {
   /** null when unknown, or when the viewer may not see cost prices (see costVisible). */
   costPaise: number | null;
   costVisible: boolean;
+  /** Low-stock alert level in the base unit, e.g. "10". */
+  reorderLevel: string;
   version: number;
 };
 
@@ -166,6 +169,7 @@ export async function getProduct(session: SessionContext, productId: string): Pr
       retailPaise: products.retailPaise,
       wholesalePaise: products.wholesalePaise,
       costPaise: products.costPaise,
+      reorderLevel: products.reorderLevel,
       isActive: products.isActive,
       version: products.version,
     })
@@ -177,7 +181,7 @@ export async function getProduct(session: SessionContext, productId: string): Pr
   if (!row) throw new NotFoundError("Product not found.");
   const costVisible = await hasPermission(session, COST_VIEW);
   const conversions = await conversionsFor(db, session.shopId, [row.id], true);
-  return { ...row, costPaise: costVisible ? row.costPaise : null, costVisible, conversions: conversions.get(row.id) ?? [] };
+  return { ...row, reorderLevel: trimFactor(row.reorderLevel), costPaise: costVisible ? row.costPaise : null, costVisible, conversions: conversions.get(row.id) ?? [] };
 }
 
 /** Finds the shop's category by name (case-insensitive) or creates it. */
@@ -201,7 +205,8 @@ function duplicateError(error: unknown): ConflictError | null {
   return null;
 }
 
-type AuditableProduct = Omit<ProductInput, "barcode" | "description" | "categoryName"> & {
+type AuditableProduct = Omit<ProductInput, "barcode" | "description" | "categoryName" | "reorderLevel"> & {
+  reorderLevel?: string | null;
   barcode?: string | null;
   description?: string | null;
   categoryId: string | null;
@@ -221,6 +226,7 @@ function auditFields(data: AuditableProduct) {
     retailPaise: data.retailPaise,
     wholesalePaise: data.wholesalePaise,
     costPaise: data.costPaise,
+    reorderLevel: data.reorderLevel ?? null,
   };
 }
 
@@ -255,6 +261,7 @@ export async function createProduct(session: SessionContext, input: unknown): Pr
           retailPaise: data.retailPaise,
           wholesalePaise: data.wholesalePaise,
           costPaise: data.costPaise,
+          ...(data.reorderLevel !== null ? { reorderLevel: toDbQuantity(data.reorderLevel) } : {}),
         })
         .returning({ id: products.id });
     } catch (error) {
@@ -264,7 +271,7 @@ export async function createProduct(session: SessionContext, input: unknown): Pr
     if (data.costPaise !== null) {
       await tx.insert(productCostHistory).values({ productId, costPaise: data.costPaise, sourceType: "manual", effectiveAt: sql`now()` });
     }
-    await recordAudit(tx, actorOf(session), { action: "catalog.product_created", entityType: "product", entityId: productId, after: auditFields({ ...data, categoryId }) });
+    await recordAudit(tx, actorOf(session), { action: "catalog.product_created", entityType: "product", entityId: productId, after: auditFields({ ...data, categoryId, reorderLevel: data.reorderLevel !== null ? toDbQuantity(data.reorderLevel) : null }) });
     return { id: productId };
   });
 }
@@ -316,6 +323,7 @@ export async function updateProduct(session: SessionContext, productId: string, 
           retailPaise: data.retailPaise,
           wholesalePaise: data.wholesalePaise,
           costPaise,
+          ...(data.reorderLevel !== null ? { reorderLevel: toDbQuantity(data.reorderLevel) } : {}),
           version: nextVersion,
         })
         .where(and(eq(products.id, productId), eq(products.shopId, session.shopId)));
@@ -326,7 +334,7 @@ export async function updateProduct(session: SessionContext, productId: string, 
       await tx.insert(productCostHistory).values({ productId, costPaise, sourceType: "manual", effectiveAt: sql`now()` });
     }
     const before = auditFields(current);
-    const after = auditFields({ ...data, costPaise, categoryId });
+    const after = auditFields({ ...data, costPaise, categoryId, reorderLevel: data.reorderLevel !== null ? toDbQuantity(data.reorderLevel) : current.reorderLevel });
     const changedKeys = (Object.keys(after) as (keyof typeof after)[]).filter((key) => before[key] !== after[key]);
     await recordAudit(tx, actorOf(session), {
       action: "catalog.product_updated",
