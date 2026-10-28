@@ -67,7 +67,12 @@ async function CreditNoteView({ params, searchParams }: Pick<Props, "params" | "
         <header className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:justify-between">
           <div>
             <p className="text-lg font-bold text-foreground">{note.shop.legalName ?? note.shop.name}</p>
-            {note.shop.address ? <p className="text-sm text-muted-foreground">{note.shop.address}</p> : null}
+            {note.shop.address ? (
+              <p className="text-sm text-muted-foreground">
+                {note.shop.address}
+                {note.shop.pinCode ? ` – ${note.shop.pinCode}` : ""}
+              </p>
+            ) : null}
             <p className="text-sm text-muted-foreground">{note.shop.gstin ? `GSTIN ${note.shop.gstin}` : note.shop.registration === "unregistered" ? "Not registered under GST" : "GSTIN not set"}</p>
           </div>
           <div className="sm:text-right">

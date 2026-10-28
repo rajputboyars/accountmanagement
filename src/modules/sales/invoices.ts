@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { documentParties, printedSeller } from "./document-parties";
 import { and, asc, desc, eq, ilike, is, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, searchShopProducts } from "@/modules/catalog";
@@ -153,6 +154,7 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
         taxMode: computed.taxMode,
         placeOfSupply: computed.placeOfSupply,
         discountApprovalId: consumedDiscountApprovalId,
+        ...(await documentParties(tx, session.shopId, customer)),
       });
       await tx.insert(invoiceLines).values(
         computed.lines.map((line, index) => ({
@@ -174,6 +176,8 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
           sgstPaise: totals.lines[index]!.sgstPaise,
           igstPaise: totals.lines[index]!.igstPaise,
           unitCostPaise: line.product.costPaise,
+          productName: line.product.name,
+          hsn: line.product.hsn,
         })),
       );
       for (const line of computed.lines) {
@@ -494,6 +498,7 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
           placeOfSupply: computed.placeOfSupply,
           discountApprovalId: consumedDiscountApprovalId,
           correctsInvoiceId: original.id,
+          ...(await documentParties(tx, session.shopId, customer)),
         });
 
         await tx.insert(invoiceLines).values(
@@ -516,6 +521,8 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
             sgstPaise: totals.lines[index]!.sgstPaise,
             igstPaise: totals.lines[index]!.igstPaise,
             unitCostPaise: line.product.costPaise,
+            productName: line.product.name,
+            hsn: line.product.hsn,
           })),
         );
 
@@ -626,12 +633,13 @@ export async function getInvoice(session: SessionContext, invoiceId: string) {
   const header = { ...invoice, costComplete: undefined };
   return {
     ...header,
-    shop,
-    customer: { id: customer.id, name: customer.name, type: customer.type, phone: customer.phone, gstin: customer.gstin, area: customer.area },
+    // Printed as issued: the frozen seller and buyer when the bill has them (see documentParties).
+    shop: printedSeller(shop, invoice.seller),
+    customer: { id: customer.id, type: customer.type, name: customer.name, phone: customer.phone, gstin: customer.gstin, area: customer.area, ...(invoice.buyer ?? {}) },
     lines: lines.map((line) => ({
       ...line,
       unitCostPaise: undefined,
-      productName: products.get(line.productId)?.name ?? "Unknown product",
+      productName: line.productName ?? products.get(line.productId)?.name ?? "Unknown product",
       baseUnit: products.get(line.productId)?.baseUnit ?? "",
       qty: formatQuantity(parseQuantity(line.qty)),
       baseQty: formatQuantity(parseQuantity(line.baseQty)),

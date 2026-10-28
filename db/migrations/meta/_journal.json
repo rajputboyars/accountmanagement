@@ -134,6 +134,13 @@
       "when": 1793180042562,
       "tag": "0018_notifications_supplier_overdue",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793181232765,
+      "tag": "0019_document_snapshots",
+      "breakpoints": true
     }
   ]
 }

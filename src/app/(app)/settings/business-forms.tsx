@@ -28,6 +28,12 @@ export function ProfileForm({ profile }: { profile: BusinessSettings["profile"] 
       <Field label="Phone">
         <Input name="phone" inputMode="tel" defaultValue={pick(state, "phone", profile.phone)} className="h-11" />
       </Field>
+      <Field label="PIN code" hint="Optional. Printed with the address.">
+        <Input name="pinCode" inputMode="numeric" maxLength={6} defaultValue={pick(state, "pinCode", profile.pinCode)} className="h-11" />
+      </Field>
+      <Field label="Email" hint="Optional. Printed on bills.">
+        <Input name="email" type="email" inputMode="email" defaultValue={pick(state, "email", profile.email)} className="h-11" />
+      </Field>
       <Field label="State" hint="Decides CGST + SGST versus IGST. Must match the GSTIN.">
         <FormSelect name="stateCode" defaultValue={pick(state, "stateCode", profile.stateCode)} className={selectClass}>
           {GST_STATE_LIST.map(([code, name]) => (

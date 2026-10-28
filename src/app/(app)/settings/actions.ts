@@ -99,7 +99,7 @@ async function saveSettings(save: () => Promise<void>, values: Record<string, st
 const fields = (formData: FormData, names: string[]) => Object.fromEntries(names.map((name) => [name, String(formData.get(name) ?? "")]));
 
 export async function saveProfileAction(_previous: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
-  const values = fields(formData, ["name", "legalName", "address", "phone", "stateCode"]);
+  const values = fields(formData, ["name", "legalName", "address", "phone", "stateCode", "email", "pinCode"]);
   return saveSettings(async () => updateBusinessProfile(await requireSession(), values), values, "Business details saved. New bills will show them.");
 }
 

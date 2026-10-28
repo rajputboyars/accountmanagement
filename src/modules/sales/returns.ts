@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { documentParties, printedSeller } from "./document-parties";
 import { and, asc, desc, eq, ilike, inArray, is, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, loadProductsForStock } from "@/modules/catalog";
@@ -241,6 +242,7 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
         customerId: plan.customer.id,
         businessDate: today,
         reason: data.reason,
+        ...(await documentParties(tx, session.shopId, plan.customer)),
         settlement: data.settlement,
         taxablePaise: plan.totals.taxablePaise,
         cgstPaise: plan.totals.cgstPaise,
@@ -353,10 +355,10 @@ export async function getCreditNote(session: SessionContext, creditNoteId: strin
     ...note,
     invoiceNumber: invoice?.number ?? "",
     invoiceDate: invoice?.businessDate ?? "",
-    shop,
+    shop: printedSeller(shop, note.seller),
     taxMode: original?.taxMode ?? "intra",
     placeOfSupply: original?.placeOfSupply ?? null,
-    customer: { id: customer.id, name: customer.name, type: customer.type, phone: customer.phone, gstin: customer.gstin },
+    customer: { id: customer.id, type: customer.type, name: customer.name, phone: customer.phone, gstin: customer.gstin, ...(note.buyer ?? {}) },
     lines: lines.map((line) => ({ ...line, baseQty: formatQuantity(parseQuantity(line.baseQty)), productName: products.get(line.productId)?.name ?? "Unknown product", baseUnit: products.get(line.productId)?.baseUnit ?? "" })),
     createdByName: users.get(note.createdBy) ?? "Unknown user",
     balanceNowPaise: customer.type === "walkin" ? null : await partyBalance(session.shopId, "customer", customer.id),

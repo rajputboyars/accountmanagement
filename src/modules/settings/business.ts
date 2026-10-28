@@ -18,6 +18,13 @@ export const SETTINGS_EDIT = "settings.edit" as const;
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
 
 export type InvoiceExtras = { terms: string | null; upiId: string | null; bankDetails: string | null };
+/** Contact details kept with the shop's settings (no column of their own). */
+export type ProfileExtras = { email: string | null; pinCode: string | null };
+
+const profileExtrasOf = (settings: unknown): ProfileExtras => {
+  const value = (settings ?? {}) as Partial<ProfileExtras>;
+  return { email: value.email ?? null, pinCode: value.pinCode ?? null };
+};
 
 const optional = (max: number, message: string) =>
   z
@@ -38,6 +45,8 @@ const profileSchema = z.object({
     .transform((value) => value?.replace(/[\s-]/g, "") || null)
     .pipe(z.string().regex(/^(\d{10}|0\d{9,11})$/, "Enter a 10-digit mobile or a landline with STD code.").nullable()),
   stateCode: z.string().refine(isGstState, "Choose the state."),
+  email: optional(120, "Keep the email under 120 characters.").refine((value) => !value || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value), "That doesn't look like an email address."),
+  pinCode: optional(6, "A PIN code has 6 digits.").refine((value) => !value || /^[1-9]\d{5}$/.test(value), "A PIN code has 6 digits and doesn't start with 0."),
 });
 
 const gstSchema = z
@@ -108,7 +117,7 @@ export async function getBusinessSettings(session: SessionContext) {
   if (!shop) throw new NotFoundError("Shop not found.");
   const series = await invoiceSeries(db, shop.id, shop.fyStartMonth);
   return {
-    profile: { name: shop.name, legalName: shop.legalName, address: shop.address, phone: shop.phone, stateCode: shop.stateCode },
+    profile: { name: shop.name, legalName: shop.legalName, address: shop.address, phone: shop.phone, stateCode: shop.stateCode, ...profileExtrasOf(shop.settings) },
     gst: { registration: shop.gstRegistration as GstRegistration, gstin: shop.gstin, interStateSales: shop.interStateSales, gstRatesBp: [...shop.gstRatesBp].sort((a, b) => a - b) },
     invoice: { invoicePrefix: shop.invoicePrefix, ...extrasOf(shop.settings), fy: series.fy, nextNumber: series.nextValue, numberingStarted: series.started, sample: `${shop.invoicePrefix}/${series.fy}/${String(series.nextValue).padStart(5, "0")}` },
     canEdit: await hasPermission(session, SETTINGS_EDIT),
@@ -125,8 +134,12 @@ export async function updateBusinessProfile(session: SessionContext, input: unkn
     if (shop.gstin && shop.gstin.slice(0, 2) !== data.stateCode) {
       throw new ConflictError("STATE_GSTIN_MISMATCH", `The shop's GSTIN is registered in state ${shop.gstin.slice(0, 2)}. Change the GSTIN first if the shop moved.`, { fieldErrors: { stateCode: "Must match the GSTIN's state." } });
     }
-    await tx.update(shops).set(data).where(eq(shops.id, shop.id));
-    await recordAudit(tx, actorOf(session), { action: "settings.profile_updated", entityType: "shop", entityId: shop.id, before: { name: shop.name, legalName: shop.legalName, address: shop.address, phone: shop.phone, stateCode: shop.stateCode }, after: data });
+    const { email, pinCode, ...columns } = data;
+    await tx
+      .update(shops)
+      .set({ ...columns, settings: sql`${shops.settings} || ${JSON.stringify({ email, pinCode })}::jsonb` })
+      .where(eq(shops.id, shop.id));
+    await recordAudit(tx, actorOf(session), { action: "settings.profile_updated", entityType: "shop", entityId: shop.id, before: { name: shop.name, legalName: shop.legalName, address: shop.address, phone: shop.phone, stateCode: shop.stateCode, ...profileExtrasOf(shop.settings) }, after: data });
   });
 }
 
@@ -172,8 +185,8 @@ export async function loadTaxSettings(tx: Database | Transaction, shopId: string
 }
 
 /** What a printed bill shows about the seller. No permission check (any staff who can view the bill). */
-export async function invoiceProfile(shopId: string) {
-  const [shop] = await getDb().select().from(shops).where(eq(shops.id, shopId)).limit(1);
+export async function invoiceProfile(shopId: string, db: Database | Transaction = getDb()) {
+  const [shop] = await db.select().from(shops).where(eq(shops.id, shopId)).limit(1);
   if (!shop) throw new NotFoundError("Shop not found.");
-  return { name: shop.name, legalName: shop.legalName, address: shop.address, phone: shop.phone, stateCode: shop.stateCode, gstin: shop.gstin, registration: shop.gstRegistration as GstRegistration, ...extrasOf(shop.settings) };
+  return { name: shop.name, legalName: shop.legalName, address: shop.address, phone: shop.phone, stateCode: shop.stateCode, gstin: shop.gstin, registration: shop.gstRegistration as GstRegistration, ...extrasOf(shop.settings), ...profileExtrasOf(shop.settings) };
 }

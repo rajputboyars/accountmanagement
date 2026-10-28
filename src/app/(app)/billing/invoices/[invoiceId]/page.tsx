@@ -101,7 +101,13 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
         <header className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:justify-between">
           <div>
             <p className="text-lg font-bold text-foreground">{invoice.shop.legalName ?? invoice.shop.name}</p>
-            {invoice.shop.address ? <p className="text-sm text-muted-foreground">{invoice.shop.address}</p> : null}
+            {invoice.shop.address ? (
+              <p className="text-sm text-muted-foreground">
+                {invoice.shop.address}
+                {invoice.shop.pinCode ? ` – ${invoice.shop.pinCode}` : ""}
+              </p>
+            ) : null}
+            {invoice.shop.email ? <p className="text-sm text-muted-foreground">{invoice.shop.email}</p> : null}
             <p className="text-sm text-muted-foreground">
               {invoice.shop.gstin ? `GSTIN ${invoice.shop.gstin}` : invoice.shop.registration === "unregistered" ? "Not registered under GST" : "GSTIN not set"} · State {invoice.shop.stateCode} {GST_STATES[invoice.shop.stateCode] ?? ""}
               {invoice.shop.phone ? ` · ${invoice.shop.phone}` : ""}
@@ -148,7 +154,10 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
                   <td className="py-2 pr-2 align-top text-muted-foreground">{line.lineNo}</td>
                   <td className="py-2 pr-2 align-top">
                     <p className="font-medium text-foreground">{line.productName}</p>
-                    <p className="text-xs text-muted-foreground">{line.rateReason}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {line.hsn ? `HSN ${line.hsn} · ` : ""}
+                      {line.rateReason}
+                    </p>
                   </td>
                   <td className="py-2 pr-2 text-right align-top whitespace-nowrap tabular-nums">
                     {line.qty} {line.unit}

@@ -6,6 +6,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   smallint,
@@ -21,6 +22,11 @@ import { approvals, users } from "../identity/schema";
 import { customers } from "../parties/schema";
 import { devices, shops } from "../settings/schema";
 import { createdAt, oneOf, paise, quantity } from "../../server/schema-helpers";
+
+/** Seller details printed on a bill or credit note, frozen when it is issued. */
+export type DocumentSeller = { name: string; legalName: string | null; address: string | null; pinCode: string | null; phone: string | null; email: string | null; gstin: string | null; stateCode: string; registration: string };
+/** Buyer details printed on a bill or credit note, frozen when it is issued. */
+export type DocumentBuyer = { name: string; phone: string | null; gstin: string | null; area: string | null };
 
 /**
  * Owned by the sales module: invoices, their lines, and credit notes.
@@ -58,6 +64,10 @@ export const invoices = pgTable(
     costComplete: boolean("cost_complete").notNull(), // false if any line has no cost: profit not shown
     taxMode: text("tax_mode").$type<(typeof TAX_MODES)[number]>().notNull().default("intra"), // src/shared/gst.ts
     placeOfSupply: char("place_of_supply", { length: 2 }), // GST state code; NULL on bills before Phase 15 = shop's state
+    // Seller and buyer as they were when the bill was issued, so a later change to the shop's GSTIN,
+    // address or the customer's details never alters an issued bill. NULL on older bills (shown live).
+    seller: jsonb("seller").$type<DocumentSeller>(),
+    buyer: jsonb("buyer").$type<DocumentBuyer>(),
     discountApprovalId: uuid("discount_approval_id").references(() => approvals.id),
     correctsInvoiceId: uuid("corrects_invoice_id").references((): AnyPgColumn => invoices.id),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
@@ -105,6 +115,8 @@ export const invoiceLines = pgTable(
     sgstPaise: paise("sgst_paise").notNull(),
     igstPaise: paise("igst_paise").notNull().default(0),
     unitCostPaise: paise("unit_cost_paise"), // per base unit at sale; NULL = unknown
+    productName: text("product_name"), // as billed; NULL on older bills (shown from the product)
+    hsn: varchar("hsn", { length: 8 }), // as billed; NULL on older bills
     createdAt: createdAt(),
   },
   (t) => [
@@ -126,6 +138,8 @@ export const creditNotes = pgTable(
     customerId: uuid("customer_id").notNull().references(() => customers.id),
     businessDate: date("business_date", { mode: "string" }).notNull(),
     reason: text("reason").notNull(),
+    seller: jsonb("seller").$type<DocumentSeller>(), // as at the credit note; NULL on older notes
+    buyer: jsonb("buyer").$type<DocumentBuyer>(),
     settlement: text("settlement").$type<(typeof CREDIT_NOTE_SETTLEMENTS)[number]>().notNull(),
     taxablePaise: paise("taxable_paise").notNull(),
     cgstPaise: paise("cgst_paise").notNull(),
