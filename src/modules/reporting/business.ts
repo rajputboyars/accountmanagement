@@ -367,7 +367,7 @@ export async function getReport(session: SessionContext, kind: string, input: Ra
       return {
         kind: reportKind,
         title: "Supplier dues",
-        description: "What the shop owes each supplier today, from their ledger. Overdue means past the supplier's payment terms.",
+        description: "What the shop owes each supplier today, from their ledger. Overdue means past the supplier's payment terms. Negative = advance with the supplier (for example a paid bill that was cancelled); the total is net of it.",
         range: null,
         columns: [
           { key: "name", label: "Supplier", type: "text" },
