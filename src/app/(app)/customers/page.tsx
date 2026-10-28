@@ -9,26 +9,28 @@ import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { getNavItem } from "@/config/navigation";
-import { listReceivables } from "@/modules/reporting";
+import { listReceivables, searchCustomers } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
 
 const item = getNavItem("customers");
 
 export const metadata: Metadata = { title: "Customers" };
 
-export default function CustomersPage() {
+export default function CustomersPage({ searchParams }: PageProps<"/customers">) {
   return (
     <ProtectedPage permission="customers.view" title={item.label}>
-      <Customers />
+      <Customers searchParams={searchParams} />
     </ProtectedPage>
   );
 }
 
 const TONE = { paid: { label: "Paid up", variant: "success" }, ok: { label: "", variant: "neutral" }, amber: { label: "", variant: "warning" }, red: { label: "Overdue", variant: "danger" } } as const;
 
-async function Customers() {
-  const session = await requireSession();
-  const { rows, totals, canAdd } = await listReceivables(session);
+async function Customers({ searchParams }: { searchParams: PageProps<"/customers">["searchParams"] }) {
+  const [session, query] = await Promise.all([requireSession(), searchParams]);
+  const q = typeof query.q === "string" ? query.q.slice(0, 60) : "";
+  const { rows: allRows, totals, canAdd } = await listReceivables(session);
+  const rows = searchCustomers(allRows, q);
   const b = totals.buckets;
   const buckets = [
     ["Not yet due", b.notDuePaise],
@@ -72,13 +74,26 @@ async function Customers() {
         </ul>
       </section>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <SectionCard title="Customers" description="Most owed first" flush>
+        <SectionCard title="Customers" description={q ? `${rows.length} found for "${q}"` : "Most owed first"} flush>
+          <form action="/customers" role="search" className="flex gap-2 px-5 pb-3">
+            <label className="sr-only" htmlFor="customer-search">
+              Search customers
+            </label>
+            <input id="customer-search" type="search" name="q" defaultValue={q} placeholder="Name or mobile number" className="h-11 min-w-0 flex-1 rounded-xl border border-input bg-background px-3 text-sm" />
+            <button type="submit" className={buttonVariants({ variant: "outline", size: "touch" })}>
+              Search
+            </button>
+          </form>
           {rows.length === 0 ? (
             <div className="flex flex-col items-center gap-2 border-t border-border px-5 py-12 text-center">
               <Users className="size-8 text-muted-foreground" aria-hidden="true" />
-              <p className="font-semibold text-foreground">No customers yet</p>
-              <p className="max-w-sm text-sm text-muted-foreground">Add the people who buy on udhaar (credit) or come back often, so their dues are tracked. Walk-in cash sales don&apos;t need a customer.</p>
-              {canAdd ? (
+              <p className="font-semibold text-foreground">{q ? "No customer matches" : "No customers yet"}</p>
+              <p className="max-w-sm text-sm text-muted-foreground">{q ? "Check the spelling, or search by a few digits of the mobile number." : "Add the people who buy on udhaar (credit) or come back often, so their dues are tracked. Walk-in cash sales don't need a customer."}</p>
+              {q ? (
+                <Link href="/customers" className={buttonVariants({ variant: "outline", size: "touch" })}>
+                  Show all customers
+                </Link>
+              ) : canAdd ? (
                 <a href="#section-add-a-customer" className={buttonVariants({ variant: "outline", size: "touch" })}>
                   Add your first customer
                 </a>

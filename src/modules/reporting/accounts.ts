@@ -1,16 +1,16 @@
 import { recordAudit } from "@/modules/audit";
-import { getCurrentShop } from "@/modules/settings";
+import { getCurrentShop, invoiceProfile } from "@/modules/settings";
 import { hasPermission, requirePermission, type SessionContext } from "@/modules/identity";
 import { partyStatement, partyStatements, type StatementLine } from "@/modules/ledger";
 import { findCustomer, findSupplier, listShopCustomers, listShopSuppliers } from "@/modules/parties";
-import { customerReceipts, paymentDetails, PAYMENTS_RECORD, PAYMENTS_REVERSE } from "@/modules/payments";
+import { customerReceipts, paymentDetails, PAYMENTS_RECORD, PAYMENTS_REVERSE, reversedPaymentIds } from "@/modules/payments";
 import { receiptNumbersFor } from "@/modules/purchasing";
 import { documentNumbers } from "@/modules/sales";
 import { getDb, withTransaction } from "@/server/db";
 import { ConflictError } from "@/server/errors";
 import { ageOpenItems, dueTone, type AgeingEntry } from "@/shared/ageing";
 import { indiaDate } from "@/shared/financial-year";
-import { formatPaise } from "@/shared/money";
+import { duesReminderText } from "@/shared/reminder";
 import { getReminderProvider } from "./reminder-provider";
 
 /**
@@ -28,13 +28,15 @@ const db = () => getDb();
 
 /**
  * Entries for ageing. A cancelled bill and its cancellation credit are dropped as a pair, so the
- * cancellation doesn't pay off an older bill. `owedSign` = 1 for customers (debit = owed),
- * −1 for suppliers (credit = owed by the shop).
+ * cancellation doesn't pay off an older bill; likewise a reversed payment and its reversal
+ * (`reversedPayments`), so money that was undone never counts as paid. `owedSign` = 1 for customers
+ * (debit = owed), −1 for suppliers (credit = owed by the shop).
  */
-function ageingEntries(lines: StatementLine[], owedSign: 1 | -1, labels: Map<string, string>): AgeingEntry[] {
+function ageingEntries(lines: StatementLine[], owedSign: 1 | -1, labels: Map<string, string>, reversedPayments: ReadonlySet<string> = new Set()): AgeingEntry[] {
   const cancelled = new Set(lines.filter((line) => line.kind === "cancellation").map((line) => line.sourceId));
   return lines
     .filter((line) => !cancelled.has(line.sourceId) || (line.kind !== "cancellation" && line.kind !== "invoice" && line.kind !== "purchase"))
+    .filter((line) => !(line.kind === "payment" && reversedPayments.has(line.sourceId)))
     .map((line) => ({
       id: String(line.id),
       date: line.entryDate,
@@ -79,11 +81,11 @@ function describe(line: StatementLine, labels: Map<string, string>) {
 
 export async function listReceivables(session: SessionContext, asOf = indiaDate()) {
   await requirePermission(session, CUSTOMERS_VIEW);
-  const [customers, statements] = await Promise.all([listShopCustomers(session.shopId, { includeInactive: true }), partyStatements(session.shopId, "customer")]);
+  const [customers, statements, reversed] = await Promise.all([listShopCustomers(session.shopId, { includeInactive: true }), partyStatements(session.shopId, "customer"), reversedPaymentIds(db(), session.shopId, "customer")]);
   const rows = customers.map((customer) => {
     const lines = statements.get(customer.id) ?? [];
     const balancePaise = lines.at(-1)?.balancePaise ?? 0;
-    const ageing = ageOpenItems(ageingEntries(lines, 1, new Map()), asOf, CUSTOMER_TERMS_DAYS);
+    const ageing = ageOpenItems(ageingEntries(lines, 1, new Map(), reversed), asOf, CUSTOMER_TERMS_DAYS);
     const oldest = ageing.open[0]?.ageDays ?? null;
     return { ...customer, balancePaise, overduePaise: ageing.overduePaise, oldestDueDays: oldest, tone: dueTone(oldest, balancePaise), buckets: ageing.buckets };
   });
@@ -108,19 +110,27 @@ export async function listReceivables(session: SessionContext, asOf = indiaDate(
   };
 }
 
+/** Customer search on the dues list: part of the name (any case) or of the phone number. */
+export function searchCustomers<T extends { name: string; phone: string | null }>(rows: T[], query: string): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return rows;
+  const digits = q.replace(/\D/g, "");
+  return rows.filter((row) => row.name.toLowerCase().includes(q) || (digits.length >= 3 && (row.phone ?? "").replace(/\D/g, "").includes(digits)));
+}
+
 /** A customer's account: statement (optionally from a date, with balance brought forward), open bills, receipts. */
 export async function getCustomerAccount(session: SessionContext, customerId: string, options: { from?: string; to?: string } = {}) {
   await requirePermission(session, CUSTOMERS_VIEW);
   const customer = await findCustomer(session.shopId, customerId);
   if (customer.type === "walkin") throw new ConflictError("WALKIN_NO_ACCOUNT", "The walk-in customer has no account.");
   const asOf = indiaDate();
-  const lines = await partyStatement(session.shopId, "customer", customer.id);
+  const [lines, reversed] = await Promise.all([partyStatement(session.shopId, "customer", customer.id), reversedPaymentIds(db(), session.shopId, "customer", customer.id)]);
   const { labels, links } = await labelsFor(session.shopId, lines);
   const from = options.from && /^\d{4}-\d{2}-\d{2}$/.test(options.from) ? options.from : null;
   const to = options.to && /^\d{4}-\d{2}-\d{2}$/.test(options.to) ? options.to : null;
   const before = from ? lines.filter((line) => line.entryDate < from) : [];
   const shown = lines.filter((line) => (!from || line.entryDate >= from) && (!to || line.entryDate <= to));
-  const ageing = ageOpenItems(ageingEntries(lines, 1, labels), asOf, CUSTOMER_TERMS_DAYS);
+  const ageing = ageOpenItems(ageingEntries(lines, 1, labels, reversed), asOf, CUSTOMER_TERMS_DAYS);
   const [receipts, canRecord, canReverse, canEdit, shop] = await Promise.all([
     customerReceipts(db(), session.shopId, customer.id),
     hasPermission(session, PAYMENTS_RECORD),
@@ -129,9 +139,18 @@ export async function getCustomerAccount(session: SessionContext, customerId: st
     getCurrentShop(session),
   ]);
   const balancePaise = lines.at(-1)?.balancePaise ?? 0;
+  // Last money received: the latest payment entry in the ledger that wasn't later reversed or refunded.
+  const lastPayment = lines.filter((line) => line.kind === "payment" && line.creditPaise > 0 && !reversed.has(line.sourceId)).at(-1);
+  const oldest = ageing.open[0];
   return {
     customer,
     shop,
+    summary: {
+      outstandingPaise: Math.max(balancePaise, 0),
+      overduePaise: ageing.overduePaise,
+      oldestUnpaid: oldest ? { label: oldest.label, date: oldest.date, ageDays: oldest.ageDays, remainingPaise: oldest.remainingPaise } : null,
+      lastPayment: lastPayment ? { date: lastPayment.entryDate, amountPaise: lastPayment.creditPaise } : null,
+    },
     asOf,
     from,
     to,
@@ -152,11 +171,11 @@ export async function getCustomerAccount(session: SessionContext, customerId: st
 
 export async function listPayables(session: SessionContext, asOf = indiaDate()) {
   await requirePermission(session, SUPPLIERS_VIEW);
-  const [suppliers, statements] = await Promise.all([listShopSuppliers(session.shopId, { includeInactive: true }), partyStatements(session.shopId, "supplier")]);
+  const [suppliers, statements, reversed] = await Promise.all([listShopSuppliers(session.shopId, { includeInactive: true }), partyStatements(session.shopId, "supplier"), reversedPaymentIds(db(), session.shopId, "supplier")]);
   const rows = suppliers.map((supplier) => {
     const lines = statements.get(supplier.id) ?? [];
     const owedPaise = -(lines.at(-1)?.balancePaise ?? 0) || 0;
-    const ageing = ageOpenItems(ageingEntries(lines, -1, new Map()), asOf, supplier.paymentTermsDays);
+    const ageing = ageOpenItems(ageingEntries(lines, -1, new Map(), reversed), asOf, supplier.paymentTermsDays);
     return { id: supplier.id, name: supplier.name, owedPaise, overduePaise: ageing.overduePaise, nextDue: ageing.open.find((item) => item.daysPastDue === 0)?.dueDate ?? null, buckets: ageing.buckets };
   });
   return {
@@ -169,9 +188,9 @@ export async function listPayables(session: SessionContext, asOf = indiaDate()) 
 export async function getSupplierStatement(session: SessionContext, supplierId: string) {
   await requirePermission(session, SUPPLIERS_VIEW);
   const supplier = await findSupplier(session.shopId, supplierId);
-  const lines = await partyStatement(session.shopId, "supplier", supplier.id);
+  const [lines, reversed] = await Promise.all([partyStatement(session.shopId, "supplier", supplier.id), reversedPaymentIds(db(), session.shopId, "supplier", supplier.id)]);
   const { labels, links } = await labelsFor(session.shopId, lines);
-  const ageing = ageOpenItems(ageingEntries(lines, -1, labels), indiaDate(), supplier.paymentTermsDays);
+  const ageing = ageOpenItems(ageingEntries(lines, -1, labels, reversed), indiaDate(), supplier.paymentTermsDays);
   return {
     supplier,
     shop: await getCurrentShop(session),
@@ -197,15 +216,8 @@ export async function prepareReminder(session: SessionContext, customerId: strin
   if (account.balancePaise <= 0) throw new ConflictError("NOTHING_DUE", `${customer.name} has nothing to pay.`);
   if (!customer.whatsappConsent) throw new ConflictError("NO_CONSENT", `${customer.name} hasn't agreed to WhatsApp reminders. Turn it on in their details only if they agreed.`);
   if (!customer.phone) throw new ConflictError("NO_PHONE", `${customer.name} has no phone number.`);
-  const oldest = account.ageing.open[0];
-  const text = [
-    `Namaste ${customer.name},`,
-    `Your balance with ${shop.name} is ${formatPaise(account.balancePaise, { withPaise: true })} as of ${account.asOf}.`,
-    oldest ? `The oldest unpaid bill is ${oldest.label} of ${oldest.date} (${formatPaise(oldest.remainingPaise, { withPaise: true })} due).` : null,
-    "Please pay at your convenience. Thank you.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const { upiId } = await invoiceProfile(session.shopId);
+  const text = duesReminderText({ customerName: customer.name, shopName: shop.name, shopPhone: shop.phone, upiId, balancePaise: account.balancePaise, overduePaise: account.summary.overduePaise, oldest: account.summary.oldestUnpaid, asOf: account.asOf });
   const provider = getReminderProvider();
   return { customerId: customer.id, phone: customer.phone, text, shareUrl: `https://wa.me/91${customer.phone}?text=${encodeURIComponent(text)}`, providerConfigured: provider !== null };
 }

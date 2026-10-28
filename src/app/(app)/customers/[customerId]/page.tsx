@@ -13,6 +13,7 @@ import { getCustomerAccount, listWhatsAppMessages } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
 import { ConflictError, NotFoundError } from "@/server/errors";
 import { formatPaise } from "@/shared/money";
+import { addDays } from "@/shared/report-range";
 
 export const metadata: Metadata = { title: "Customer" };
 
@@ -28,6 +29,15 @@ export default function CustomerPage({ params, searchParams }: Props) {
 
 const dateText = (value: string) => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 const METHOD: Record<string, string> = { cash: "Cash", upi: "UPI", bank: "Bank", cheque: "Cheque", card: "Card" };
+/** How each ledger entry reads on a phone: bills add to the balance, payments and cancellations reduce it. */
+const ENTRY: Record<string, { label: string; variant: "neutral" | "success" | "warning" | "danger" | "info" }> = {
+  opening: { label: "Opening", variant: "neutral" },
+  invoice: { label: "Bill", variant: "info" },
+  payment: { label: "Payment", variant: "success" },
+  credit_note: { label: "Return", variant: "warning" },
+  cancellation: { label: "Cancelled", variant: "warning" },
+  correction: { label: "Adjustment", variant: "neutral" },
+};
 
 const WHATSAPP_STATUS: Record<string, { label: string; variant: "success" | "warning" | "danger" | "neutral" | "info" }> = {
   queued: { label: "Queued", variant: "neutral" },
@@ -87,6 +97,29 @@ async function Account({ params, searchParams }: Pick<Props, "params" | "searchP
         </div>
       </section>
 
+      <dl aria-label="Account summary" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          { label: "Total outstanding", value: <Money paise={account.summary.outstandingPaise} withPaise />, note: account.balancePaise < 0 ? "Advance held" : "Baaki (udhaar)" },
+          { label: "Overdue", value: <Money paise={account.summary.overduePaise} withPaise />, note: "Bills older than 30 days", tone: account.summary.overduePaise > 0 ? "text-danger" : "" },
+          {
+            label: "Oldest unpaid bill",
+            value: account.summary.oldestUnpaid ? `${account.summary.oldestUnpaid.ageDays} days` : "None",
+            note: account.summary.oldestUnpaid ? `${account.summary.oldestUnpaid.label} · ${dateText(account.summary.oldestUnpaid.date)}` : "All bills paid",
+          },
+          {
+            label: "Last payment",
+            value: account.summary.lastPayment ? <Money paise={account.summary.lastPayment.amountPaise} withPaise /> : "None yet",
+            note: account.summary.lastPayment ? dateText(account.summary.lastPayment.date) : "No payment recorded",
+          },
+        ].map((item) => (
+          <div key={item.label} className="flex min-w-0 flex-col gap-0.5 rounded-2xl border border-border bg-card p-4">
+            <dt className="text-xs text-muted-foreground">{item.label}</dt>
+            <dd className={`text-lg font-semibold text-foreground tabular-nums ${item.tone ?? ""}`}>{item.value}</dd>
+            <dd className="truncate text-xs text-muted-foreground">{item.note}</dd>
+          </div>
+        ))}
+      </dl>
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-6">
           <SectionCard title="Unpaid bills" description="Payments are applied to the oldest bill first. A bill is overdue after 30 days." flush>
@@ -133,6 +166,22 @@ async function Account({ params, searchParams }: Pick<Props, "params" | "searchP
             }
             flush
           >
+            <div className="flex flex-wrap gap-2 px-5 pb-3 text-sm" aria-label="Show entries from">
+              {[
+                { label: "All", href: `/customers/${customer.id}`, active: !account.from && !account.to },
+                { label: "This month", href: `/customers/${customer.id}?from=${account.asOf.slice(0, 8)}01`, active: account.from === `${account.asOf.slice(0, 8)}01` && !account.to },
+                { label: "Last 30 days", href: `/customers/${customer.id}?from=${addDays(account.asOf, -29)}`, active: account.from === addDays(account.asOf, -29) && !account.to },
+              ].map((item) => (
+                <Link key={item.label} href={item.href} aria-current={item.active ? "true" : undefined} className={buttonVariants({ variant: item.active ? "default" : "outline", size: "sm" })}>
+                  {item.label}
+                </Link>
+              ))}
+              {account.ageing.open.length > 0 ? (
+                <a href="#section-unpaid-bills" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                  Unpaid bills ({account.ageing.open.length})
+                </a>
+              ) : null}
+            </div>
             <form action={`/customers/${customer.id}`} className="flex flex-wrap items-end gap-2 px-5 pb-3 text-sm">
               <label className="flex flex-col gap-1">
                 From
@@ -146,7 +195,42 @@ async function Account({ params, searchParams }: Pick<Props, "params" | "searchP
                 Show
               </button>
             </form>
-            <div className="overflow-x-auto">
+            <ul className="flex flex-col divide-y divide-border border-t border-border text-sm sm:hidden">
+              {account.from ? (
+                <li className="flex items-center justify-between gap-3 px-5 py-2.5 text-muted-foreground">
+                  <span>Brought forward · {dateText(account.from)}</span>
+                  <Money paise={account.broughtForwardPaise} withPaise />
+                </li>
+              ) : null}
+              {account.statement.length === 0 ? <li className="px-5 py-4 text-muted-foreground">No entries in these dates.</li> : null}
+              {account.statement.map((line) => (
+                <li key={line.id} className="flex items-start justify-between gap-3 px-5 py-2.5">
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <Badge variant={ENTRY[line.kind]?.variant ?? "neutral"}>{ENTRY[line.kind]?.label ?? line.kind}</Badge>
+                      {line.href ? (
+                        <Link href={line.href} className="truncate text-teal-strong hover:underline">
+                          {line.description}
+                        </Link>
+                      ) : (
+                        <span className="truncate text-foreground">{line.description}</span>
+                      )}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">{dateText(line.entryDate)}</span>
+                  </span>
+                  <span className="shrink-0 text-right tabular-nums">
+                    <span className={line.debitPaise ? "block font-semibold text-foreground" : "block font-semibold text-success"}>
+                      {line.debitPaise ? "+" : "−"}
+                      <Money paise={line.debitPaise || line.creditPaise} withPaise />
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      Balance <Money paise={line.balancePaise} withPaise />
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <div className="hidden overflow-x-auto sm:block">
               <table className="w-full min-w-[34rem] text-sm">
                 <thead>
                   <tr className="border-y border-border text-left text-xs text-muted-foreground">

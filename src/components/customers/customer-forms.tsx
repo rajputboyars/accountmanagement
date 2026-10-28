@@ -138,7 +138,9 @@ export function ReverseReceipt({ customerId, paymentId }: { customerId: string; 
 /** Builds the reminder on the server; the person sends it. Never shows "sent" without a provider. */
 export function ReminderCard({ customerId }: { customerId: string }) {
   const [pending, start] = useTransition();
-  const [reminder, setReminder] = useState<{ text: string; shareUrl: string; providerConfigured: boolean } | null>(null);
+  const [reminder, setReminder] = useState<{ text: string; phone: string; providerConfigured: boolean } | null>(null);
+  // The person can reword the message before sharing it; the amounts come from the server.
+  const [text, setText] = useState("");
   const [note, setNote] = useState<string | null>(null);
   const shared = (how: string) =>
     start(async () => {
@@ -149,13 +151,16 @@ export function ReminderCard({ customerId }: { customerId: string }) {
     <div className="flex flex-col gap-3">
       {reminder ? (
         <>
-          <pre className="rounded-xl bg-muted/60 p-3 text-sm whitespace-pre-wrap text-foreground">{reminder.text}</pre>
+          <label className="flex flex-col gap-1 text-sm font-medium text-foreground">
+            Message (check it, change words if you like)
+            <textarea value={text} onChange={(event) => setText(event.target.value)} rows={9} className="rounded-xl border border-input bg-background p-3 text-sm font-normal" />
+          </label>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="touch" disabled={pending} onClick={() => navigator.clipboard.writeText(reminder.text).then(() => shared("Copied"))}>
+            <Button type="button" variant="outline" size="touch" disabled={pending} onClick={() => navigator.clipboard.writeText(text).then(() => shared("Copied"))}>
               <Copy aria-hidden="true" />
               Copy text
             </Button>
-            <a href={reminder.shareUrl} target="_blank" rel="noreferrer" onClick={() => shared("Opened WhatsApp")} className={buttonVariants({ size: "touch" })}>
+            <a href={`https://wa.me/91${reminder.phone}?text=${encodeURIComponent(text)}`} target="_blank" rel="noreferrer" onClick={() => shared("Opened WhatsApp")} className={buttonVariants({ size: "touch" })}>
               <MessageCircle className="size-4" aria-hidden="true" />
               Open WhatsApp
             </a>
@@ -190,7 +195,10 @@ export function ReminderCard({ customerId }: { customerId: string }) {
           onClick={() =>
             start(async () => {
               const result = await prepareReminderAction(customerId);
-              if ("reminder" in result && result.reminder) setReminder(result.reminder);
+              if ("reminder" in result && result.reminder) {
+                setReminder(result.reminder);
+                setText(result.reminder.text);
+              }
               else setNote(result.error ?? "Couldn't prepare the reminder.");
             })
           }

@@ -234,3 +234,16 @@ export async function customerReceipts(db: Database | Transaction, shopId: strin
 }
 
 export { collectionsByDay, PAYMENT_REPORT_KIND_SQL, paymentKindTotals, paymentsInRange, recentPayments, type PaymentReportKind } from "./reports";
+
+/**
+ * Ids of payments that were reversed and of the reversals themselves (receipts entered by mistake,
+ * payments refunded when a bill was cancelled, supplier payments undone). Ageing drops each pair, so
+ * an undone payment neither pays off an old bill nor shows up as new debt on the day it was undone.
+ */
+export async function reversedPaymentIds(db: Database | Transaction, shopId: string, partyType: "customer" | "supplier", partyId?: string): Promise<Set<string>> {
+  const rows = await db
+    .select({ id: payments.id, reversalId: payments.reversedByPaymentId })
+    .from(payments)
+    .where(and(eq(payments.shopId, shopId), eq(payments.partyType, partyType), eq(payments.status, "reversed"), partyId ? eq(payments.partyId, partyId) : undefined));
+  return new Set(rows.flatMap((row) => (row.reversalId ? [row.id, row.reversalId] : [row.id])));
+}

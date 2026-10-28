@@ -149,7 +149,7 @@ describe("WhatsApp reminders", () => {
     expect(await processWhatsAppOutbox({ shopId: shop.shopId, provider: ok.provider })).toMatchObject({ sent: 1 });
     const [sent] = await db.owner.select().from(whatsappMessages).where(eq(whatsappMessages.customerId, sentId));
     expect(sent).toMatchObject({ status: "sent", attempts: 1, providerMessageId: expect.stringMatching(/^wamid\./) });
-    expect(ok.calls[0]!.text).toContain("Your balance with");
+    expect(ok.calls[0]!.text).toContain("aapka baaki (udhaar)");
 
     const flaky = fakeProvider(() => "retry");
     const retryId = await debtor(owner);

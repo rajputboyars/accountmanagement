@@ -1,5 +1,5 @@
 /** Public API of the reporting module (party accounts so far). */
-export { CUSTOMER_TERMS_DAYS, getCustomerAccount, getSupplierStatement, listPayables, listReceivables, logReminder, prepareReminder } from "./accounts";
+export { CUSTOMER_TERMS_DAYS, getCustomerAccount, getSupplierStatement, listPayables, listReceivables, searchCustomers, logReminder, prepareReminder } from "./accounts";
 export { raiseBusinessAlerts, refreshBusinessAlerts, type BusinessAlertInputs } from "./alerts";
 export { getReminderProvider, metaCloudProvider, ProviderError, verifyWebhookSignature, type ReminderProvider } from "./reminder-provider";
 export { applyWhatsAppStatuses, listWhatsAppMessages, MAX_ATTEMPTS, processWhatsAppOutbox, queueDuesReminder, queueOverdueReminders, retryDelayMinutes, sendQueuedWhatsApp } from "./whatsapp";
