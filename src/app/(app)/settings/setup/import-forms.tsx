@@ -1,16 +1,30 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Upload } from "lucide-react";
 import { Field, FormAlert, FormSelect, SubmitButton } from "@/components/catalog/form-bits";
 import { commitImportAction, remapImportAction, uploadImportAction, type ImportFormState } from "./actions";
 
 const selectClass = "h-11 rounded-lg border border-input bg-background px-3 text-sm text-foreground";
 
-export function UploadForm({ types, defaultType }: { types: { value: string; label: string }[]; defaultType?: string }) {
+export function UploadForm({ types, defaultType, maxBytes }: { types: { value: string; label: string }[]; defaultType?: string; maxBytes: number }) {
   const [state, action] = useActionState<ImportFormState, FormData>(uploadImportAction, {});
+  // Checked here first: a file over the server's upload limit would otherwise fail before the
+  // import's own size check could explain it.
+  const [tooBig, setTooBig] = useState<string | null>(null);
+  const tooBigMessage = `The file is larger than ${Math.floor(maxBytes / 1000)} KB. Split it into smaller files.`;
   return (
-    <form action={action} className="flex flex-col gap-4">
+    <form
+      action={action}
+      onSubmit={(event) => {
+        const file = (event.currentTarget.elements.namedItem("file") as HTMLInputElement | null)?.files?.[0];
+        if (file && file.size > maxBytes) {
+          event.preventDefault();
+          setTooBig(tooBigMessage);
+        }
+      }}
+      className="flex flex-col gap-4"
+    >
       <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] sm:items-end">
         <Field label="What to import">
           <FormSelect name="type" defaultValue={defaultType ?? types[0]?.value} className={selectClass}>
@@ -22,14 +36,14 @@ export function UploadForm({ types, defaultType }: { types: { value: string; lab
           </FormSelect>
         </Field>
         <Field label="CSV file" hint="Up to 900 KB and 2,000 rows. Nothing is saved until you review and confirm.">
-          <input type="file" name="file" accept=".csv,text/csv" required className="h-11 rounded-lg border border-input bg-background px-2 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1 file:text-sm" />
+          <input type="file" name="file" accept=".csv,text/csv" required onChange={(event) => setTooBig((event.target.files?.[0]?.size ?? 0) > maxBytes ? tooBigMessage : null)} className="h-11 rounded-lg border border-input bg-background px-2 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1 file:text-sm" />
         </Field>
         <SubmitButton>
           <Upload aria-hidden="true" />
           Check file
         </SubmitButton>
       </div>
-      <FormAlert error={state.error} />
+      <FormAlert error={tooBig ?? state.error} />
     </form>
   );
 }

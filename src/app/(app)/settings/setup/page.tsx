@@ -5,7 +5,7 @@ import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
-import { EXPORT_TYPES, getOnboardingStatus, IMPORT_TYPE_LABELS, IMPORT_TYPES, listImports } from "@/modules/imports";
+import { IMPORT_LIMITS, EXPORT_TYPES, getOnboardingStatus, IMPORT_TYPE_LABELS, IMPORT_TYPES, listImports } from "@/modules/imports";
 import { requireSession } from "@/server/auth";
 import { UploadForm } from "./import-forms";
 
@@ -86,7 +86,7 @@ async function SetupContent({ searchParams }: Pick<Props, "searchParams">) {
 
       <SectionCard title="Import from a spreadsheet" description="Download a template, fill it in Excel or Google Sheets, save as CSV and upload. Every row is checked before anything is saved.">
         <div id="import" className="flex flex-col gap-5">
-          <UploadForm types={IMPORT_TYPES.map((type) => ({ value: type, label: IMPORT_TYPE_LABELS[type] }))} defaultType={chosen} />
+          <UploadForm types={IMPORT_TYPES.map((type) => ({ value: type, label: IMPORT_TYPE_LABELS[type] }))} defaultType={chosen} maxBytes={IMPORT_LIMITS.maxBytes} />
           <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
             <span className="inline-flex min-h-10 items-center font-medium text-foreground">Templates:</span>
             {IMPORT_TYPES.map((type) => (
