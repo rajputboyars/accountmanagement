@@ -1,4 +1,7 @@
+"use client";
+
 import { cn } from "cn";
+import { useT } from "./language-provider";
 
 export function LogoMark({ className }: { className?: string }) {
   return (
@@ -12,13 +15,14 @@ export function LogoMark({ className }: { className?: string }) {
 }
 
 export function Logo({ showWordmark = true, className }: { showWordmark?: boolean; className?: string }) {
+  const t = useT();
   return (
     <span className={cn("flex items-center gap-3", className)}>
       <LogoMark />
       {showWordmark ? (
         <span className="flex flex-col leading-tight">
           <span className="text-base font-bold tracking-tight text-foreground">Nexora</span>
-          <span className="text-xs text-muted-foreground">Business OS</span>
+          <span className="text-xs text-muted-foreground">{t("shell.tagline")}</span>
         </span>
       ) : (
         <span className="sr-only">Nexora</span>

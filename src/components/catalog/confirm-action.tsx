@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { useT } from "@/components/nexora/language-provider";
 import { Button } from "@/components/ui/button";
 import type { CatalogFormState } from "@/app/(app)/inventory/actions";
 import { FormAlert, SubmitButton } from "./form-bits";
@@ -21,6 +22,7 @@ export function ConfirmAction({
   question: string;
   destructive?: boolean;
 }) {
+  const t = useT();
   const [asking, setAsking] = useState(false);
   const [state, formAction] = useActionState<CatalogFormState, FormData>(async (previous, formData) => {
     const result = await action(previous, formData);
@@ -39,7 +41,7 @@ export function ConfirmAction({
           <div className="flex flex-wrap gap-2">
             <SubmitButton variant={destructive ? "destructive" : "default"}>{confirmLabel}</SubmitButton>
             <Button type="button" size="touch" variant="ghost" onClick={() => setAsking(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
           </div>
         </form>

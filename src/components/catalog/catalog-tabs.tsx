@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { cn } from "cn";
+import { getT } from "@/server/i18n";
 
 /** Switches between products, stock and units inside Products & Inventory. */
-export function CatalogTabs({ current }: { current: "products" | "stock" | "units" }) {
+export async function CatalogTabs({ current }: { current: "products" | "stock" | "units" }) {
+  const t = await getT();
   const tab = (key: "products" | "stock" | "units", href: string, label: string) => (
     <Link
       href={href}
@@ -16,10 +18,10 @@ export function CatalogTabs({ current }: { current: "products" | "stock" | "unit
     </Link>
   );
   return (
-    <nav aria-label="Catalog" className="inline-flex gap-1 self-start rounded-xl bg-muted p-1">
-      {tab("products", "/inventory", "Products")}
-      {tab("stock", "/inventory/stock", "Stock")}
-      {tab("units", "/inventory/units", "Units")}
+    <nav aria-label={t("inventory.tabs")} className="inline-flex gap-1 self-start rounded-xl bg-muted p-1">
+      {tab("products", "/inventory", t("common.products"))}
+      {tab("stock", "/inventory/stock", t("page.stock"))}
+      {tab("units", "/inventory/units", t("page.units"))}
     </nav>
   );
 }

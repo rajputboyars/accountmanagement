@@ -1,0 +1,2 @@
+ALTER TABLE "customers" ADD COLUMN "communication_language" text;--> statement-breakpoint
+ALTER TABLE "customers" ADD CONSTRAINT "customers_communication_language_check" CHECK ("customers"."communication_language" in ('en', 'hinglish', 'hi'));

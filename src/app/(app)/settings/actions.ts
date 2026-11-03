@@ -6,6 +6,7 @@ import { addStaffMember, revokeStaffAccess, setOwnerPin, setStaffActive, updateS
 import { updateBusinessProfile, updateGstSettings, updateInvoiceSettings } from "@/modules/settings";
 import { toActionError } from "@/server/action-result";
 import { requireSession } from "@/server/auth";
+import { getT } from "@/server/i18n";
 import type { RoleName } from "@/shared/permissions";
 
 export type FormState = { ok?: boolean; error?: string; message?: string; nonce?: number };
@@ -21,10 +22,10 @@ export async function addStaffAction(_previous: FormState, formData: FormData): 
       role: formData.get("role"),
     });
     revalidatePath("/settings");
-    return { ok: true, message: `${member.name} can now sign in with their mobile number.`, nonce: Date.now() };
+    return { ok: true, message: (await getT())("settings.saved.staff", { name: member.name }), nonce: Date.now() };
   } catch (error) {
     unstable_rethrow(error);
-    return toActionError(error);
+    return await toActionError(error);
   }
 }
 
@@ -36,21 +37,21 @@ export async function setStaffActiveAction(_previous: FormState, formData: FormD
     return { ok: true };
   } catch (error) {
     unstable_rethrow(error);
-    return toActionError(error);
+    return await toActionError(error);
   }
 }
 
 export async function setPinAction(_previous: FormState, formData: FormData): Promise<FormState> {
   const pin = String(formData.get("pin") ?? "");
-  if (pin !== String(formData.get("confirmPin") ?? "")) return { ok: false, error: "The two PINs don't match." };
+  if (pin !== String(formData.get("confirmPin") ?? "")) return { ok: false, error: (await getT())("settings.pinMismatch") };
   try {
     const session = await requireSession();
     await setOwnerPin(session, pin);
     revalidatePath("/settings");
-    return { ok: true, message: "Approval PIN saved.", nonce: Date.now() };
+    return { ok: true, message: (await getT())("settings.saved.pin"), nonce: Date.now() };
   } catch (error) {
     unstable_rethrow(error);
-    return toActionError(error);
+    return await toActionError(error);
   }
 }
 
@@ -60,11 +61,12 @@ export async function updateStaffRoleAction(_previous: FormState, formData: Form
     const userId = String(formData.get("userId") ?? "");
     const role = String(formData.get("role") ?? "") as RoleName;
     const member = await updateStaffRole(session, userId, role);
+    const t = await getT();
     revalidatePath("/settings");
-    return { ok: true, message: `${member.name}'s role updated to ${member.role}. They were signed out to apply changes.`, nonce: Date.now() };
+    return { ok: true, message: t("settings.saved.role", { name: member.name, role: t(member.role === "inventory" ? "settings.roleInventoryStaff" : `role.${member.role}`) }), nonce: Date.now() };
   } catch (error) {
     unstable_rethrow(error);
-    return toActionError(error);
+    return await toActionError(error);
   }
 }
 
@@ -74,10 +76,10 @@ export async function revokeStaffAccessAction(_previous: FormState, formData: Fo
     const userId = String(formData.get("userId") ?? "");
     const result = await revokeStaffAccess(session, userId);
     revalidatePath("/settings");
-    return { ok: true, message: `Signed out of ${result.revokedSessions} active session(s).`, nonce: Date.now() };
+    return { ok: true, message: (await getT())("settings.saved.revoked", { count: result.revokedSessions }), nonce: Date.now() };
   } catch (error) {
     unstable_rethrow(error);
-    return toActionError(error);
+    return await toActionError(error);
   }
 }
 
@@ -90,7 +92,7 @@ async function saveSettings(save: () => Promise<void>, values: Record<string, st
     await save();
   } catch (error) {
     unstable_rethrow(error);
-    return { ...toActionError(error), values, nonce: Date.now() };
+    return { ...(await toActionError(error)), values, nonce: Date.now() };
   }
   revalidatePath("/settings");
   return { ok: true, message, nonce: Date.now() };
@@ -100,15 +102,15 @@ const fields = (formData: FormData, names: string[]) => Object.fromEntries(names
 
 export async function saveProfileAction(_previous: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
   const values = fields(formData, ["name", "legalName", "address", "phone", "stateCode", "email", "pinCode"]);
-  return saveSettings(async () => updateBusinessProfile(await requireSession(), values), values, "Business details saved. New bills will show them.");
+  return saveSettings(async () => updateBusinessProfile(await requireSession(), values), values, (await getT())("settings.saved.profile"));
 }
 
 export async function saveGstAction(_previous: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
   const values = { ...fields(formData, ["registration", "gstin", "interStateSales"]), gstRatesBp: formData.getAll("gstRatesBp").map(String) };
-  return saveSettings(async () => updateGstSettings(await requireSession(), values), values, "GST settings saved. They apply to bills made from now on.");
+  return saveSettings(async () => updateGstSettings(await requireSession(), values), values, (await getT())("settings.saved.gst"));
 }
 
 export async function saveInvoiceAction(_previous: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
   const values = fields(formData, ["invoicePrefix", "startingNumber", "terms", "upiId", "bankDetails"]);
-  return saveSettings(async () => updateInvoiceSettings(await requireSession(), values), values, "Invoice settings saved.");
+  return saveSettings(async () => updateInvoiceSettings(await requireSession(), values), values, (await getT())("settings.saved.invoice"));
 }

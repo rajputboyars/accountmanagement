@@ -1,9 +1,13 @@
 "use server";
 
+import { getLanguage, localizeServerMessage } from "@/server/i18n";
+import { rateReasonLabel } from "@/shared/i18n/labels";
 import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { ZodError } from "zod";
-import { cancelInvoice, createInvoice, previewBill, searchSellableProducts, type BillView } from "@/modules/sales";
+import { cancelInvoice, createInvoice, getInvoice, previewBill, searchSellableProducts, type BillView } from "@/modules/sales";
+import { isLanguage } from "@/shared/i18n/languages";
+import { billShareText } from "@/shared/reminder";
 import { toActionError } from "@/server/action-result";
 import { requireSession } from "@/server/auth";
 
@@ -26,22 +30,32 @@ export type BillInputPayload = {
 
 type Failure = { error: string; code?: string; fieldErrors?: Record<string, string> };
 
-function failure(error: unknown): Failure {
+async function failure(error: unknown): Promise<Failure> {
   if (error instanceof ZodError) {
     const fieldErrors: Record<string, string> = {};
     for (const issue of error.issues) {
       const key = issue.path.join(".");
-      if (key && !fieldErrors[key]) fieldErrors[key] = issue.message;
+      if (key && !fieldErrors[key]) fieldErrors[key] = await localizeServerMessage(issue.message);
     }
-    return { error: error.issues[0]?.message ?? "Please check the bill.", code: "VALIDATION", fieldErrors };
+    return { error: await localizeServerMessage(error.issues[0]?.message ?? "Please check the bill."), code: "VALIDATION", fieldErrors };
   }
-  const result = toActionError(error);
+  const result = await toActionError(error);
   return { error: result.error, code: result.code };
+}
+
+/** The bill as the screen shows it: problems and rate labels in the person's language. Amounts are untouched. */
+async function localizedBill(bill: BillView): Promise<BillView> {
+  const language = await getLanguage();
+  return {
+    ...bill,
+    problems: await Promise.all(bill.problems.map(async (problem) => ({ ...problem, message: await localizeServerMessage(problem.message) }))),
+    lines: bill.lines.map((line) => ({ ...line, rateReason: rateReasonLabel(line.rateReason, language) })),
+  };
 }
 
 export async function previewBillAction(input: BillInputPayload): Promise<{ bill?: BillView } & Partial<Failure>> {
   try {
-    return { bill: await previewBill(await requireSession(), input) };
+    return { bill: await localizedBill(await previewBill(await requireSession(), input)) };
   } catch (error) {
     unstable_rethrow(error);
     return failure(error);
@@ -58,10 +72,29 @@ export async function saveBillAction(
     return { invoiceId: result.id, number: result.number, replayed: result.replayed };
   } catch (error) {
     unstable_rethrow(error);
-    const result = toActionError(error);
+    const result = await toActionError(error);
     // PRICE_CHANGED and stock/credit refusals carry the freshly computed bill.
     const bill = (result.details?.bill as BillView | undefined) ?? undefined;
-    return bill ? { ...failure(error), bill } : failure(error);
+    return bill ? { ...(await failure(error)), bill: await localizedBill(bill) } : failure(error);
+  }
+}
+
+/**
+ * The bill summary in the language chosen for this customer. Every value comes from the saved bill on the
+ * server; nothing is saved or sent here.
+ */
+export async function prepareBillMessageAction(invoiceId: string, language: string): Promise<{ text?: string; error?: string }> {
+  try {
+    if (!isLanguage(language)) return { error: await localizeServerMessage("Choose a message language.") };
+    const invoice = await getInvoice(await requireSession(), invoiceId);
+    if (invoice.status !== "issued") return { error: await localizeServerMessage("This bill is already cancelled.") };
+    const walkIn = invoice.customer.type === "walkin";
+    return {
+      text: billShareText({ shopName: invoice.shop.name, shopPhone: invoice.shop.phone, upiId: invoice.shop.upiId, customerName: walkIn ? null : invoice.customer.name, number: invoice.number, date: invoice.businessDate, totalPaise: invoice.totalPaise, paidPaise: invoice.paidNowPaise }, language),
+    };
+  } catch (error) {
+    unstable_rethrow(error);
+    return { error: (await toActionError(error)).error };
   }
 }
 
@@ -70,7 +103,7 @@ export async function searchProductsAction(q: string) {
     return { products: await searchSellableProducts(await requireSession(), q.slice(0, 60)) };
   } catch (error) {
     unstable_rethrow(error);
-    return { products: [], error: toActionError(error).error };
+    return { products: [], error: (await toActionError(error)).error };
   }
 }
 
@@ -80,7 +113,7 @@ export async function cancelInvoiceAction(_previous: { error?: string; ok?: bool
     await cancelInvoice(await requireSession(), invoiceId, { reason: String(formData.get("reason") ?? "") });
   } catch (error) {
     unstable_rethrow(error);
-    return { error: failure(error).error };
+    return { error: (await failure(error)).error };
   }
   revalidatePath(`/billing/invoices/${invoiceId}`);
   revalidatePath("/billing/invoices");

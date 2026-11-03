@@ -23,7 +23,7 @@ export async function setupAction(_previous: SetupState, formData: FormData): Pr
     await runFirstTimeSetup({ ...values, setupToken: String(formData.get("setupToken") ?? "") });
   } catch (error) {
     unstable_rethrow(error);
-    return { error: toActionError(error).error, values };
+    return { error: (await toActionError(error)).error, values };
   }
   redirect("/login?setup=done");
 }

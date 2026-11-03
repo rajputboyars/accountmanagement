@@ -1,3 +1,4 @@
+import type { Language } from "@/shared/i18n/languages";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, type Database, type Transaction } from "@/server/db";
@@ -11,6 +12,7 @@ import { customers, CUSTOMER_TYPES, suppliers } from "./schema";
 
 export type CustomerType = (typeof CUSTOMER_TYPES)[number];
 export type CustomerSummary = {
+  communicationLanguage: Language | null;
   id: string;
   name: string;
   type: CustomerType;
@@ -23,6 +25,7 @@ export type CustomerSummary = {
 };
 
 const summary = {
+  communicationLanguage: customers.communicationLanguage,
   id: customers.id,
   name: customers.name,
   type: customers.type,
@@ -148,4 +151,4 @@ export async function listShopCustomers(shopId: string, options: { includeInacti
   return rows.filter((row) => row.type !== "walkin");
 }
 
-export { createCustomer, customerCreateSchema, updateCustomer } from "./customers";
+export { createCustomer, customerCreateSchema, setCustomerCommunicationLanguage, updateCustomer } from "./customers";

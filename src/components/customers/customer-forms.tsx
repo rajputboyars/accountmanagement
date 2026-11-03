@@ -4,14 +4,17 @@ import { useActionState, useState, useTransition } from "react";
 import { Copy, MessageCircle } from "lucide-react";
 import { logReminderAction, prepareReminderAction, recordReceiptAction, reverseReceiptAction, saveCustomerAction, type FormState } from "@/app/(app)/customers/actions";
 import { Field, FormAlert, FormSelect, SubmitButton } from "@/components/catalog/form-bits";
+import { useT } from "@/components/nexora/language-provider";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { LANGUAGE_NAMES, LANGUAGES, type Language } from "@/shared/i18n/languages";
 import { Input } from "@/components/ui/input";
 
 const newKey = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID().replace(/-/g, "") : `${Date.now()}${Math.random().toString(36).slice(2)}`);
 
-type Customer = { id: string; name: string; phone: string | null; type: string; area: string | null; gstin: string | null; creditLimitPaise: number; whatsappConsent: boolean };
+type Customer = { id: string; name: string; phone: string | null; type: string; area: string | null; gstin: string | null; creditLimitPaise: number; whatsappConsent: boolean; communicationLanguage: Language | null };
 
 export function CustomerForm({ customer }: { customer?: Customer }) {
+  const t = useT();
   const [saved, setSaved] = useState(0);
   const [state, action] = useActionState<FormState, FormData>(async (previous, formData) => {
     const result = await saveCustomerAction(previous, formData);
@@ -23,56 +26,67 @@ export function CustomerForm({ customer }: { customer?: Customer }) {
   return (
     <form key={saved} action={action} className="flex flex-col gap-3">
       {customer ? <input type="hidden" name="customerId" value={customer.id} /> : null}
-      <Field label="Name" error={e.name}>
+      <Field label={t("common.name")} error={e.name}>
         <Input name="name" defaultValue={v.name ?? customer?.name ?? ""} maxLength={120} className="h-11" />
       </Field>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Phone" error={e.phone}>
+        <Field label={t("common.phone")} error={e.phone}>
           <Input name="phone" defaultValue={v.phone ?? customer?.phone ?? ""} inputMode="tel" className="h-11" />
         </Field>
-        <Field label="Type" error={e.type}>
+        <Field label={t("common.type")} error={e.type}>
           <FormSelect name="type" defaultValue={v.type ?? customer?.type ?? "retail"}>
-            <option value="retail">Retail</option>
-            <option value="wholesale">Wholesale</option>
+            <option value="retail">{t("common.retail")}</option>
+            <option value="wholesale">{t("common.wholesale")}</option>
           </FormSelect>
         </Field>
-        <Field label="Area (optional)" error={e.area}>
+        <Field label={t("customers.area")} error={e.area}>
           <Input name="area" defaultValue={v.area ?? customer?.area ?? ""} className="h-11" />
         </Field>
-        <Field label="Credit limit (₹)" error={e.creditLimit}>
+        <Field help="creditLimit" label={t("customers.creditLimitField")} error={e.creditLimit}>
           <Input name="creditLimit" defaultValue={v.creditLimit ?? (customer ? String(customer.creditLimitPaise / 100) : "0")} inputMode="decimal" className="h-11 tabular-nums" />
         </Field>
       </div>
-      <Field label="GSTIN (optional)" error={e.gstin}>
+      <Field label={t("customers.gstinOptional")} error={e.gstin}>
         <Input name="gstin" defaultValue={v.gstin ?? customer?.gstin ?? ""} maxLength={15} className="h-11 uppercase" />
+      </Field>
+      <Field label={t("customers.messageLanguage")} hint={t("customers.messageLanguageHint")} error={e.communicationLanguage}>
+        <FormSelect name="communicationLanguage" defaultValue={v.communicationLanguage ?? customer?.communicationLanguage ?? ""}>
+          <option value="">{t("customers.languageNotSet")}</option>
+          {LANGUAGES.map((option) => (
+            <option key={option} value={option}>
+              {LANGUAGE_NAMES[option]}
+            </option>
+          ))}
+        </FormSelect>
       </Field>
       {customer ? null : (
         <div className="grid grid-cols-2 gap-3 rounded-xl bg-muted/50 p-3">
-          <p className="col-span-2 text-xs text-muted-foreground">At go-live only: what they already owe (or paid ahead), dated the oldest unpaid bill.</p>
-          <Field label="Owes you (₹)" error={e.openingOwed}>
+          <p className="col-span-2 text-xs text-muted-foreground">{t("customers.goLiveHelp")}</p>
+          <Field label={t("customers.owesYouField")} error={e.openingOwed}>
             <Input name="openingOwed" defaultValue={v.openingOwed} inputMode="decimal" className="h-11 tabular-nums" />
           </Field>
-          <Field label="Oldest unpaid bill" error={e.oldestBillDate}>
+          <Field label={t("customers.oldestUnpaid")} error={e.oldestBillDate}>
             <Input type="date" name="oldestBillDate" defaultValue={v.oldestBillDate} className="h-11" />
           </Field>
-          <Field label="Or advance paid (₹)" error={e.openingAdvance}>
+          <Field label={t("customers.advanceField")} error={e.openingAdvance}>
             <Input name="openingAdvance" defaultValue={v.openingAdvance} inputMode="decimal" className="h-11 tabular-nums" />
           </Field>
         </div>
       )}
       <label className="flex min-h-11 items-start gap-2 text-sm text-foreground">
         <input type="checkbox" name="whatsappConsent" defaultChecked={v.whatsappConsent ? v.whatsappConsent === "on" : customer?.whatsappConsent} className="mt-0.5 size-5 accent-[var(--teal-strong)]" />
-        The customer agreed to payment reminders on WhatsApp
+        {t("customers.consent")}
       </label>
       <FormAlert error={state.fieldErrors ? undefined : state.error} message={state.message} />
       <div>
-        <SubmitButton variant={customer ? "outline" : "default"}>{customer ? "Save details" : "Add customer"}</SubmitButton>
+        <SubmitButton variant={customer ? "outline" : "default"}>{t(customer ? "common.saveDetails" : "customers.addButton")}</SubmitButton>
       </div>
     </form>
   );
 }
 
 export function ReceiptForm({ customerId, balanceText }: { customerId: string; balanceText: string }) {
+  const t = useT();
   const [idempotencyKey, setIdempotencyKey] = useState(newKey);
   const [state, action] = useActionState<FormState, FormData>(async (previous, formData) => {
     const result = await recordReceiptAction(previous, formData);
@@ -86,37 +100,38 @@ export function ReceiptForm({ customerId, balanceText }: { customerId: string; b
       <input type="hidden" name="customerId" value={customerId} />
       <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Amount (₹)" hint={`Balance ${balanceText}. More becomes an advance.`} error={e.amount}>
+        <Field label={t("common.amountRupees")} hint={t("customers.balanceHint", { amount: balanceText })} error={e.amount}>
           <Input name="amount" defaultValue={v.amount} inputMode="decimal" className="h-11 tabular-nums" />
         </Field>
-        <Field label="Paid by" error={e.method}>
+        <Field label={t("common.paidBy")} error={e.method}>
           <FormSelect name="method" defaultValue={v.method ?? "cash"}>
-            <option value="cash">Cash</option>
-            <option value="upi">UPI</option>
-            <option value="bank">Bank</option>
-            <option value="cheque">Cheque</option>
+            <option value="cash">{t("common.cash")}</option>
+            <option value="upi">{t("common.upi")}</option>
+            <option value="bank">{t("suppliers.bankTransfer")}</option>
+            <option value="cheque">{t("common.cheque")}</option>
           </FormSelect>
         </Field>
       </div>
-      <Field label="Reference (UTR / cheque no.)" error={e.reference}>
+      <Field label={t("customers.reference")} error={e.reference}>
         <Input name="reference" defaultValue={v.reference} maxLength={40} className="h-11" />
       </Field>
       <FormAlert error={state.fieldErrors ? undefined : state.error} message={state.message} />
       <div>
-        <SubmitButton>Record payment</SubmitButton>
+        <SubmitButton>{t("common.recordPayment")}</SubmitButton>
       </div>
     </form>
   );
 }
 
 export function ReverseReceipt({ customerId, paymentId }: { customerId: string; paymentId: string }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [state, action] = useActionState<FormState, FormData>(reverseReceiptAction, {});
-  if (state.ok) return <span className="text-xs text-muted-foreground">Reversed</span>;
+  if (state.ok) return <span className="text-xs text-muted-foreground">{t("customers.reversed")}</span>;
   if (!open) {
     return (
       <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(true)}>
-        Reverse
+        {t("common.reverse")}
       </Button>
     );
   }
@@ -124,12 +139,12 @@ export function ReverseReceipt({ customerId, paymentId }: { customerId: string; 
     <form action={action} className="flex w-full flex-wrap items-end gap-2">
       <input type="hidden" name="customerId" value={customerId} />
       <input type="hidden" name="paymentId" value={paymentId} />
-      <Field label="Why reverse it?" error={state.error} className="flex-1">
+      <Field label={t("customers.whyReverse")} error={state.error} className="flex-1">
         <Input name="reason" maxLength={200} className="h-11" />
       </Field>
-      <SubmitButton variant="destructive">Reverse</SubmitButton>
+      <SubmitButton variant="destructive">{t("common.reverse")}</SubmitButton>
       <Button type="button" variant="ghost" size="touch" onClick={() => setOpen(false)}>
-        Keep
+        {t("common.keep")}
       </Button>
     </form>
   );
@@ -137,32 +152,33 @@ export function ReverseReceipt({ customerId, paymentId }: { customerId: string; 
 
 /** Builds the reminder on the server; the person sends it. Never shows "sent" without a provider. */
 export function ReminderCard({ customerId }: { customerId: string }) {
+  const t = useT();
   const [pending, start] = useTransition();
   const [reminder, setReminder] = useState<{ text: string; phone: string; providerConfigured: boolean } | null>(null);
   // The person can reword the message before sharing it; the amounts come from the server.
   const [text, setText] = useState("");
   const [note, setNote] = useState<string | null>(null);
-  const shared = (how: string) =>
+  const shared = (how: "customers.copied" | "customers.openedWhatsapp") =>
     start(async () => {
       const result = await logReminderAction(customerId, "shared");
-      setNote("error" in result ? (result.error ?? null) : `${how}. Delivery isn't confirmed: check WhatsApp.`);
+      setNote("error" in result ? (result.error ?? null) : t(how));
     });
   return (
     <div className="flex flex-col gap-3">
       {reminder ? (
         <>
           <label className="flex flex-col gap-1 text-sm font-medium text-foreground">
-            Message (check it, change words if you like)
+            {t("customers.checkMessage")}
             <textarea value={text} onChange={(event) => setText(event.target.value)} rows={9} className="rounded-xl border border-input bg-background p-3 text-sm font-normal" />
           </label>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="touch" disabled={pending} onClick={() => navigator.clipboard.writeText(text).then(() => shared("Copied"))}>
+            <Button type="button" variant="outline" size="touch" disabled={pending} onClick={() => navigator.clipboard.writeText(text).then(() => shared("customers.copied"))}>
               <Copy aria-hidden="true" />
-              Copy text
+              {t("share.copy")}
             </Button>
-            <a href={`https://wa.me/91${reminder.phone}?text=${encodeURIComponent(text)}`} target="_blank" rel="noreferrer" onClick={() => shared("Opened WhatsApp")} className={buttonVariants({ size: "touch" })}>
+            <a href={`https://wa.me/91${reminder.phone}?text=${encodeURIComponent(text)}`} target="_blank" rel="noreferrer" onClick={() => shared("customers.openedWhatsapp")} className={buttonVariants({ size: "touch" })}>
               <MessageCircle className="size-4" aria-hidden="true" />
-              Open WhatsApp
+              {t("customers.openWhatsapp")}
             </a>
           </div>
           {reminder.providerConfigured ? (
@@ -174,15 +190,15 @@ export function ReminderCard({ customerId }: { customerId: string }) {
               onClick={() =>
                 start(async () => {
                   const result = await logReminderAction(customerId, "provider");
-                  setNote("error" in result ? (result.error ?? null) : result.duplicate ? "Today's reminder is already queued or sent; see its status below." : "Queued for WhatsApp. The status below updates when WhatsApp confirms.");
+                  setNote("error" in result ? (result.error ?? null) : t(result.duplicate ? "customers.alreadyQueued" : "customers.queuedNote"));
                 })
               }
             >
               <MessageCircle className="size-4" aria-hidden="true" />
-              Send via WhatsApp
+              {t("customers.sendViaWhatsapp")}
             </Button>
           ) : (
-            <p className="text-xs text-muted-foreground">No WhatsApp sending service is set up, so you send it yourself.</p>
+            <p className="text-xs text-muted-foreground">{t("customers.noService")}</p>
           )}
         </>
       ) : (
@@ -199,11 +215,11 @@ export function ReminderCard({ customerId }: { customerId: string }) {
                 setReminder(result.reminder);
                 setText(result.reminder.text);
               }
-              else setNote(result.error ?? "Couldn't prepare the reminder.");
+              else setNote(result.error ?? t("customers.reminderFailed"));
             })
           }
         >
-          Prepare reminder
+          {t("customers.prepareReminder")}
         </Button>
       )}
       {note ? <p className="text-sm text-muted-foreground">{note}</p> : null}

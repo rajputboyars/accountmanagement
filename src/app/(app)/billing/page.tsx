@@ -11,14 +11,18 @@ import { CATALOG_MANAGE, shopHasProducts } from "@/modules/catalog";
 import { hasPermission } from "@/modules/identity";
 import { BILLING_CREATE, listBillingCustomers } from "@/modules/sales";
 import { homePathForRole, requireSession } from "@/server/auth";
+import { getT } from "@/server/i18n";
 
 const item = getNavItem("billing");
 
-export const metadata: Metadata = { title: "Billing" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getT();
+  return { title: t("page.billing") };
+}
 
 export default function BillingPage() {
   return (
-    <ProtectedPage permission="billing.view" title={item.label}>
+    <ProtectedPage permission="billing.view" title={item.label} guide="billing">
       <NewBill />
     </ProtectedPage>
   );
@@ -33,20 +37,21 @@ async function NewBill() {
       </PageContainer>
     );
   }
+  const t = await getT();
   const [customers, hasProducts, canAddProducts] = await Promise.all([listBillingCustomers(session), shopHasProducts(session.shopId), hasPermission(session, CATALOG_MANAGE)]);
   return (
     <PageContainer>
       <PageIntro
-        description="Add items, choose the customer and take payment. Every rate, tax and total is worked out on the server from your saved prices."
+        description={t("billing.intro")}
         actions={
           <>
             <Link href="/billing/returns" className={buttonVariants({ variant: "outline", size: "touch" })}>
               <Undo2 aria-hidden="true" />
-              Returns
+              {t("billing.returns")}
             </Link>
             <Link href="/billing/invoices" className={buttonVariants({ variant: "outline", size: "touch" })}>
               <History aria-hidden="true" />
-              Bills
+              {t("billing.bills")}
             </Link>
           </>
         }

@@ -1,11 +1,13 @@
 "use server";
 
+import { localizeServerMessage } from "@/server/i18n";
 import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { ZodError } from "zod";
 import { rebuildStockCache, recordAdjustment, recordOpeningStock, type AdjustmentResult, type OpeningResult } from "@/modules/inventory";
 import { toActionError } from "@/server/action-result";
 import { requireSession } from "@/server/auth";
+import { getT } from "@/server/i18n";
 
 /**
  * Stock server actions. The session decides the shop and user; the inventory services check
@@ -16,16 +18,16 @@ import { requireSession } from "@/server/auth";
 type Failure = { ok: false; error: string; code?: string; fieldErrors?: Record<string, string> };
 
 /** Field errors keyed by the full path ("lines.2.quantity"), so multi-line forms can place them. */
-function failure(error: unknown): Failure {
+async function failure(error: unknown): Promise<Failure> {
   if (error instanceof ZodError) {
     const fieldErrors: Record<string, string> = {};
     for (const issue of error.issues) {
       const key = issue.path.join(".");
-      if (key && !fieldErrors[key]) fieldErrors[key] = issue.message;
+      if (key && !fieldErrors[key]) fieldErrors[key] = await localizeServerMessage(issue.message);
     }
-    return { ok: false, error: "Some entries need attention. Nothing was saved.", code: "VALIDATION", fieldErrors };
+    return { ok: false, error: (await getT())("stock.attention"), code: "VALIDATION", fieldErrors };
   }
-  const result = toActionError(error);
+  const result = await toActionError(error);
   const fromDetails = result.details?.fieldErrors as Record<string, string> | undefined;
   return { ok: false, error: result.error, code: result.code, fieldErrors: fromDetails };
 }
@@ -37,7 +39,7 @@ export async function recordOpeningAction(_previous: OpeningFormState, formData:
   try {
     payload = JSON.parse(String(formData.get("payload") ?? "null"));
   } catch {
-    return { ok: false, error: "The form could not be read. Reload the page and try again." };
+    return { ok: false, error: (await getT())("stock.formUnread") };
   }
   try {
     const result = await recordOpeningStock(await requireSession(), payload);
@@ -60,7 +62,7 @@ export async function recordAdjustmentAction(_previous: AdjustmentFormState, for
     return { result };
   } catch (error) {
     unstable_rethrow(error);
-    return { ...failure(error), values };
+    return { ...(await failure(error)), values };
   }
 }
 
@@ -70,7 +72,7 @@ export async function rebuildCacheAction(_previous: { ok?: boolean; error?: stri
     await rebuildStockCache(await requireSession(), productId);
   } catch (error) {
     unstable_rethrow(error);
-    return { ok: false, error: toActionError(error).error };
+    return { ok: false, error: (await toActionError(error)).error };
   }
   revalidatePath("/inventory/stock");
   revalidatePath(`/inventory/stock/${productId}`);

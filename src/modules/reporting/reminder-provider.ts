@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ConfigurationError } from "@/server/errors";
+import type { Language } from "@/shared/i18n/languages";
 
 /**
  * WhatsApp provider boundary. `WHATSAPP_PROVIDER` picks one:
@@ -7,7 +8,9 @@ import { ConfigurationError } from "@/server/errors";
  *   - "meta": WhatsApp Business Cloud API. Needs WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID;
  *     WHATSAPP_TEMPLATE_NAME (an approved template with one body variable) is used when set, since
  *     business-initiated messages outside the 24-hour window must be templates; WHATSAPP_TEMPLATE_LANG
- *     (default "en"), WHATSAPP_API_VERSION (default "v21.0"). The status webhook is verified with
+ *     (default "en"); WHATSAPP_TEMPLATE_LANG_EN, _HI and _HINGLISH optionally name the approved template language
+ *     for customers using that message language, so an unapproved language is never asked for;
+ *     WHATSAPP_API_VERSION (default "v21.0"). The status webhook is verified with
  *     WHATSAPP_APP_SECRET (signature) and WHATSAPP_VERIFY_TOKEN (subscription check).
  * Tests pass a fake provider explicitly; nothing in tests reaches the network.
  */
@@ -16,7 +19,7 @@ export type SendResult = { providerMessageId: string };
 
 export interface ReminderProvider {
   readonly name: string;
-  send(message: { phone: string; text: string }): Promise<SendResult>;
+  send(message: { phone: string; text: string; language?: Language }): Promise<SendResult>;
 }
 
 /** A failed send. `retryable` = try again later (network, rate limit, 5xx); otherwise give up. */
@@ -31,14 +34,14 @@ export class ProviderError extends Error {
 
 type Fetch = typeof fetch;
 
-export function metaCloudProvider(config: { token: string; phoneNumberId: string; templateName?: string; templateLang?: string; apiVersion?: string }, fetchImpl: Fetch = fetch): ReminderProvider {
+export function metaCloudProvider(config: { token: string; phoneNumberId: string; templateName?: string; templateLang?: string; templateLangs?: Partial<Record<Language, string>>; apiVersion?: string }, fetchImpl: Fetch = fetch): ReminderProvider {
   const url = `https://graph.facebook.com/${config.apiVersion ?? "v21.0"}/${config.phoneNumberId}/messages`;
   return {
     name: "meta",
-    async send({ phone, text }) {
+    async send({ phone, text, language }) {
       const to = phone.length === 10 ? `91${phone}` : phone.replace(/^\+/, "");
       const body = config.templateName
-        ? { messaging_product: "whatsapp", to, type: "template", template: { name: config.templateName, language: { code: config.templateLang ?? "en" }, components: [{ type: "body", parameters: [{ type: "text", text: text.replace(/\s*\n\s*/g, " · ").slice(0, 1000) }] }] } }
+        ? { messaging_product: "whatsapp", to, type: "template", template: { name: config.templateName, language: { code: (language && config.templateLangs?.[language]) || (config.templateLang ?? "en") }, components: [{ type: "body", parameters: [{ type: "text", text: text.replace(/\s*\n\s*/g, " · ").slice(0, 1000) }] }] } }
         : { messaging_product: "whatsapp", to, type: "text", text: { body: text.slice(0, 4096), preview_url: false } };
       let response: Response;
       try {
@@ -65,7 +68,7 @@ export function getReminderProvider(env: NodeJS.ProcessEnv = process.env): Remin
     const token = env.WHATSAPP_ACCESS_TOKEN?.trim();
     const phoneNumberId = env.WHATSAPP_PHONE_NUMBER_ID?.trim();
     if (!token || !phoneNumberId) throw new ConfigurationError("WHATSAPP_PROVIDER=meta needs WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID.");
-    return metaCloudProvider({ token, phoneNumberId, templateName: env.WHATSAPP_TEMPLATE_NAME?.trim() || undefined, templateLang: env.WHATSAPP_TEMPLATE_LANG?.trim() || undefined, apiVersion: env.WHATSAPP_API_VERSION?.trim() || undefined });
+    return metaCloudProvider({ token, phoneNumberId, templateName: env.WHATSAPP_TEMPLATE_NAME?.trim() || undefined, templateLang: env.WHATSAPP_TEMPLATE_LANG?.trim() || undefined, templateLangs: { en: env.WHATSAPP_TEMPLATE_LANG_EN?.trim() || undefined, hi: env.WHATSAPP_TEMPLATE_LANG_HI?.trim() || undefined, hinglish: env.WHATSAPP_TEMPLATE_LANG_HINGLISH?.trim() || undefined }, apiVersion: env.WHATSAPP_API_VERSION?.trim() || undefined });
   }
   throw new ConfigurationError(`WHATSAPP_PROVIDER="${name}" is not supported. Use "meta", or leave it empty for manual sharing.`);
 }

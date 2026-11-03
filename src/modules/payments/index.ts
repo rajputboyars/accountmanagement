@@ -216,12 +216,19 @@ export { PAYMENTS_RECORD, PAYMENTS_REVERSE, recordCustomerReceipt, reverseCustom
 
 /** Payment details for labelling ledger lines (receipt number, method, links). Ids of other shops are ignored. */
 export async function paymentDetails(db: Database | Transaction, shopId: string, ids: string[]) {
-  if (ids.length === 0) return new Map<string, { receiptNumber: string | null; method: PaymentMethod; reference: string | null; direction: "in" | "out"; status: string; invoiceId: string | null; creditNoteId: string | null }>();
+  if (ids.length === 0) return new Map<string, { partyType: string; receiptNumber: string | null; method: PaymentMethod; reference: string | null; direction: "in" | "out"; status: string; invoiceId: string | null; creditNoteId: string | null }>();
   const rows = await db
-    .select({ id: payments.id, receiptNumber: payments.receiptNumber, method: payments.method, reference: payments.reference, direction: payments.direction, status: payments.status, invoiceId: payments.invoiceId, creditNoteId: payments.creditNoteId })
+    .select({ id: payments.id, partyType: payments.partyType, receiptNumber: payments.receiptNumber, method: payments.method, reference: payments.reference, direction: payments.direction, status: payments.status, invoiceId: payments.invoiceId, creditNoteId: payments.creditNoteId })
     .from(payments)
     .where(and(eq(payments.shopId, shopId), inArray(payments.id, ids)));
   return new Map(rows.map(({ id, ...row }) => [id, row]));
+}
+
+/** Which of these payments exist to undo another payment. */
+export async function reversingPaymentIds(db: Database | Transaction, shopId: string, ids: string[]) {
+  if (ids.length === 0) return new Set<string>();
+  const rows = await db.select({ id: payments.reversedByPaymentId }).from(payments).where(and(eq(payments.shopId, shopId), inArray(payments.reversedByPaymentId, ids)));
+  return new Set(rows.flatMap((row) => (row.id ? [row.id] : [])));
 }
 
 /** A customer's receipts (money in not tied to a bill), newest first. */

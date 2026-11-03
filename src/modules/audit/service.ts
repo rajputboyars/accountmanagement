@@ -1,5 +1,5 @@
-import { and, count, eq, gt, sql } from "drizzle-orm";
-import type { Database, Transaction } from "@/server/db";
+import { and, count, eq, gt, gte, sql } from "drizzle-orm";
+import { getDb, type Database, type Transaction } from "@/server/db";
 import { auditLog } from "./schema";
 
 export type AuditActor = {
@@ -85,4 +85,14 @@ export async function countRecentFailures(
       ),
     );
   return row?.failures ?? 0;
+}
+
+/** Did this person's own workflow write this action since then? Read-only. */
+export async function hasAuditSince(where: { shopId: string; userId: string; action: string; since: Date }): Promise<boolean> {
+  const [row] = await getDb()
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(and(eq(auditLog.shopId, where.shopId), eq(auditLog.userId, where.userId), eq(auditLog.action, where.action), gte(auditLog.at, where.since)))
+    .limit(1);
+  return !!row;
 }

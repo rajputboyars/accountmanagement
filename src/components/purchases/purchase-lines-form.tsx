@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { LoaderCircle, Plus, Trash2 } from "lucide-react";
 import { createOrderAction, receiveGoodsAction } from "@/app/(app)/purchases/actions";
 import { Field, FormAlert, selectClass } from "@/components/catalog/form-bits";
+import { useT } from "@/components/nexora/language-provider";
 import { Money } from "@/components/nexora/money";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +15,7 @@ import { parseQuantity } from "@/shared/quantity";
 import { STATUTORY_GST_RATES_BP } from "@/shared/gst";
 
 export type PurchasableProduct = { id: string; name: string; sku: string; baseUnit: string; gstRateBp: number; units: { code: string; label: string }[] };
-export type OrderLineForReceipt = { id: string; productName: string; unit: string; baseUnit: string; leftBase: string; leftInUnit: string | null; costPaisePerUnit: number; gstRateBp: number };
+export type OrderLineForReceipt = { id: string; productName: string; unit: string; baseUnit: string; leftBase: string; leftInUnit: string | null; costPaisePerUnit: number; gstRateBp: number; unitLabel: string; baseUnitLabel: string };
 
 type Line = { key: number; productId: string; purchaseOrderLineId: string; unit: string; quantity: string; cost: string; gstRateBp: string; label?: string };
 
@@ -53,6 +54,7 @@ export function PurchaseLinesForm({
   products: PurchasableProduct[];
   order?: { id: string; supplierName: string; lines: OrderLineForReceipt[] };
 }) {
+  const t = useT();
   const router = useRouter();
   const [supplierId, setSupplierId] = useState(defaultSupplierId);
   const [billNo, setBillNo] = useState("");
@@ -67,7 +69,16 @@ export function PurchaseLinesForm({
   const [idempotencyKey] = useState(newKey);
   const [pending, startTransition] = useTransition();
   const byId = new Map(products.map((product) => [product.id, product]));
-  const update = (key: number, patch: Partial<Line>) => setLines((all) => all.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+  const update = (key: number, patch: Partial<Line>) => {
+    // Editing a field answers its message: drop it at once rather than leave it up until the next save.
+    const edited = Object.keys(patch).map((field) => `${key}.${field}`).filter((name) => fieldErrors[name]);
+    if (edited.length > 0) {
+      const answered = edited.map((name) => fieldErrors[name]);
+      setFieldErrors((all) => Object.fromEntries(Object.entries(all).filter(([name]) => !edited.includes(name))));
+      setError((current) => (current && answered.includes(current) ? null : current));
+    }
+    setLines((all) => all.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+  };
   const included = lines.filter((line) => line.quantity.trim() !== "" && line.quantity.trim() !== "0");
   const totals = previewTotal(mode === "order" ? included.map((line) => ({ ...line, gstRateBp: "0" })) : included);
 
@@ -88,7 +99,7 @@ export function PurchaseLinesForm({
         router.push(mode === "order" ? `/purchases/orders/${result.id}?new=1` : `/purchases/receipts/${result.id}?new=1`);
         return;
       }
-      setError(result.error ?? "Not saved.");
+      setError(result.error ?? t("purchases.notSaved"));
       // Map "lines.N" (index among included lines) back to the row keys on screen.
       const mapped: Record<string, string> = {};
       for (const [field, message] of Object.entries(result.fieldErrors ?? {})) {
@@ -102,9 +113,9 @@ export function PurchaseLinesForm({
   return (
     <div className="flex flex-col gap-5">
       {order ? null : (
-        <Field label="Supplier" error={fieldErrors.supplierId}>
-          <select value={supplierId} onChange={(event) => setSupplierId(event.target.value)} className={selectClass}>
-            <option value="">Choose…</option>
+        <Field label={t("page.supplier")} error={fieldErrors.supplierId}>
+          <select data-guide="purchase-supplier" value={supplierId} onChange={(event) => setSupplierId(event.target.value)} className={selectClass}>
+            <option value="">{t("common.choose")}</option>
             {suppliers.map((supplier) => (
               <option key={supplier.id} value={supplier.id}>
                 {supplier.name}
@@ -115,11 +126,11 @@ export function PurchaseLinesForm({
       )}
       {mode === "receipt" ? (
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={<span>Supplier&apos;s bill number <span className="font-normal text-muted-foreground">(optional)</span></span>} hint="A bill can be entered only once per supplier." error={fieldErrors.supplierBillNo}>
-            <Input value={billNo} onChange={(event) => setBillNo(event.target.value)} maxLength={30} className="h-11 uppercase" />
+          <Field label={<span>{t("purchases.billNumber")} <span className="font-normal text-muted-foreground">{t("common.optional")}</span></span>} hint={t("purchases.billOnce")} error={fieldErrors.supplierBillNo}>
+            <Input data-guide="purchase-bill-no" value={billNo} onChange={(event) => setBillNo(event.target.value)} maxLength={30} className="h-11 uppercase" />
           </Field>
-          <Field label={<span>Bill date <span className="font-normal text-muted-foreground">(optional)</span></span>} error={fieldErrors.supplierBillDate}>
-            <Input type="date" value={billDate} onChange={(event) => setBillDate(event.target.value)} className="h-11" />
+          <Field label={<span>{t("purchases.billDate")} <span className="font-normal text-muted-foreground">{t("common.optional")}</span></span>} error={fieldErrors.supplierBillDate}>
+            <Input data-guide="purchase-bill-date" type="date" value={billDate} onChange={(event) => setBillDate(event.target.value)} className="h-11" />
           </Field>
         </div>
       ) : null}
@@ -130,19 +141,20 @@ export function PurchaseLinesForm({
           const orderLine = order?.lines.find((candidate) => candidate.id === line.purchaseOrderLineId);
           const err = (field: string) => fieldErrors[`${line.key}.${field}`];
           return (
-            <li key={line.key} className={`grid gap-3 rounded-xl border border-border p-3 ${mode === "receipt" ? "sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" : "sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"} sm:items-start`}>
+            <li key={line.key} data-guide="purchase-line" className={`grid gap-3 rounded-xl border border-border p-3 ${mode === "receipt" ? "sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" : "sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"} sm:items-start`}>
               {orderLine ? (
                 <div className="min-w-0">
                   <p className="font-semibold text-foreground">{orderLine.productName}</p>
                   <p className="text-xs text-muted-foreground">
-                    Still expected: {orderLine.leftBase} {orderLine.baseUnit} · in {orderLine.unit}
+                    {t("purchases.expectedLine", { qty: orderLine.leftBase, base: orderLine.baseUnitLabel, unit: orderLine.unitLabel })}
                   </p>
                   {err("productId") ? <p className="text-xs text-danger">{err("productId")}</p> : null}
                 </div>
               ) : (
                 <>
-                  <Field label={`Product ${index + 1}`} error={err("productId")}>
+                  <Field label={t("common.productNumber", { number: index + 1 })} error={err("productId")}>
                     <select
+                      data-guide="purchase-product"
                       value={line.productId}
                       onChange={(event) => {
                         const next = byId.get(event.target.value);
@@ -150,7 +162,7 @@ export function PurchaseLinesForm({
                       }}
                       className={selectClass}
                     >
-                      <option value="">Choose…</option>
+                      <option value="">{t("common.choose")}</option>
                       {products.map((option) => (
                         <option key={option.id} value={option.id}>
                           {option.name} ({option.sku})
@@ -161,21 +173,21 @@ export function PurchaseLinesForm({
                 </>
               )}
               {orderLine ? null : (
-                <Field label="Unit" error={err("unit")}>
-                  <select value={line.unit} onChange={(event) => update(line.key, { unit: event.target.value })} disabled={!product} className={selectClass}>
+                <Field label={t("common.unit")} error={err("unit")}>
+                  <select data-guide="purchase-unit" value={line.unit} onChange={(event) => update(line.key, { unit: event.target.value })} disabled={!product} className={selectClass}>
                     {product ? product.units.map((unit) => <option key={unit.code} value={unit.code}>{unit.label}</option>) : <option value="">—</option>}
                   </select>
                 </Field>
               )}
-              <Field label={mode === "receipt" ? "Received" : "Quantity"} error={err("quantity")}>
-                <Input value={line.quantity} onChange={(event) => update(line.key, { quantity: event.target.value })} inputMode="decimal" placeholder="0" className="h-11 tabular-nums" />
+              <Field label={mode === "receipt" ? t("purchases.receivedQty") : t("common.quantity")} error={err("quantity")}>
+                <Input data-guide="purchase-qty" value={line.quantity} onChange={(event) => update(line.key, { quantity: event.target.value })} inputMode="decimal" placeholder="0" className="h-11 tabular-nums" />
               </Field>
-              <Field label="Cost per unit (₹)" error={err("cost")}>
-                <Input value={line.cost} onChange={(event) => update(line.key, { cost: event.target.value })} inputMode="decimal" placeholder="e.g. 22" className="h-11 tabular-nums" />
+              <Field help="purchasePrice" label={t("purchases.purchasePrice")} error={err("cost")}>
+                <Input data-guide="purchase-cost" value={line.cost} onChange={(event) => update(line.key, { cost: event.target.value })} inputMode="decimal" placeholder={t("purchases.pricePlaceholder")} className="h-11 tabular-nums" />
               </Field>
               {mode === "receipt" ? (
                 <Field label="GST" error={err("gstRateBp")}>
-                  <select value={line.gstRateBp} onChange={(event) => update(line.key, { gstRateBp: event.target.value })} className={selectClass}>
+                  <select data-guide="purchase-gst" value={line.gstRateBp} onChange={(event) => update(line.key, { gstRateBp: event.target.value })} className={selectClass}>
                     {GST.map((rate) => (
                       <option key={rate} value={rate}>
                         {rate / 100}%
@@ -185,7 +197,7 @@ export function PurchaseLinesForm({
                 </Field>
               ) : null}
               {!order && lines.length > 1 ? (
-                <Button type="button" variant="ghost" size="touch" className="sm:mt-6" aria-label={`Remove line ${index + 1}`} onClick={() => setLines((all) => all.filter((candidate) => candidate.key !== line.key))}>
+                <Button type="button" variant="ghost" size="touch" className="sm:mt-6" aria-label={t("common.removeLine", { line: index + 1 })} onClick={() => setLines((all) => all.filter((candidate) => candidate.key !== line.key))}>
                   <Trash2 aria-hidden="true" />
                 </Button>
               ) : null}
@@ -193,43 +205,43 @@ export function PurchaseLinesForm({
           );
         })}
       </ol>
-      {order ? <p className="-mt-2 text-xs text-muted-foreground">Leave a quantity empty or 0 for items that didn&apos;t come. The rest stays expected (&quot;received · short&quot;).</p> : null}
+      {order ? <p className="-mt-2 text-xs text-muted-foreground">{t("purchases.leaveEmpty")}</p> : null}
       {!order ? (
         <Button type="button" variant="outline" size="touch" className="self-start" onClick={() => setLines((all) => [...all, { key: Math.max(...all.map((line) => line.key)) + 1, productId: "", purchaseOrderLineId: "", unit: "", quantity: "", cost: "", gstRateBp: "0" }])}>
           <Plus aria-hidden="true" />
-          Add another item
+          {t("purchases.addItem")}
         </Button>
       ) : null}
 
-      <div className="flex flex-col gap-1 rounded-xl bg-muted/60 p-4 text-sm">
+      <div data-guide="purchase-total" className="flex flex-col gap-1 rounded-xl bg-muted/60 p-4 text-sm">
         {totals ? (
           <>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Value</span>
+              <span className="text-muted-foreground">{t("common.value")}</span>
               <Money paise={totals.taxablePaise} withPaise />
             </div>
             {mode === "receipt" ? (
               <div className="flex justify-between">
-                <span className="text-muted-foreground">GST input</span>
+                <span className="text-muted-foreground">{t("purchases.gstInput")}</span>
                 <Money paise={totals.gstPaise} withPaise />
               </div>
             ) : null}
             <div className="flex justify-between text-base font-bold text-foreground">
-              <span>{mode === "receipt" ? "Added to what you owe the supplier" : "Order value"}</span>
+              <span>{mode === "receipt" ? t("purchases.addedToOwe") : t("purchases.orderValue")}</span>
               <Money paise={totals.totalPaise} withPaise />
             </div>
           </>
         ) : (
-          <p className="text-muted-foreground">Enter quantities and costs to see the total.</p>
+          <p className="text-muted-foreground">{t("purchases.enterToTotal")}</p>
         )}
       </div>
 
       <FormAlert error={error ?? undefined} />
-      <Button type="button" size="touch" className="self-start" disabled={pending || included.length === 0} onClick={submit}>
+      <Button data-guide="purchase-save" type="button" size="touch" className="self-start" disabled={pending || included.length === 0} onClick={submit}>
         {pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
-        {mode === "order" ? "Save order" : "Receive goods"}
+        {mode === "order" ? t("purchases.saveOrder") : t("suppliers.receiveGoods")}
       </Button>
-      {mode === "receipt" ? <p className="text-xs text-muted-foreground">Stock goes up, the cost price becomes the weighted average, and the bill is added to the supplier&apos;s account, all in one step.</p> : null}
+      {mode === "receipt" ? <p className="text-xs text-muted-foreground">{t("purchases.receiveHelp")}</p> : null}
       {order ? <span className="sr-only">{order.supplierName}</span> : null}
     </div>
   );

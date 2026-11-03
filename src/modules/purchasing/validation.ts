@@ -63,7 +63,7 @@ export const purchaseOrderInputSchema = z
     idempotencyKey: key,
     supplierId: id("Choose a supplier."),
     lines: z
-      .array(z.object({ productId: id("Choose a product."), unit: z.string().trim().min(1, "Choose a unit."), quantity, cost: rupees("cost per unit") }))
+      .array(z.object({ productId: id("Choose a product."), unit: z.string().trim().min(1, "Choose a unit."), quantity, cost: rupees("purchase price per unit") }))
       .min(1, "Add at least one item.")
       .max(100),
   })
@@ -102,7 +102,7 @@ export const receiptInputSchema = z
           productId: optionalId("Choose a product."),
           unit: z.string().trim().optional(),
           quantity,
-          cost: rupees("cost per unit"),
+          cost: rupees("purchase price per unit"),
           gstRateBp: z.coerce.number().int().refine((value) => GST_RATES.includes(value), "Choose a GST rate."),
         }),
       )

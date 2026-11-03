@@ -7,7 +7,6 @@ import { getDb, withTransaction, type Transaction } from "@/server/db";
 import { isUniqueViolation } from "@/server/db-errors";
 import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { formatPaise } from "@/shared/money";
-import { formatBasisPoints } from "@/shared/pricing-engine";
 import { formatQuantity, isWholeQuantity, parseQuantity, toDbQuantity, type Milli } from "@/shared/quantity";
 import { COST_VIEW, PRICING_MANAGE } from "./permissions";
 import { customerPriceRules, priceSlabs } from "./schema";
@@ -387,13 +386,6 @@ async function summariesFor(shopId: string, productIds: string[]) {
 export async function listPricingCustomers(session: SessionContext) {
   await requirePermission(session, PRICING_MANAGE);
   return listActiveCustomers(session.shopId);
-}
-
-/** "Special ₹430.00 per pc from 100 pc" / "2% off". */
-export function describeRule(rule: Pick<CustomerRule, "kind" | "value" | "minQty" | "productName">, baseUnit?: string): string {
-  if (rule.kind === "pct") return `${formatBasisPoints(rule.value)} off ${rule.productName ?? "all products"}`;
-  const from = rule.minQty !== "0" ? ` from ${rule.minQty} ${baseUnit ?? ""}`.trimEnd() : "";
-  return `Special ${formatPaise(rule.value, { withPaise: true })}${baseUnit ? ` per ${baseUnit}` : ""}${from}`;
 }
 
 /** The product as the pricing screen shows it. Cost is null unless the viewer may see it. */

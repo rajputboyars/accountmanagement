@@ -7,17 +7,25 @@ import { PageContainer } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
-import { COMPOSITION_DECLARATION, documentTitle, GST_STATES, stateTaxLabel } from "@/shared/gst";
+import { COMPOSITION_DECLARATION, documentTitle, isGstState, stateTaxLabel } from "@/shared/gst";
+import { stateName } from "@/shared/i18n/unit-labels";
 import { buttonVariants } from "@/components/ui/button";
 import { ShareBill } from "@/components/sales/share-bill";
-import { billShareText } from "@/shared/reminder";
+import { hasPermission } from "@/modules/identity";
 import { getInvoice } from "@/modules/sales";
 import { requireSession } from "@/server/auth";
+import { getLanguage, getT } from "@/server/i18n";
+import { billDate, cancelReasonLabel, rateReasonLabel, systemName } from "@/shared/i18n/labels";
+import { translateServerMessage, type MessageKey } from "@/shared/i18n";
 import { NotFoundError } from "@/server/errors";
-import { rupeesInWords } from "@/shared/invoice";
+import { amountInWords } from "@/shared/i18n/amount-words";
 import { formatBasisPoints } from "@/shared/pricing-engine";
+import { HelpHint } from "@/components/nexora/help-hint";
 
-export const metadata: Metadata = { title: "Bill" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getT();
+  return { title: t("page.bill") };
+}
 
 type Props = PageProps<"/billing/invoices/[invoiceId]">;
 
@@ -29,12 +37,13 @@ export default function InvoicePage({ params, searchParams }: Props) {
   );
 }
 
-const METHOD_LABEL: Record<string, string> = { cash: "Cash", upi: "UPI", card: "Card", bank: "Bank", cheque: "Cheque" };
-const dateText = (value: string) => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
+const METHOD_LABEL: Record<string, MessageKey> = { cash: "common.cash", upi: "common.upi", card: "common.card", bank: "common.bank", cheque: "common.cheque" };
 
 async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "searchParams">) {
   const [{ invoiceId }, query] = await Promise.all([params, searchParams]);
   const session = await requireSession();
+  const [t, language] = await Promise.all([getT(), getLanguage()]);
+  const methodText = (method: string) => (METHOD_LABEL[method] ? t(METHOD_LABEL[method]!) : method);
   const invoice = await getInvoice(session, invoiceId).catch((error: unknown) => {
     if (error instanceof NotFoundError) return null;
     throw error;
@@ -42,15 +51,16 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
   if (!invoice) {
     return (
       <PageContainer className="max-w-4xl">
-        <SectionCard title="Bill not found" description="It may have been typed wrongly, or it belongs to a different shop.">
+        <SectionCard title={t("bill.notFound")} description={t("bill.notFoundHelp")}>
           <Link href="/billing/invoices" className="text-sm font-semibold text-teal-strong hover:underline">
-            Back to bills
+            {t("bill.backToBills")}
           </Link>
         </SectionCard>
       </PageContainer>
     );
   }
 
+  const canEditCustomer = await hasPermission(session, "customers.edit");
   const cancelled = invoice.status === "cancelled";
   const received = invoice.payments.filter((payment) => payment.direction === "in");
   const refunded = invoice.payments.filter((payment) => payment.direction === "out");
@@ -68,19 +78,21 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Link href="/billing/invoices" className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground">
           <ArrowLeft className="size-4" aria-hidden="true" />
-          Bills
+          {t("billing.bills")}
         </Link>
         <div className="flex flex-wrap gap-2">
           {invoice.status === "issued" ? (
             <ShareBill
+              invoiceId={invoice.id}
               phone={invoice.customer.type === "walkin" ? null : invoice.customer.phone}
-              text={billShareText({ shopName: invoice.shop.name, shopPhone: invoice.shop.phone, upiId: invoice.shop.upiId, customerName: invoice.customer.type === "walkin" ? null : invoice.customer.name, number: invoice.number, date: invoice.businessDate, totalPaise: invoice.totalPaise, paidPaise: invoice.paidNowPaise })}
+              customer={invoice.customer.type === "walkin" ? null : { id: invoice.customer.id, name: invoice.customer.name, language: invoice.customer.communicationLanguage }}
+              canSaveLanguage={canEditCustomer}
             />
           ) : null}
           <PrintButton />
           <Link href="/billing" className={buttonVariants({ size: "touch" })}>
             <Plus aria-hidden="true" />
-            New bill
+            {t("billing.newBill")}
           </Link>
         </div>
       </div>
@@ -88,12 +100,12 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
       {query.new === "1" ? (
         <p role="status" className="flex gap-2 rounded-xl bg-success-soft px-4 py-3 text-sm text-success print:hidden">
           <CircleCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          Bill {invoice.number} saved. Stock and the customer&apos;s dues are updated.
+          {t("bill.saved", { number: invoice.number })}
         </p>
       ) : null}
       {cancelled ? (
         <p role="status" className="rounded-xl bg-danger-soft px-4 py-3 text-sm text-danger">
-          Cancelled by {invoice.cancelledByName}: {invoice.cancelReason}
+          {t("bill.cancelledBy", { name: systemName(invoice.cancelledByName ?? "", language), reason: cancelReasonLabel(invoice.cancelReason ?? "", language) })}
         </p>
       ) : null}
 
@@ -109,65 +121,67 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
             ) : null}
             {invoice.shop.email ? <p className="text-sm text-muted-foreground">{invoice.shop.email}</p> : null}
             <p className="text-sm text-muted-foreground">
-              {invoice.shop.gstin ? `GSTIN ${invoice.shop.gstin}` : invoice.shop.registration === "unregistered" ? "Not registered under GST" : "GSTIN not set"} · State {invoice.shop.stateCode} {GST_STATES[invoice.shop.stateCode] ?? ""}
+              {invoice.shop.gstin ? t("common.gstinValue", { gstin: invoice.shop.gstin }) : t(invoice.shop.registration === "unregistered" ? "common.notRegistered" : "common.gstinNotSet")} · {t("bill.stateLine", { code: invoice.shop.stateCode, state: isGstState(invoice.shop.stateCode) ? stateName(t, invoice.shop.stateCode) : "" })}
               {invoice.shop.phone ? ` · ${invoice.shop.phone}` : ""}
             </p>
           </div>
           <div className="sm:text-right">
-            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{documentTitle(mode)}</p>
+            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{translateServerMessage(documentTitle(mode), language)}</p>
             <p className="text-lg font-bold text-foreground">{invoice.number}</p>
-            <p className="text-sm text-muted-foreground">{dateText(invoice.businessDate)}</p>
+            <p className="text-sm text-muted-foreground">{billDate(invoice.businessDate, language)}</p>
             <div className="mt-1 flex gap-1.5 sm:justify-end">
-              <Badge variant={invoice.priceList === "wholesale" ? "info" : "neutral"}>{invoice.priceList === "wholesale" ? "Wholesale" : "Retail"}</Badge>
-              {cancelled ? <Badge variant="danger">Cancelled</Badge> : null}
+              <Badge variant={invoice.priceList === "wholesale" ? "info" : "neutral"}>{t(invoice.priceList === "wholesale" ? "common.wholesale" : "common.retail")}</Badge>
+              {cancelled ? <Badge variant="danger">{t("status.cancelled")}</Badge> : null}
             </div>
           </div>
         </header>
 
-        <section aria-label="Billed to" className="text-sm">
-          <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Billed to</p>
-          <p className="font-semibold text-foreground">{invoice.customer.name}</p>
+        <section aria-label={t("bill.billedTo")} className="text-sm">
+          <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t("bill.billedTo")}</p>
+          <p className="font-semibold text-foreground">{systemName(invoice.customer.name, language)}</p>
           {invoice.customer.phone ? <p className="text-muted-foreground">{invoice.customer.phone}</p> : null}
-          {invoice.customer.gstin ? <p className="text-muted-foreground">GSTIN {invoice.customer.gstin}</p> : null}
+          {invoice.customer.gstin ? <p className="text-muted-foreground">{t("common.gstinValue", { gstin: invoice.customer.gstin })}</p> : null}
           {mode !== "none" ? (
             <p className="text-muted-foreground">
-              Place of supply: {place} {GST_STATES[place] ?? ""}
+              {t("bill.placeLine", { code: place, state: isGstState(place) ? stateName(t, place) : "" })}
             </p>
           ) : null}
         </section>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[36rem] text-sm">
+          <table className="stack-table w-full min-w-[36rem] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
                 <th className="py-2 pr-2 font-medium">#</th>
-                <th className="py-2 pr-2 font-medium">Item</th>
-                <th className="py-2 pr-2 text-right font-medium">Qty</th>
-                <th className="py-2 pr-2 text-right font-medium">Rate</th>
+                <th className="py-2 pr-2 font-medium">{t("common.item")}</th>
+                <th className="py-2 pr-2 text-right font-medium">{t("common.qty")}</th>
+                <th className="py-2 pr-2 text-right font-medium">{t("common.rate")}</th>
                 {mode !== "none" ? <th className="py-2 pr-2 text-right font-medium">GST</th> : null}
-                <th className="py-2 text-right font-medium">Amount</th>
+                <th className="py-2 text-right font-medium">{t("common.amount")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {invoice.lines.map((line) => (
                 <tr key={line.id}>
-                  <td className="py-2 pr-2 align-top text-muted-foreground">{line.lineNo}</td>
-                  <td className="py-2 pr-2 align-top">
+                  <td data-lead className="py-2 pr-2 align-top text-muted-foreground">{line.lineNo}</td>
+                  <td data-title className="py-2 pr-2 align-top">
                     <p className="font-medium text-foreground">{line.productName}</p>
                     <p className="text-xs text-muted-foreground">
-                      {line.hsn ? `HSN ${line.hsn} · ` : ""}
-                      {line.rateReason}
+                      {line.hsn ? `${t("bill.hsn", { hsn: line.hsn })} · ` : ""}
+                      {rateReasonLabel(line.rateReason, language)}
                     </p>
                   </td>
-                  <td className="py-2 pr-2 text-right align-top whitespace-nowrap tabular-nums">
-                    {line.qty} {line.unit}
-                    {line.unit !== line.baseUnit ? <span className="block text-xs text-muted-foreground">({line.baseQty} {line.baseUnit})</span> : null}
+                  <td data-label={t("common.qty")} className="py-2 pr-2 text-right align-top whitespace-nowrap tabular-nums">
+                    <span>
+                      {line.qty} {line.unit}
+                      {line.unit !== line.baseUnit ? <span className="block text-xs text-muted-foreground">({line.baseQty} {line.baseUnit})</span> : null}
+                    </span>
                   </td>
-                  <td className="py-2 pr-2 text-right align-top">
+                  <td data-label={t("common.rate")} className="py-2 pr-2 text-right align-top">
                     <Money paise={line.ratePaise} withPaise />
                   </td>
-                  {mode !== "none" ? <td className="py-2 pr-2 text-right align-top text-muted-foreground">{formatBasisPoints(line.gstRateBp)}</td> : null}
-                  <td className="py-2 text-right align-top">
+                  {mode !== "none" ? <td data-label="GST" className="py-2 pr-2 text-right align-top text-muted-foreground">{formatBasisPoints(line.gstRateBp)}</td> : null}
+                  <td data-key data-label={t("common.amount")} className="py-2 text-right align-top">
                     <Money paise={line.linePaise} withPaise />
                   </td>
                 </tr>
@@ -178,15 +192,15 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
 
         <div className="grid gap-5 sm:grid-cols-2">
           {mode === "none" ? (
-            <p className="text-sm text-muted-foreground">{invoice.shop.registration === "composition" ? COMPOSITION_DECLARATION : "Supplier not registered under GST; no GST charged."}</p>
+            <p className="text-sm text-muted-foreground">{invoice.shop.registration === "composition" ? COMPOSITION_DECLARATION : t("bill.noGstUnregistered")}</p>
           ) : (
             <div className="text-sm">
-              <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Tax summary</p>
-              <table className="mt-1 w-full text-xs">
+              <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t("bill.taxSummary")}</p>
+              <table className="stack-table mt-1 w-full text-xs">
                 <thead>
                   <tr className="text-left text-muted-foreground">
                     <th className="py-1 font-medium">GST</th>
-                    <th className="py-1 text-right font-medium">Taxable</th>
+                    <th className="py-1 text-right font-medium">{t("common.taxable")}</th>
                     {mode === "inter" ? (
                       <th className="py-1 text-right font-medium">IGST</th>
                     ) : (
@@ -200,20 +214,20 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
                 <tbody>
                   {rateGroups.map((group) => (
                     <tr key={group.rate}>
-                      <td className="py-1">{formatBasisPoints(group.rate)}</td>
-                      <td className="py-1 text-right">
+                      <td data-title className="py-1">{formatBasisPoints(group.rate)}</td>
+                      <td data-key data-label={t("common.taxable")} className="py-1 text-right">
                         <Money paise={group.taxable} withPaise />
                       </td>
                       {mode === "inter" ? (
-                        <td className="py-1 text-right">
+                        <td data-label="IGST" className="py-1 text-right">
                           <Money paise={group.igst} withPaise />
                         </td>
                       ) : (
                         <>
-                          <td className="py-1 text-right">
+                          <td data-label="CGST" className="py-1 text-right">
                             <Money paise={group.cgst} withPaise />
                           </td>
-                          <td className="py-1 text-right">
+                          <td data-label={stateTax} className="py-1 text-right">
                             <Money paise={group.sgst} withPaise />
                           </td>
                         </>
@@ -225,9 +239,9 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
             </div>
           )}
           <dl className="flex flex-col gap-1 text-sm">
-            <Row label="Subtotal" paise={invoice.subtotalPaise} />
-            {invoice.discountPaise > 0 ? <Row label={`Discount ${formatBasisPoints(invoice.discountBp)}`} paise={-invoice.discountPaise} /> : null}
-            <Row label="Taxable value" paise={invoice.taxablePaise} />
+            <Row label={t("common.subtotal")} paise={invoice.subtotalPaise} />
+            {invoice.discountPaise > 0 ? <Row label={t("bill.discountPercent", { percent: formatBasisPoints(invoice.discountBp) })} paise={-invoice.discountPaise} /> : null}
+            <Row label={t("common.taxableValue")} paise={invoice.taxablePaise} />
             {mode === "intra" ? (
               <>
                 <Row label="CGST" paise={invoice.cgstPaise} />
@@ -235,49 +249,49 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
               </>
             ) : null}
             {mode === "inter" ? <Row label="IGST" paise={invoice.igstPaise} /> : null}
-            {invoice.roundOffPaise !== 0 ? <Row label="Round off" paise={invoice.roundOffPaise} /> : null}
+            {invoice.roundOffPaise !== 0 ? <Row label={t("common.roundOff")} paise={invoice.roundOffPaise} /> : null}
             <div className="mt-1 flex items-baseline justify-between border-t border-border pt-2">
-              <dt className="font-semibold text-foreground">Total</dt>
+              <dt className="font-semibold text-foreground">{t("common.total")}</dt>
               <dd className="text-xl font-bold text-foreground">
                 <Money paise={invoice.totalPaise} withPaise />
               </dd>
             </div>
-            <p className="text-right text-xs text-muted-foreground">{rupeesInWords(invoice.totalPaise)}</p>
+            <p className="flex items-center justify-end gap-1 text-right text-xs text-muted-foreground">{amountInWords(invoice.totalPaise, language)}<HelpHint topic="amountInWords" /></p>
           </dl>
         </div>
 
         {invoice.shop.upiId || invoice.shop.bankDetails || invoice.shop.terms ? (
-          <section aria-label="Terms and payment details" className="flex flex-col gap-1 border-t border-border pt-4 text-xs text-muted-foreground">
+          <section aria-label={t("bill.termsLabel")} className="flex flex-col gap-1 border-t border-border pt-4 text-xs text-muted-foreground">
             {invoice.shop.upiId ? <p>UPI: {invoice.shop.upiId}</p> : null}
-            {invoice.shop.bankDetails ? <p>Bank: {invoice.shop.bankDetails}</p> : null}
+            {invoice.shop.bankDetails ? <p>{t("bill.bankLine", { details: invoice.shop.bankDetails })}</p> : null}
             {invoice.shop.terms ? <p className="whitespace-pre-line">{invoice.shop.terms}</p> : null}
           </section>
         ) : null}
 
-        <section aria-label="Payment" className="flex flex-col gap-1 border-t border-border pt-4 text-sm">
-          <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Payment</p>
-          {received.length === 0 ? <p className="text-foreground">Full amount on credit.</p> : null}
+        <section aria-label={t("bill.payment")} className="flex flex-col gap-1 border-t border-border pt-4 text-sm">
+          <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t("bill.payment")}</p>
+          {received.length === 0 ? <p className="text-foreground">{t("bill.fullCredit")}</p> : null}
           {received.map((payment) => (
-            <Row key={payment.id} label={`${METHOD_LABEL[payment.method] ?? payment.method}${payment.status === "reversed" ? " (refunded)" : ""}`} paise={payment.amountPaise} />
+            <Row key={payment.id} label={payment.status === "reversed" ? t("bill.refundedMark", { method: methodText(payment.method) }) : methodText(payment.method)} paise={payment.amountPaise} />
           ))}
-          {creditPaise > 0 && !cancelled ? <Row label="Added to customer's dues" paise={creditPaise} /> : null}
+          {creditPaise > 0 && !cancelled ? <Row label={t("bill.addedOutstanding")} paise={creditPaise} /> : null}
           {refunded.map((payment) => (
-            <Row key={payment.id} label={`Refund · ${METHOD_LABEL[payment.method] ?? payment.method}`} paise={-payment.amountPaise} />
+            <Row key={payment.id} label={t("bill.refundLine", { method: methodText(payment.method) })} paise={-payment.amountPaise} />
           ))}
           {invoice.balanceNowPaise !== null ? (
             <p className="mt-1 text-xs text-muted-foreground print:hidden">
-              {invoice.customer.name}&apos;s dues now: <Money paise={invoice.balanceNowPaise} withPaise />
+              {t("bill.outstandingNow", { name: systemName(invoice.customer.name, language) })}<Money paise={invoice.balanceNowPaise} withPaise />
             </p>
           ) : null}
         </section>
 
         <footer className="text-xs text-muted-foreground">
-          Billed by {invoice.createdByName}. Prices exclude GST; tax shown separately. This is a computer-generated invoice.
+          {t("bill.footer", { name: systemName(invoice.createdByName, language) })}
         </footer>
       </article>
 
       {invoice.creditNotes.length > 0 ? (
-        <SectionCard title="Returns on this bill" className="print:hidden">
+        <SectionCard title={t("bill.returnsOnBill")} className="print:hidden">
           <ul className="flex flex-col divide-y divide-border text-sm">
             {invoice.creditNotes.map((note) => (
               <li key={note.id} className="flex justify-between gap-3 py-2 first:pt-0">
@@ -285,7 +299,7 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
                   {note.number}
                 </Link>
                 <span className="text-muted-foreground">
-                  {dateText(note.businessDate)} · <Money paise={note.totalPaise} withPaise />
+                  {billDate(note.businessDate, language)} · <Money paise={note.totalPaise} withPaise />
                 </span>
               </li>
             ))}
@@ -298,7 +312,7 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
           {invoice.canReturn ? (
             <Link href={`/billing/returns/new?invoice=${invoice.id}`} className={buttonVariants({ variant: "outline", size: "touch" })}>
               <Undo2 aria-hidden="true" />
-              Return items
+              {t("bill.returnItems")}
             </Link>
           ) : null}
           {invoice.canCancel ? <CancelInvoice invoiceId={invoice.id} number={invoice.number} /> : null}

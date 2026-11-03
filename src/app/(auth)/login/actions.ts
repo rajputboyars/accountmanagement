@@ -36,7 +36,7 @@ export async function loginAction(previous: LoginState, formData: FormData): Pro
       };
     } catch (error) {
       unstable_rethrow(error);
-      const failure = toActionError(error);
+      const failure = await toActionError(error);
       const retryAfter = Number(failure.details?.retryAfterSeconds ?? 0);
       return {
         ...previous,
@@ -59,7 +59,7 @@ export async function loginAction(previous: LoginState, formData: FormData): Pro
     } catch (error) {
       unstable_rethrow(error);
       if (error instanceof SignInError) return { ...previous, step: "code", phone, error: error.message, reason: error.reason, notice: undefined };
-      return { ...previous, step: "code", phone, error: toActionError(error).error, reason: "validation", notice: undefined };
+      return { ...previous, step: "code", phone, error: (await toActionError(error)).error, reason: "validation", notice: undefined };
     }
     redirect(destination);
   }

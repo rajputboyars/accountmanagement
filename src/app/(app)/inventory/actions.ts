@@ -14,6 +14,7 @@ import {
 } from "@/modules/catalog";
 import { toActionError } from "@/server/action-result";
 import { requireSession } from "@/server/auth";
+import { getT } from "@/server/i18n";
 
 /**
  * Catalog server actions. Each one re-reads the session on the server; the catalog services check
@@ -67,8 +68,8 @@ const CONFLICT_FIELDS: Record<string, string> = {
   UNIT_INACTIVE: "unit",
 };
 
-function failure(error: unknown, values?: Record<string, string>): CatalogFormState {
-  const result = toActionError(error);
+async function failure(error: unknown, values?: Record<string, string>): Promise<CatalogFormState> {
+  const result = await toActionError(error);
   const conflictField = result.code ? CONFLICT_FIELDS[result.code] : undefined;
   const fieldErrors = result.fieldErrors
     ? Object.fromEntries(Object.entries(result.fieldErrors).map(([key, message]) => [FIELD_ALIASES[key] ?? key, message]))
@@ -104,7 +105,7 @@ export async function updateProductAction(_previous: CatalogFormState, formData:
   }
   revalidatePath("/inventory");
   revalidatePath(`/inventory/${productId}`);
-  return { ok: true, message: "Changes saved.", nonce: Date.now() };
+  return { ok: true, message: (await getT())("common.changesSaved"), nonce: Date.now() };
 }
 
 export async function setProductActiveAction(_previous: CatalogFormState, formData: FormData): Promise<CatalogFormState> {
@@ -119,7 +120,7 @@ export async function setProductActiveAction(_previous: CatalogFormState, formDa
   }
   revalidatePath("/inventory");
   revalidatePath(`/inventory/${productId}`);
-  return { ok: true, message: active ? "Product switched on." : "Product switched off. It no longer shows in the active list.", nonce: Date.now() };
+  return { ok: true, message: (await getT())(active ? "inventory.switchedOn" : "inventory.switchedOff"), nonce: Date.now() };
 }
 
 export async function addProductUnitAction(_previous: CatalogFormState, formData: FormData): Promise<CatalogFormState> {
@@ -134,7 +135,7 @@ export async function addProductUnitAction(_previous: CatalogFormState, formData
   }
   revalidatePath(`/inventory/${productId}`);
   revalidatePath("/inventory");
-  return { ok: true, message: "Pack size saved.", nonce: Date.now() };
+  return { ok: true, message: (await getT())("inventory.packSaved"), nonce: Date.now() };
 }
 
 export async function updateProductUnitAction(_previous: CatalogFormState, formData: FormData): Promise<CatalogFormState> {
@@ -148,7 +149,7 @@ export async function updateProductUnitAction(_previous: CatalogFormState, formD
   }
   revalidatePath(`/inventory/${productId}`);
   revalidatePath("/inventory");
-  return { ok: true, message: "Size updated.", nonce: Date.now() };
+  return { ok: true, message: (await getT())("inventory.sizeUpdated"), nonce: Date.now() };
 }
 
 export async function setProductUnitActiveAction(_previous: CatalogFormState, formData: FormData): Promise<CatalogFormState> {
@@ -175,7 +176,7 @@ export async function createUnitAction(_previous: CatalogFormState, formData: Fo
     return failure(error, values);
   }
   revalidatePath("/inventory/units");
-  return { ok: true, message: `${values.name} added.`, nonce: Date.now() };
+  return { ok: true, message: (await getT())("inventory.unitAdded", { name: values.name }), nonce: Date.now() };
 }
 
 export async function setUnitActiveAction(_previous: CatalogFormState, formData: FormData): Promise<CatalogFormState> {

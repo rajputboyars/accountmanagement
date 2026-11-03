@@ -12,114 +12,116 @@ import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getCashbook, listClosings } from "@/modules/cashbook";
 import { requireSession } from "@/server/auth";
-import { EXPENSE_CATEGORIES } from "@/shared/cashbook";
+import { getLanguage, getT } from "@/server/i18n";
+import { formatPaise } from "@/shared/money";
+import { LANGUAGE_LOCALES, type Language, type MessageKey } from "@/shared/i18n";
+import { differenceReasonLabel, expenseLabel, paymentMethodLabel, systemName } from "@/shared/i18n/labels";
+import { HelpHint } from "@/components/nexora/help-hint";
 
-export const metadata: Metadata = { title: "Cashbook" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getT();
+  return { title: t("nav.cashbook.label") };
+}
 
 export default function CashbookPage({ searchParams }: PageProps<"/cashbook">) {
   return (
-    <ProtectedPage permission="cash.record" title="Cashbook">
+    <ProtectedPage permission="cash.record" title="Cashbook" guide="cashbook">
       <CashbookView searchParams={searchParams} />
     </ProtectedPage>
   );
 }
 
-const dateText = (value: string) => new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
+const dateText = (value: string, language: Language) => new Intl.DateTimeFormat(LANGUAGE_LOCALES[language].dates, { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 const shift = (date: string, days: number) => {
   const day = new Date(`${date}T00:00:00Z`);
   day.setUTCDate(day.getUTCDate() + days);
   return day.toISOString().slice(0, 10);
 };
-const METHOD: Record<string, string> = { cash: "Cash", upi: "UPI", card: "Card", bank: "Bank", cheque: "Cheque" };
-const CATEGORY = Object.fromEntries(EXPENSE_CATEGORIES.map((category) => [category.key, category.label]));
-const PAYMENT_LABEL: Record<string, string> = { bill: "Paid on a bill", collection: "Old dues paid", refund: "Refund to customer", supplier_paid: "Paid to supplier", supplier_returned: "Supplier payment reversed" };
-const MOVEMENT_LABEL: Record<string, string> = { withdrawal: "Owner took cash", bank_deposit: "Deposited in bank", float_added: "Cash put in" };
+const PAYMENT_LABEL: Record<string, MessageKey> = { bill: "cashbook.payment.bill", collection: "cashbook.payment.collection", refund: "cashbook.payment.refund", supplier_paid: "cashbook.payment.supplierPaid", supplier_returned: "cashbook.payment.supplierReturned" };
+const MOVEMENT_LABEL: Record<string, MessageKey> = { withdrawal: "cashbook.movement.withdrawal", bank_deposit: "cashbook.movement.bankDeposit", float_added: "cashbook.movement.floatAdded" };
 
 async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbook">["searchParams"] }) {
   const params = await searchParams;
   const session = await requireSession();
   const book = await getCashbook(session, String(params.date ?? ""));
   const closings = await listClosings(session, 10);
+  const [t, language] = await Promise.all([getT(), getLanguage()]);
+  const method = (code: string) => paymentMethodLabel(t, code);
   const c = book.cash;
   const lines: { label: string; paise: number; sign: "+" | "−" }[] = [
-    { label: "Cash taken on bills", paise: c.cashSalesPaise, sign: "+" },
-    { label: "Old dues paid in cash", paise: c.cashCollectionsPaise, sign: "+" },
-    { label: "Cash put in the drawer", paise: c.cashAddedPaise, sign: "+" },
-    { label: "Supplier payments reversed", paise: c.supplierCashReturnedPaise, sign: "+" },
-    { label: "Cash refunds", paise: c.cashRefundsPaise, sign: "−" },
-    { label: "Paid to suppliers in cash", paise: c.supplierCashPaidPaise, sign: "−" },
-    { label: "Shop expenses in cash", paise: c.cashExpensesPaise, sign: "−" },
-    { label: "Taken out (bank deposit, owner)", paise: c.cashWithdrawnPaise, sign: "−" },
+    { label: t("cashbook.line.sales"), paise: c.cashSalesPaise, sign: "+" },
+    { label: t("cashbook.line.collections"), paise: c.cashCollectionsPaise, sign: "+" },
+    { label: t("cashbook.line.added"), paise: c.cashAddedPaise, sign: "+" },
+    { label: t("cashbook.line.supplierReturned"), paise: c.supplierCashReturnedPaise, sign: "+" },
+    { label: t("cashbook.line.refunds"), paise: c.cashRefundsPaise, sign: "−" },
+    { label: t("cashbook.line.supplierPaid"), paise: c.supplierCashPaidPaise, sign: "−" },
+    { label: t("cashbook.line.expenses"), paise: c.cashExpensesPaise, sign: "−" },
+    { label: t("cashbook.line.withdrawn"), paise: c.cashWithdrawnPaise, sign: "−" },
   ];
 
   return (
     <PageContainer>
-      <PageIntro description="Cash in and out of the drawer for one day, from the bills, refunds, supplier payments and expenses already recorded. UPI, card, bank and credit are shown separately." />
+      <PageIntro description={t("cashbook.description")} />
 
       <div className="flex flex-wrap items-center gap-2">
-        <Link href={`/cashbook?date=${shift(book.date, -1)}`} className={buttonVariants({ variant: "outline", size: "touch" })} aria-label="Previous day">
+        <Link href={`/cashbook?date=${shift(book.date, -1)}`} className={buttonVariants({ variant: "outline", size: "touch" })} aria-label={t("cashbook.previousDay")}>
           <ChevronLeft aria-hidden="true" />
         </Link>
         <form action="/cashbook" className="flex items-center gap-2">
           <label>
-            <span className="sr-only">Date</span>
+            <span className="sr-only">{t("common.date")}</span>
             <Input type="date" name="date" defaultValue={book.date} max={book.today} className="h-11" />
           </label>
           <button type="submit" className={buttonVariants({ variant: "outline", size: "touch" })}>
-            Show
+            {t("common.show")}
           </button>
         </form>
         {book.date < book.today ? (
-          <Link href={`/cashbook?date=${shift(book.date, 1)}`} className={buttonVariants({ variant: "outline", size: "touch" })} aria-label="Next day">
+          <Link href={`/cashbook?date=${shift(book.date, 1)}`} className={buttonVariants({ variant: "outline", size: "touch" })} aria-label={t("cashbook.nextDay")}>
             <ChevronRight aria-hidden="true" />
           </Link>
         ) : null}
         {book.date !== book.today ? (
           <Link href="/cashbook" className="text-sm font-semibold text-teal-strong hover:underline">
-            Today
+            {t("range.today")}
           </Link>
         ) : null}
       </div>
 
       <section className="grid gap-4 rounded-2xl bg-panel p-5 text-panel-foreground sm:grid-cols-3 sm:p-6">
         <div className="sm:col-span-1">
-          <p className="text-sm text-panel-muted">{dateText(book.date)}</p>
+          <p className="text-sm text-panel-muted">{dateText(book.date, language)}</p>
           <p className="mt-1 flex items-center gap-2 text-sm">
             {book.closed ? (
               <>
-                <Lock className="size-4" aria-hidden="true" /> Closed by {book.closing?.closedByName}
+                <Lock className="size-4" aria-hidden="true" /> {t("cashbook.closedBy", { name: systemName(book.closing?.closedByName ?? "", language) })}
               </>
             ) : (
-              "Open"
+              t("cashbook.open")
             )}
           </p>
         </div>
         <div>
-          <p className="text-sm text-panel-muted">Expected in drawer</p>
+          <p className="text-sm text-panel-muted">{t("cashbook.expected")}</p>
           <p className="text-3xl font-bold">
             <Money paise={book.expectedPaise} withPaise />
           </p>
         </div>
         {book.closed && book.closing ? (
           <div>
-            <p className="text-sm text-panel-muted">Counted</p>
+            <p className="text-sm text-panel-muted">{t("cashbook.counted")}</p>
             <p className="text-3xl font-bold">
               <Money paise={book.closing.countedCashPaise} withPaise />
             </p>
             <p className="text-sm text-panel-muted">
-              {book.closing.differencePaise === 0 ? (
-                "Drawer matched"
-              ) : (
-                <>
-                  {book.closing.differencePaise < 0 ? "Short " : "Extra "}
-                  <Money paise={Math.abs(book.closing.differencePaise)} withPaise />: {book.closing.differenceReason}
-                </>
-              )}
+              {book.closing.differencePaise === 0
+                ? t("cashbook.drawerMatched")
+                : t(book.closing.differencePaise < 0 ? "cashbook.shortBy" : "cashbook.extraBy", { amount: formatPaise(Math.abs(book.closing.differencePaise), { withPaise: true }), reason: differenceReasonLabel(t, book.closing.differenceReason ?? "") })}
             </p>
           </div>
         ) : (
           <div>
-            <p className="text-sm text-panel-muted">Sales today (all methods)</p>
+            <p className="text-sm text-panel-muted">{t("cashbook.salesToday")}</p>
             <p className="text-3xl font-bold">
               <Money paise={book.sales.salesPaise} />
             </p>
@@ -128,10 +130,10 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
       </section>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <SectionCard title="Cash drawer" description={book.openingFromClosedDate ? `Opening is the cash counted when ${dateText(book.openingFromClosedDate)} was closed, plus any days since.` : "Opening starts from the shop's opening cash, plus every day since that was not closed."}>
+        <SectionCard title={t("cashbook.drawer")} description={book.openingFromClosedDate ? t("cashbook.openingFromClosed", { date: dateText(book.openingFromClosedDate, language) }) : t("cashbook.openingFromShop")}>
           <dl className="flex flex-col gap-1.5 text-sm">
             <div className="flex justify-between gap-3">
-              <dt className="font-medium text-foreground">Opening cash</dt>
+              <dt className="flex items-center gap-1 font-medium text-foreground">{t("cashbook.opening")}<HelpHint topic="openingCash" className="text-muted-foreground" /></dt>
               <dd className="font-medium">
                 <Money paise={c.openingPaise} withPaise />
               </dd>
@@ -147,7 +149,7 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
               </div>
             ))}
             <div className="mt-1 flex justify-between gap-3 border-t border-border pt-2 text-base font-bold text-foreground">
-              <dt>Expected in drawer</dt>
+              <dt>{t("cashbook.expected")}</dt>
               <dd>
                 <Money paise={book.expectedPaise} withPaise />
               </dd>
@@ -155,47 +157,43 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
           </dl>
         </SectionCard>
 
-        <SectionCard title="Not cash" description="These never go into the drawer. Cash flow is not profit.">
+        <SectionCard title={t("cashbook.notCash")} description={t("cashbook.notCashDescription")}>
           <dl className="flex flex-col gap-1.5 text-sm">
-            {book.nonCash.length === 0 ? <p className="text-muted-foreground">No UPI, card, bank or cheque payments.</p> : null}
+            {book.nonCash.length === 0 ? <p className="text-muted-foreground">{t("cashbook.noNonCash")}</p> : null}
             {book.nonCash.map((row) => (
               <div key={row.method} className="flex justify-between gap-3">
-                <dt className="text-foreground">{METHOD[row.method] ?? row.method}</dt>
+                <dt className="text-foreground">{method(row.method)}</dt>
                 <dd className="text-right tabular-nums">
                   {row.inPaise ? (
-                    <span>
-                      in <Money paise={row.inPaise} withPaise />
-                    </span>
+                    <span>{t("cashbook.in", { amount: formatPaise(row.inPaise, { withPaise: true }) })}</span>
                   ) : null}
                   {row.inPaise && row.outPaise ? " · " : ""}
                   {row.outPaise ? (
-                    <span>
-                      out <Money paise={row.outPaise} withPaise />
-                    </span>
+                    <span>{t("cashbook.out", { amount: formatPaise(row.outPaise, { withPaise: true }) })}</span>
                   ) : null}
                 </dd>
               </div>
             ))}
             <div className="mt-2 flex justify-between gap-3 border-t border-border pt-2">
-              <dt className="text-foreground">Sold on credit (added to dues)</dt>
+              <dt className="text-foreground">{t("cashbook.soldOnCredit")}</dt>
               <dd>
                 <Money paise={book.sales.creditGivenPaise} withPaise />
               </dd>
             </div>
             <div className="flex justify-between gap-3">
-              <dt className="text-muted-foreground">Sales ({book.sales.billCount} {book.sales.billCount === 1 ? "bill" : "bills"}, GST included)</dt>
+              <dt className="text-muted-foreground">{t(book.sales.billCount === 1 ? "cashbook.salesCountOne" : "cashbook.salesCount", { count: book.sales.billCount })}</dt>
               <dd>
                 <Money paise={book.sales.salesPaise} withPaise />
               </dd>
             </div>
             <div className="flex justify-between gap-3">
-              <dt className="text-muted-foreground">Credit notes</dt>
+              <dt className="text-muted-foreground">{t("cashbook.creditNotes")}</dt>
               <dd>
                 <Money paise={book.sales.creditNotesPaise} withPaise />
               </dd>
             </div>
             <div className="flex justify-between gap-3">
-              <dt className="text-muted-foreground">Goods received from suppliers</dt>
+              <dt className="text-muted-foreground">{t("cashbook.goodsReceived")}</dt>
               <dd>
                 <Money paise={book.purchases.purchasesPaise} withPaise />
               </dd>
@@ -204,9 +202,9 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
         </SectionCard>
       </div>
 
-      <SectionCard title="Everything recorded this day" description="Tap an entry to open its bill, return or supplier." flush>
+      <SectionCard title={t("cashbook.recorded")} description={t("cashbook.recordedDescription")} flush>
         {book.payments.length + book.expenses.length + book.movements.length + book.sales.creditBills.length === 0 ? (
-          <p className="px-5 pb-3 text-sm text-muted-foreground">Nothing recorded on this day.</p>
+          <p className="px-5 pb-3 text-sm text-muted-foreground">{t("cashbook.nothingRecorded")}</p>
         ) : (
           <ul className="flex flex-col divide-y divide-border text-sm">
             {book.payments.map((payment) => {
@@ -215,11 +213,11 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
               const body = (
                 <>
                   <span className="min-w-0">
-                    <span className="block text-foreground">{PAYMENT_LABEL[payment.category]}</span>
+                    <span className="block text-foreground">{PAYMENT_LABEL[payment.category] ? t(PAYMENT_LABEL[payment.category]!) : payment.category}</span>
                     <span className="block text-xs text-muted-foreground">
-                      {METHOD[payment.method]}
+                      {method(payment.method)}
                       {payment.reference ? ` · ${payment.reference}` : ""}
-                      {payment.status === "reversed" ? " · later reversed" : ""}
+                      {payment.status === "reversed" ? ` · ${t("cashbook.laterReversed")}` : ""}
                     </span>
                   </span>
                   <span className={`shrink-0 font-semibold tabular-nums ${into ? "text-success" : "text-danger"}`}>
@@ -244,8 +242,8 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
               <li key={bill.id}>
                 <Link href={`/billing/invoices/${bill.id}`} className="flex items-center justify-between gap-3 px-5 py-2.5 hover:bg-muted/50">
                   <span>
-                    <span className="block text-foreground">{bill.number} on credit</span>
-                    <span className="block text-xs text-muted-foreground">Not money: added to the customer&apos;s dues</span>
+                    <span className="block text-foreground">{t("cashbook.billOnCredit", { number: bill.number })}</span>
+                    <span className="block text-xs text-muted-foreground">{t("cashbook.notMoney")}</span>
                   </span>
                   <span className="shrink-0 tabular-nums text-muted-foreground">
                     <Money paise={bill.totalPaise - bill.paidNowPaise} withPaise />
@@ -257,14 +255,14 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
               <li key={expense.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5">
                 <span className="min-w-0">
                   <span className="block text-foreground">
-                    {CATEGORY[expense.category]}
+                    {expenseLabel(t, { key: expense.category, label: expense.category })}
                     {expense.note ? `: ${expense.note}` : ""}
-                    {expense.status === "voided" ? <Badge variant="neutral" className="ml-2">Voided</Badge> : null}
+                    {expense.status === "voided" ? <Badge variant="neutral" className="ml-2">{t("cashbook.voided")}</Badge> : null}
                   </span>
                   <span className="block text-xs text-muted-foreground">
-                    Expense · {METHOD[expense.method]}
-                    {expense.reference ? ` · ${expense.reference}` : ""} · {expense.createdByName}
-                    {expense.status === "voided" ? ` · voided: ${expense.voidReason}` : ""}
+                    {t("cashbook.expense")} · {method(expense.method)}
+                    {expense.reference ? ` · ${expense.reference}` : ""} · {systemName(expense.createdByName, language)}
+                    {expense.status === "voided" ? ` · ${t("cashbook.voidedBecause", { reason: expense.voidReason ?? "" })}` : ""}
                   </span>
                 </span>
                 <span className="flex items-center gap-2">
@@ -278,9 +276,9 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
             {book.movements.map((movement) => (
               <li key={movement.id} className="flex items-center justify-between gap-3 px-5 py-2.5">
                 <span>
-                  <span className="block text-foreground">{MOVEMENT_LABEL[movement.kind]}</span>
+                  <span className="block text-foreground">{t(MOVEMENT_LABEL[movement.kind]!)}</span>
                   <span className="block text-xs text-muted-foreground">
-                    Cash · {movement.createdByName}
+                    {t("common.cash")} · {systemName(movement.createdByName, language)}
                     {movement.note ? ` · ${movement.note}` : ""}
                   </span>
                 </span>
@@ -297,39 +295,39 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
       <div className="grid gap-6 lg:grid-cols-3">
         {book.canRecord ? (
           <>
-            <SectionCard title="Add an expense" description="Tea, transport, rent… Cash expenses come out of the drawer.">
+            <SectionCard help="expenses" title={t("cashbook.addExpense")} description={t("cashbook.addExpenseDescription")} anchorId="section-add-an-expense">
               <ExpenseForm date={book.date} />
               <ScrollIntoViewOnHash anchorId="section-add-an-expense" />
             </SectionCard>
-            <SectionCard title="Cash in or out" description="Bank deposits, cash the owner takes, or change put in.">
+            <SectionCard help="cashInOut" title={t("cashbook.cashInOut")} description={t("cashbook.cashInOutDescription")}>
               <CashMovementForm date={book.date} />
             </SectionCard>
           </>
         ) : null}
         {book.canClose ? (
-          <SectionCard title="Close the day" description="Count the drawer. Any difference needs a reason.">
+          <SectionCard title={t("cashbook.closeDay")} description={t("cashbook.closeDayDescription")}>
             <CloseDayForm date={book.date} expectedPaise={book.expectedPaise} />
           </SectionCard>
         ) : book.canReopen ? (
-          <SectionCard title="Day closed" description="Bills, payments and expenses for this day are locked. Reopening is logged.">
+          <SectionCard title={t("cashbook.dayClosed")} description={t("cashbook.dayClosedDescription")}>
             <ReopenDayForm date={book.date} />
           </SectionCard>
         ) : book.closed ? (
-          <SectionCard title="Day closed" description="Only the owner can reopen it." >
-            <p className="text-sm text-muted-foreground">Record new expenses or cash movements on today&apos;s date.</p>
+          <SectionCard title={t("cashbook.dayClosed")} description={t("cashbook.ownerReopens")}>
+            <p className="text-sm text-muted-foreground">{t("cashbook.useToday")}</p>
           </SectionCard>
         ) : null}
       </div>
 
       {closings.length > 0 ? (
-        <SectionCard title="Recent closings" flush>
+        <SectionCard title={t("cashbook.recentClosings")} flush>
           <ul className="flex flex-col divide-y divide-border text-sm">
             {closings.map((closing) => (
               <li key={closing.businessDate}>
                 <Link href={`/cashbook?date=${closing.businessDate}`} className="flex items-center justify-between gap-3 px-5 py-2.5 hover:bg-muted/50">
                   <span>
-                    {dateText(closing.businessDate)}
-                    {closing.status === "reopened" ? <Badge variant="warning" className="ml-2">Reopened</Badge> : null}
+                    {dateText(closing.businessDate, language)}
+                    {closing.status === "reopened" ? <Badge variant="warning" className="ml-2">{t("cashbook.reopened")}</Badge> : null}
                   </span>
                   <span className="text-right tabular-nums">
                     <Money paise={closing.countedCashPaise} withPaise />

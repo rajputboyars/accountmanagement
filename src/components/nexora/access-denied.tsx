@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { getT } from "@/server/i18n";
 import { Lock } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 
 /** Shown when the signed-in role lacks a page's permission. The server also refuses the data and actions. */
-export function AccessDenied({ title, homeHref }: { title: string; homeHref: string }) {
+export async function AccessDenied({ homeHref }: { title: string; homeHref: string }) {
+  const t = await getT();
   return (
     <section
       role="alert"
@@ -12,10 +14,10 @@ export function AccessDenied({ title, homeHref }: { title: string; homeHref: str
       <span className="grid size-14 place-items-center rounded-2xl bg-muted text-muted-foreground">
         <Lock className="size-7" aria-hidden="true" />
       </span>
-      <h2 className="text-xl font-semibold text-foreground">You don&apos;t have access to {title}</h2>
-      <p className="max-w-md text-muted-foreground">Your role can&apos;t open this page. Ask the shop owner if you need access.</p>
+      <h2 className="text-xl font-semibold text-foreground">{t("access.title")}</h2>
+      <p className="max-w-md text-muted-foreground">{t("access.body")}</p>
       <Link href={homeHref} className={buttonVariants({ size: "touch" })}>
-        Go to my work
+        {t("access.goToWork")}
       </Link>
     </section>
   );

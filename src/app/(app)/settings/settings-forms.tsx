@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { CircleAlert, CircleCheck, LoaderCircle } from "lucide-react";
+import { useT } from "@/components/nexora/language-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { addStaffAction, revokeStaffAccessAction, setPinAction, setStaffActiveAction, updateStaffRoleAction, type FormState } from "./actions";
@@ -40,26 +41,27 @@ function FormMessage({ state }: { state: FormState }) {
 }
 
 export function AddStaffForm() {
+  const t = useT();
   const [state, action] = useActionState(addStaffAction, {});
   return (
     <form key={state.nonce} action={action} className="grid gap-4 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,0.9fr)_auto] sm:items-end">
       <label className={fieldClass}>
-        Name
+        {t("common.name")}
         <Input name="name" required maxLength={80} autoComplete="off" className="h-11" />
       </label>
       <label className={fieldClass}>
-        Mobile number
+        {t("settings.mobileNumber")}
         <Input name="phone" required type="tel" inputMode="numeric" maxLength={10} className="h-11" />
       </label>
       <label className={fieldClass}>
-        Role
+        {t("settings.role")}
         <select name="role" defaultValue="cashier" className="h-11 rounded-lg border border-input bg-background px-3 text-sm text-foreground">
-          <option value="cashier">Cashier</option>
-          <option value="inventory">Inventory staff</option>
-          <option value="manager">Manager</option>
+          <option value="cashier">{t("role.cashier")}</option>
+          <option value="inventory">{t("settings.roleInventoryStaff")}</option>
+          <option value="manager">{t("role.manager")}</option>
         </select>
       </label>
-      <Submit>Add person</Submit>
+      <Submit>{t("settings.addPersonButton")}</Submit>
       <div className="sm:col-span-4">
         <FormMessage state={state} />
       </div>
@@ -68,12 +70,13 @@ export function AddStaffForm() {
 }
 
 export function StaffActiveToggle({ userId, active, name }: { userId: string; active: boolean; name: string }) {
+  const t = useT();
   const [state, action] = useActionState(setStaffActiveAction, {});
   return (
     <form action={action} className="flex flex-col items-end gap-1">
       <input type="hidden" name="userId" value={userId} />
       <input type="hidden" name="active" value={active ? "false" : "true"} />
-      <Submit variant="outline">{active ? `Deactivate` : `Reactivate`}<span className="sr-only"> {name}</span></Submit>
+      <Submit variant="outline">{t(active ? "settings.deactivate" : "settings.reactivate")}<span className="sr-only"> {name}</span></Submit>
       {state.error ? (
         <span role="alert" className="text-xs text-danger">
           {state.error}
@@ -84,6 +87,7 @@ export function StaffActiveToggle({ userId, active, name }: { userId: string; ac
 }
 
 export function StaffRoleForm({ userId, currentRole, name }: { userId: string; currentRole: string; name: string }) {
+  const t = useT();
   const [state, action] = useActionState(updateStaffRoleAction, {});
   return (
     <form action={action} className="flex flex-col items-start gap-1">
@@ -92,14 +96,14 @@ export function StaffRoleForm({ userId, currentRole, name }: { userId: string; c
         <select
           name="role"
           defaultValue={currentRole}
-          aria-label={`Change role for ${name}`}
+          aria-label={t("settings.changeRoleFor", { name })}
           className="h-9 rounded-lg border border-input bg-background px-2.5 text-xs text-foreground"
         >
-          <option value="cashier">Cashier</option>
-          <option value="inventory">Inventory</option>
-          <option value="manager">Manager</option>
+          <option value="cashier">{t("role.cashier")}</option>
+          <option value="inventory">{t("role.inventory")}</option>
+          <option value="manager">{t("role.manager")}</option>
         </select>
-        <Submit variant="outline">Change<span className="sr-only"> role for {name}</span></Submit>
+        <Submit variant="outline">{t("settings.change")}<span className="sr-only"> {t("settings.roleFor", { name })}</span></Submit>
       </div>
       {state.error ? <span role="alert" className="text-xs text-danger">{state.error}</span> : null}
       {state.message ? <span role="status" className="text-xs text-success">{state.message}</span> : null}
@@ -108,11 +112,12 @@ export function StaffRoleForm({ userId, currentRole, name }: { userId: string; c
 }
 
 export function RevokeAccessButton({ userId, name }: { userId: string; name: string }) {
+  const t = useT();
   const [state, action] = useActionState(revokeStaffAccessAction, {});
   return (
     <form action={action} className="inline-flex flex-col items-end gap-1">
       <input type="hidden" name="userId" value={userId} />
-      <Submit variant="outline">Sign out<span className="sr-only"> {name}</span></Submit>
+      <Submit variant="outline">{t("settings.signOutPerson")}<span className="sr-only"> {name}</span></Submit>
       {state.error ? <span role="alert" className="text-xs text-danger">{state.error}</span> : null}
       {state.message ? <span role="status" className="text-xs text-success">{state.message}</span> : null}
     </form>
@@ -120,18 +125,19 @@ export function RevokeAccessButton({ userId, name }: { userId: string; name: str
 }
 
 export function PinForm({ pinSet }: { pinSet: boolean }) {
+  const t = useT();
   const [state, action] = useActionState(setPinAction, {});
   return (
     <form key={state.nonce} action={action} className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
       <label className={fieldClass}>
-        {pinSet ? "New PIN" : "PIN"}
+        {t(pinSet ? "settings.newPin" : "settings.pinField")}
         <Input name="pin" type="password" inputMode="numeric" autoComplete="new-password" minLength={4} maxLength={6} required className="h-11 tracking-widest" />
       </label>
       <label className={fieldClass}>
-        Type it again
+        {t("settings.typeAgain")}
         <Input name="confirmPin" type="password" inputMode="numeric" autoComplete="new-password" minLength={4} maxLength={6} required className="h-11 tracking-widest" />
       </label>
-      <Submit>{pinSet ? "Change PIN" : "Set PIN"}</Submit>
+      <Submit>{t(pinSet ? "settings.changePin" : "settings.setPin")}</Submit>
       <div className="sm:col-span-3">
         <FormMessage state={state} />
       </div>

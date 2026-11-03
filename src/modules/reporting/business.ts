@@ -405,10 +405,10 @@ export async function getReport(session: SessionContext, kind: string, input: Ra
 }
 
 /** A report as CSV: amounts in rupees with integer maths, a totals row when complete, formula-safe cells. */
-export function reportToCsv(report: Report): string {
+export function reportToCsv(report: Report, words: { total: string; truncated: (count: number) => string } = { total: "Total", truncated: (count) => `Only the first ${count} rows are included. Choose a shorter date range for the rest.` }): string {
   const value = (column: ReportColumn, cell: string | number | null | undefined) => (cell === null || cell === undefined ? "" : column.type === "money" ? csvRupees(Number(cell)) : cell);
   const rows: (string | number)[][] = [report.columns.map((column) => column.label), ...report.rows.map((row) => report.columns.map((column) => value(column, row.cells[column.key])))];
-  if (report.truncated) rows.push([`Only the first ${report.rows.length} rows are included. Choose a shorter date range for the rest.`]);
-  if (Object.keys(report.totals).length) rows.push(report.columns.map((column, index) => (index === 0 ? "Total" : column.key in report.totals ? value(column, report.totals[column.key]) : "")));
+  if (report.truncated) rows.push([words.truncated(report.rows.length)]);
+  if (Object.keys(report.totals).length) rows.push(report.columns.map((column, index) => (index === 0 ? words.total : column.key in report.totals ? value(column, report.totals[column.key]) : "")));
   return toCsv(rows);
 }

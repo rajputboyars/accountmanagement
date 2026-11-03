@@ -14,6 +14,9 @@ import {
 } from "@/modules/pricing";
 import { toActionError } from "@/server/action-result";
 import { requireSession } from "@/server/auth";
+import { getLanguage, getT } from "@/server/i18n";
+import { translateServerMessage } from "@/shared/i18n";
+import { rateReasonLabel } from "@/shared/i18n/labels";
 
 /**
  * Pricing server actions. Each one re-reads the session; the pricing services check permissions
@@ -37,8 +40,8 @@ const text = (formData: FormData, name: string) => String(formData.get(name) ?? 
 /** Conflicts that belong to one form field, so the message shows next to that input. */
 const CONFLICT_FIELDS: Record<string, string> = { SLAB_EXISTS: "minQty", RULE_EXISTS: "customerId", BELOW_COST: "price", CUSTOMER_INACTIVE: "customerId", PRODUCT_INACTIVE: "productId" };
 
-function failure(error: unknown, values?: Record<string, string>): PricingFormState {
-  const result = toActionError(error);
+async function failure(error: unknown, values?: Record<string, string>): Promise<PricingFormState> {
+  const result = await toActionError(error);
   const conflictField = result.code ? CONFLICT_FIELDS[result.code] : undefined;
   const fieldErrors = result.fieldErrors ?? (conflictField && values && conflictField in values ? { [conflictField]: result.error } : undefined);
   return { ok: false, error: result.error, fieldErrors, values, needsCostConfirm: result.code === "BELOW_COST" };
@@ -59,7 +62,7 @@ export async function addSlabAction(_previous: PricingFormState, formData: FormD
     return failure(error, values);
   }
   refresh(productId);
-  return { ok: true, message: "Slab added.", nonce: Date.now() };
+  return { ok: true, message: (await getT())("pricing.slabAdded"), nonce: Date.now() };
 }
 
 export async function updateSlabAction(_previous: PricingFormState, formData: FormData): Promise<PricingFormState> {
@@ -72,7 +75,7 @@ export async function updateSlabAction(_previous: PricingFormState, formData: Fo
     return failure(error, values);
   }
   refresh(productId);
-  return { ok: true, message: "Slab price saved.", nonce: Date.now() };
+  return { ok: true, message: (await getT())("pricing.slabSaved"), nonce: Date.now() };
 }
 
 export async function setSlabActiveAction(_previous: PricingFormState, formData: FormData): Promise<PricingFormState> {
@@ -85,7 +88,7 @@ export async function setSlabActiveAction(_previous: PricingFormState, formData:
     return failure(error);
   }
   refresh(productId);
-  return { ok: true, message: active ? "Slab in use again." : "Slab retired.", nonce: Date.now() };
+  return { ok: true, message: (await getT())(active ? "pricing.slabActive" : "pricing.slabRetired"), nonce: Date.now() };
 }
 
 export async function addRuleAction(_previous: PricingFormState, formData: FormData): Promise<PricingFormState> {
@@ -105,7 +108,7 @@ export async function addRuleAction(_previous: PricingFormState, formData: FormD
     return failure(error, values);
   }
   refresh(values.productId || undefined);
-  return { ok: true, message: "Customer rule added.", nonce: Date.now() };
+  return { ok: true, message: (await getT())("pricing.ruleAdded"), nonce: Date.now() };
 }
 
 export async function updateRuleAction(_previous: PricingFormState, formData: FormData): Promise<PricingFormState> {
@@ -118,7 +121,7 @@ export async function updateRuleAction(_previous: PricingFormState, formData: Fo
     return failure(error, values);
   }
   refresh(productId || undefined);
-  return { ok: true, message: "Rule saved.", nonce: Date.now() };
+  return { ok: true, message: (await getT())("pricing.ruleSaved"), nonce: Date.now() };
 }
 
 export async function setRuleActiveAction(_previous: PricingFormState, formData: FormData): Promise<PricingFormState> {
@@ -131,7 +134,7 @@ export async function setRuleActiveAction(_previous: PricingFormState, formData:
     return failure(error);
   }
   refresh(productId || undefined);
-  return { ok: true, message: active ? "Rule in use again." : "Rule retired.", nonce: Date.now() };
+  return { ok: true, message: (await getT())(active ? "pricing.ruleActive" : "pricing.ruleRetired"), nonce: Date.now() };
 }
 
 export type QuoteFormState = { quote?: QuoteResult; error?: string; fieldErrors?: Record<string, string>; values?: Record<string, string> };
@@ -146,10 +149,13 @@ export async function quoteAction(_previous: QuoteFormState, formData: FormData)
     priceList: text(formData, "priceList"),
   };
   try {
-    return { quote: await quoteForSession(await requireSession(), values), values };
+    const quote = await quoteForSession(await requireSession(), values);
+    const language = await getLanguage();
+    const say = (line: string) => translateServerMessage(line, language);
+    return { quote: { ...quote, badge: rateReasonLabel(quote.badge, language), priceListReason: say(quote.priceListReason), explanation: quote.explanation.map(say) }, values };
   } catch (error) {
     unstable_rethrow(error);
-    const result = toActionError(error);
+    const result = await toActionError(error);
     return { error: result.error, fieldErrors: result.fieldErrors, values };
   }
 }

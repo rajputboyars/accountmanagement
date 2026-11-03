@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { boolean, check, integer, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 import { shops } from "../settings/schema";
 import { createdAt, id, oneOf, paise } from "../../server/schema-helpers";
+import { LANGUAGES, type Language } from "../../shared/i18n/languages";
 
 /** Owned by the parties module: customers and suppliers. Balances live in the ledger module. */
 
@@ -21,6 +22,8 @@ export const customers = pgTable(
     /** The customer agreed to payment reminders on WhatsApp. Reminders are never prepared without it. */
     whatsappConsent: boolean("whatsapp_consent").notNull().default(false),
     consentUpdatedAt: timestamp("consent_updated_at", { withTimezone: true }),
+    /** The language this customer reads messages in. Null until someone chooses; never taken from staff settings. */
+    communicationLanguage: text("communication_language").$type<Language>(),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: createdAt(),
   },
@@ -28,6 +31,7 @@ export const customers = pgTable(
     uniqueIndex("customers_shop_phone_key").on(t.shopId, t.phone).where(sql`${t.phone} is not null`),
     uniqueIndex("one_walkin_per_shop").on(t.shopId).where(sql`${t.type} = 'walkin'`),
     check("customers_type_check", oneOf(t.type, CUSTOMER_TYPES)),
+    check("customers_communication_language_check", oneOf(t.communicationLanguage, LANGUAGES)),
     check("customers_credit_limit_check", sql`${t.creditLimitPaise} >= 0`),
   ],
 );

@@ -10,8 +10,13 @@ import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { listInvoices } from "@/modules/sales";
 import { requireSession } from "@/server/auth";
+import { getLanguage, getT } from "@/server/i18n";
+import { billDate, systemName } from "@/shared/i18n/labels";
 
-export const metadata: Metadata = { title: "Bills" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getT();
+  return { title: t("page.bills") };
+}
 
 type Search = PageProps<"/billing/invoices">["searchParams"];
 
@@ -24,11 +29,11 @@ export default function InvoicesPage({ searchParams }: PageProps<"/billing/invoi
 }
 
 const one = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value) ?? "";
-const dateText = (value: string) => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 
 async function InvoiceList({ searchParams }: { searchParams: Search }) {
   const params = await searchParams;
   const session = await requireSession();
+  const [t, language] = await Promise.all([getT(), getLanguage()]);
   const q = one(params.q).trim();
   const date = one(params.date);
   const page = Math.max(1, Number.parseInt(one(params.page), 10) || 1);
@@ -45,35 +50,35 @@ async function InvoiceList({ searchParams }: { searchParams: Search }) {
   return (
     <PageContainer>
       <PageIntro
-        description="Every bill, newest first. Cancelled bills stay listed; nothing is deleted."
+        description={t("bills.intro")}
         actions={
           <Link href="/billing" className={buttonVariants({ size: "touch" })}>
             <Plus aria-hidden="true" />
-            New bill
+            {t("billing.newBill")}
           </Link>
         }
       />
-      <SectionCard title="Bills" flush>
+      <SectionCard title={t("page.bills")} flush>
         <form role="search" action="/billing/invoices" className="grid grid-cols-2 gap-2 px-5 pb-3 sm:grid-cols-[minmax(0,1fr)_11rem_auto]">
           <label className="col-span-2 sm:col-span-1">
-            <span className="sr-only">Bill number</span>
-            <Input name="q" defaultValue={q} placeholder="Bill number, e.g. 00012" className="h-11" />
+            <span className="sr-only">{t("bills.number")}</span>
+            <Input name="q" defaultValue={q} placeholder={t("bills.numberPlaceholder")} className="h-11" />
           </label>
           <label>
-            <span className="sr-only">Date</span>
+            <span className="sr-only">{t("common.date")}</span>
             <Input type="date" name="date" defaultValue={date} className="h-11" />
           </label>
           <button type="submit" className={buttonVariants({ variant: "outline", size: "touch" })}>
-            Search
+            {t("common.search")}
           </button>
         </form>
         {result.items.length === 0 ? (
           <div className="flex flex-col items-center gap-2 border-t border-border px-5 py-12 text-center">
             <ReceiptText className="size-8 text-muted-foreground" aria-hidden="true" />
-            <p className="font-semibold text-foreground">{q || date ? "No bills match" : "No bills yet"}</p>
-            <p className="max-w-sm text-sm text-muted-foreground">{q || date ? "Try another bill number or date." : "Every bill you save shows up here, newest first, so you can print, return or cancel it later."}</p>
+            <p className="font-semibold text-foreground">{t(q || date ? "bills.noMatch" : "bills.none")}</p>
+            <p className="max-w-sm text-sm text-muted-foreground">{t(q || date ? "bills.tryAnother" : "bills.noneHelp")}</p>
             <Link href={q || date ? "/billing/invoices" : "/billing"} className={buttonVariants({ variant: "outline", size: "touch" })}>
-              {q || date ? "Clear search" : "Make the first bill"}
+              {t(q || date ? "bills.clearSearch" : "bills.makeFirst")}
             </Link>
           </div>
         ) : (
@@ -84,19 +89,19 @@ async function InvoiceList({ searchParams }: { searchParams: Search }) {
                   <span className="min-w-0">
                     <span className="block font-semibold text-foreground">{invoice.number}</span>
                     <span className="block text-xs text-muted-foreground">
-                      {dateText(invoice.businessDate)} · {invoice.customerName}
+                      {billDate(invoice.businessDate, language)} · {systemName(invoice.customerName, language)}
                     </span>
                   </span>
                   <span className="flex shrink-0 flex-col items-end gap-1">
                     <Money paise={invoice.totalPaise} className="font-semibold text-foreground" />
                     {invoice.status === "cancelled" ? (
-                      <Badge variant="neutral">Cancelled</Badge>
+                      <Badge variant="neutral">{t("status.cancelled")}</Badge>
                     ) : invoice.paidNowPaise >= invoice.totalPaise ? (
-                      <Badge variant="success">Paid</Badge>
+                      <Badge variant="success">{t("status.paid")}</Badge>
                     ) : invoice.paidNowPaise > 0 ? (
-                      <Badge variant="warning">Part paid</Badge>
+                      <Badge variant="warning">{t("status.partPaid")}</Badge>
                     ) : (
-                      <Badge variant="info">On credit</Badge>
+                      <Badge variant="info">{t("status.onCredit")}</Badge>
                     )}
                   </span>
                 </Link>
@@ -105,18 +110,18 @@ async function InvoiceList({ searchParams }: { searchParams: Search }) {
           </ul>
         )}
         {result.page > 1 || result.hasMore ? (
-          <nav aria-label="Pages" className="flex justify-between gap-2 border-t border-border px-5 pt-3">
+          <nav aria-label={t("common.pages")} className="flex justify-between gap-2 border-t border-border px-5 pt-3">
             {result.page > 1 ? (
               <Link href={href(result.page - 1)} className={buttonVariants({ variant: "outline", size: "sm" })}>
                 <ChevronLeft aria-hidden="true" />
-                Newer
+                {t("common.newer")}
               </Link>
             ) : (
               <span />
             )}
             {result.hasMore ? (
               <Link href={href(result.page + 1)} className={buttonVariants({ variant: "outline", size: "sm" })}>
-                Older
+                {t("common.older")}
                 <ChevronRight aria-hidden="true" />
               </Link>
             ) : null}

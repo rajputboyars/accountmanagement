@@ -1,11 +1,15 @@
+"use client";
+
 import { Skeleton } from "@/components/ui/skeleton";
+import { useT } from "./language-provider";
 import { PageContainer } from "./page-container";
 
 export function PageSkeleton() {
+  const t = useT();
   return (
     <PageContainer>
       <span className="sr-only" role="status">
-        Loading…
+        {t("common.loading")}
       </span>
       <Skeleton className="h-5 w-72 max-w-full" />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

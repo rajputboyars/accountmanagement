@@ -1,6 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import { cn } from "cn";
 import type { NavItem } from "@/config/navigation";
+import { useT } from "./language-provider";
 
 type NavLinkProps = {
   item: NavItem;
@@ -12,12 +15,14 @@ type NavLinkProps = {
 
 export function NavLink({ item, active, variant, onNavigate }: NavLinkProps) {
   const Icon = item.icon;
+  const t = useT();
+  const label = t(`nav.${item.key}.label`);
   return (
     <Link
       href={item.href}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
-      title={variant === "sidebar" ? item.label : undefined}
+      title={variant === "sidebar" ? label : undefined}
       className={cn(
         "group flex h-11 items-center gap-3 rounded-xl text-sm font-medium transition-colors",
         variant === "sidebar" ? "justify-center px-0 xl:justify-start xl:px-3" : "px-3",
@@ -27,7 +32,7 @@ export function NavLink({ item, active, variant, onNavigate }: NavLinkProps) {
       )}
     >
       <Icon className="size-5 shrink-0" aria-hidden="true" />
-      <span className={cn(variant === "sidebar" && "sr-only xl:not-sr-only")}>{item.label}</span>
+      <span className={cn(variant === "sidebar" && "sr-only xl:not-sr-only")}>{label}</span>
     </Link>
   );
 }

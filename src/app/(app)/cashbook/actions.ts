@@ -1,5 +1,6 @@
 "use server";
 
+import { getT, localizeServerMessage } from "@/server/i18n";
 import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { ZodError } from "zod";
@@ -13,16 +14,16 @@ export type CashFormState = { ok?: boolean; message?: string; error?: string; co
 
 const text = (formData: FormData, name: string) => String(formData.get(name) ?? "");
 
-function failure(error: unknown, values?: Record<string, string>): CashFormState {
+async function failure(error: unknown, values?: Record<string, string>): Promise<CashFormState> {
   if (error instanceof ZodError) {
     const fieldErrors: Record<string, string> = {};
     for (const issue of error.issues) {
       const key = String(issue.path[0] ?? "");
-      if (key && !fieldErrors[key]) fieldErrors[key] = issue.message;
+      if (key && !fieldErrors[key]) fieldErrors[key] = await localizeServerMessage(issue.message);
     }
-    return { error: error.issues[0]?.message ?? "Please check the form.", fieldErrors, values };
+    return { error: await localizeServerMessage(error.issues[0]?.message ?? "Please check the form."), fieldErrors, values };
   }
-  const result = toActionError(error);
+  const result = await toActionError(error);
   return { error: result.error, code: result.code, fieldErrors: result.details?.fieldErrors as Record<string, string> | undefined, values };
 }
 
@@ -35,7 +36,7 @@ export async function recordExpenseAction(_previous: CashFormState, formData: Fo
     return failure(error, values);
   }
   revalidatePath("/cashbook");
-  return { ok: true, message: "Expense recorded." };
+  return { ok: true, message: (await getT())("cashbook.expenseRecorded") };
 }
 
 export async function recordCashMovementAction(_previous: CashFormState, formData: FormData): Promise<CashFormState> {
@@ -47,7 +48,7 @@ export async function recordCashMovementAction(_previous: CashFormState, formDat
     return failure(error, values);
   }
   revalidatePath("/cashbook");
-  return { ok: true, message: "Recorded." };
+  return { ok: true, message: (await getT())("cashbook.movementRecorded") };
 }
 
 export async function voidExpenseAction(_previous: CashFormState, formData: FormData): Promise<CashFormState> {
@@ -70,7 +71,7 @@ export async function closeDayAction(_previous: CashFormState, formData: FormDat
     return failure(error, values);
   }
   revalidatePath("/cashbook");
-  return { ok: true, message: "Day closed." };
+  return { ok: true, message: (await getT())("cashbook.dayClosedMessage") };
 }
 
 export async function reopenDayAction(_previous: CashFormState, formData: FormData): Promise<CashFormState> {
@@ -81,5 +82,5 @@ export async function reopenDayAction(_previous: CashFormState, formData: FormDa
     return failure(error);
   }
   revalidatePath("/cashbook");
-  return { ok: true, message: "Day reopened." };
+  return { ok: true, message: (await getT())("cashbook.dayReopened") };
 }

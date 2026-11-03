@@ -8,9 +8,14 @@ import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { getSupplierStatement } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
+import { getLanguage, getT } from "@/server/i18n";
+import { billDate, statementLabel } from "@/shared/i18n/labels";
 import { NotFoundError } from "@/server/errors";
 
-export const metadata: Metadata = { title: "Supplier statement" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getT();
+  return { title: t("page.supplierStatement") };
+}
 
 type Props = PageProps<"/suppliers/[supplierId]/statement">;
 
@@ -22,10 +27,11 @@ export default function SupplierStatementPage({ params }: Props) {
   );
 }
 
-const dateText = (value: string) => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 
 async function Statement({ params }: Pick<Props, "params">) {
   const { supplierId } = await params;
+  const [t, language] = await Promise.all([getT(), getLanguage()]);
+  const dateText = (value: string) => billDate(value, language);
   const data = await getSupplierStatement(await requireSession(), supplierId).catch((error: unknown) => {
     if (error instanceof NotFoundError) return null;
     throw error;
@@ -33,9 +39,9 @@ async function Statement({ params }: Pick<Props, "params">) {
   if (!data) {
     return (
       <PageContainer className="max-w-4xl">
-        <SectionCard title="Supplier not found">
+        <SectionCard title={t("suppliers.notFound")}>
           <Link href="/suppliers" className="text-sm font-semibold text-teal-strong hover:underline">
-            Back to suppliers
+            {t("suppliers.back")}
           </Link>
         </SectionCard>
       </PageContainer>
@@ -54,43 +60,45 @@ async function Statement({ params }: Pick<Props, "params">) {
         <header className="flex flex-col gap-1 border-b border-border pb-4 sm:flex-row sm:justify-between">
           <p className="text-lg font-bold text-foreground">{data.shop.legalName ?? data.shop.name}</p>
           <div className="sm:text-right">
-            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Supplier statement · {dateText(data.asOf)}</p>
+            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t("suppliers.statementOf", { date: dateText(data.asOf) })}</p>
             <p className="font-semibold text-foreground">{data.supplier.name}</p>
           </div>
         </header>
-        <table className="w-full">
+        <div className="overflow-x-auto print:overflow-visible">
+        <table className="stack-table w-full min-w-[30rem] print:min-w-0">
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              <th className="py-1.5 font-medium">Date</th>
-              <th className="py-1.5 font-medium">Entry</th>
-              <th className="py-1.5 text-right font-medium">Bought</th>
-              <th className="py-1.5 text-right font-medium">Paid</th>
-              <th className="py-1.5 text-right font-medium">You owe</th>
+              <th className="py-1.5 font-medium">{t("statement.date")}</th>
+              <th className="py-1.5 font-medium">{t("statement.entry")}</th>
+              <th className="py-1.5 text-right font-medium">{t("suppliers.bought")}</th>
+              <th className="py-1.5 text-right font-medium">{t("suppliers.paid")}</th>
+              <th className="py-1.5 text-right font-medium">{t("suppliers.owe")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {data.statement.map((line) => (
               <tr key={line.id}>
-                <td className="py-1.5 whitespace-nowrap">{dateText(line.entryDate)}</td>
-                <td>{line.description}</td>
-                <td className="text-right">{line.creditPaise ? <Money paise={line.creditPaise} withPaise /> : ""}</td>
-                <td className="text-right">{line.debitPaise ? <Money paise={line.debitPaise} withPaise /> : ""}</td>
-                <td className="text-right">
+                <td data-label={t("statement.date")} className="py-1.5 whitespace-nowrap">{dateText(line.entryDate)}</td>
+                <td data-title>{statementLabel(line.description, language)}</td>
+                <td data-label={t("suppliers.bought")} className="text-right">{line.creditPaise ? <Money paise={line.creditPaise} withPaise /> : ""}</td>
+                <td data-label={t("suppliers.paid")} className="text-right">{line.debitPaise ? <Money paise={line.debitPaise} withPaise /> : ""}</td>
+                <td data-key data-label={t("suppliers.owe")} className="text-right">
                   <Money paise={line.owedAfterPaise} withPaise />
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
         {data.ageing.open.length > 0 ? (
           <div>
-            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Unpaid bills (oldest first)</p>
+            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t("suppliers.unpaidOldest")}</p>
             <ul className="mt-1 flex flex-col gap-0.5">
               {data.ageing.open.map((item) => (
                 <li key={item.id} className="flex justify-between gap-3">
                   <span>
-                    {item.label} · due {dateText(item.dueDate)}
-                    {item.daysPastDue ? ` · ${item.daysPastDue} days late` : ""}
+                    {statementLabel(item.label, language)} · {t("suppliers.dueOn", { date: dateText(item.dueDate) })}
+                    {item.daysPastDue ? ` · ${t("suppliers.daysLate", { days: item.daysPastDue })}` : ""}
                   </span>
                   <Money paise={item.remainingPaise} withPaise />
                 </li>
@@ -99,7 +107,7 @@ async function Statement({ params }: Pick<Props, "params">) {
           </div>
         ) : null}
         <p className="self-end text-base font-bold text-foreground">
-          You owe <Money paise={Math.max(data.owedPaise, 0)} withPaise />
+          {t("suppliers.owedTotal")}<Money paise={Math.max(data.owedPaise, 0)} withPaise />
         </p>
       </article>
     </PageContainer>

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { cn } from "cn";
+import { HelpHint } from "@/components/nexora/help-hint";
+import type { HelpTopic } from "@/shared/i18n/help";
 
 type KpiCardProps = {
   label: string;
@@ -9,14 +11,16 @@ type KpiCardProps = {
   footer?: React.ReactNode;
   href?: string;
   className?: string;
+  /** Puts an information button beside the label, outside the card's link. */
+  help?: HelpTopic;
 };
 
 /** A large headline number with its label. When `href` is set the whole card opens the underlying records. */
-export function KpiCard({ label, value, detail, footer, href, className }: KpiCardProps) {
+export function KpiCard({ label, value, detail, footer, href, className, help }: KpiCardProps) {
   const body = (
     <>
       <div className="flex items-start justify-between gap-2">
-        <span className="text-sm font-medium text-muted-foreground">{label}</span>
+        <span className={cn("text-sm font-medium text-muted-foreground", help && "pr-6")}>{label}</span>
         {href ? (
           <ArrowUpRight
             className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
@@ -36,11 +40,20 @@ export function KpiCard({ label, value, detail, footer, href, className }: KpiCa
     className,
   );
 
-  return href ? (
-    <Link href={href} className={classes}>
+  const card = href ? (
+    <Link href={href} className={cn(classes, help && "h-full")}>
       {body}
     </Link>
   ) : (
-    <div className={classes}>{body}</div>
+    <div className={cn(classes, help && "h-full")}>{body}</div>
+  );
+
+  return help ? (
+    <div className="relative min-w-0">
+      {card}
+      <HelpHint topic={help} className={cn("absolute top-5 text-muted-foreground", href ? "right-11" : "right-5")} />
+    </div>
+  ) : (
+    card
   );
 }

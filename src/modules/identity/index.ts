@@ -1,5 +1,7 @@
 /** Public API of the identity module. Other modules and the app import only from here. */
 export { hasPermission, loadPermissions, requirePermission } from "./authorization";
+export { getUserLanguage, setUserLanguage } from "./language";
+export { confirmGuidedTaskSaved, finishedTips, finishTip, isGuidedTaskSaved, pauseGuidedTask, setGuidedTaskStep, skipGuidedTask, startGuidedTask, taskProgress, type TaskProgress, type TaskStatus } from "./guidance";
 export { bootstrapOwner, signOut } from "./bootstrap";
 export {
   OTP_MAX_ATTEMPTS,

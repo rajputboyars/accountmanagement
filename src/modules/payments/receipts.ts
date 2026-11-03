@@ -12,8 +12,10 @@ import { withTransaction } from "@/server/db";
 import { isUniqueViolation } from "@/server/db-errors";
 import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { financialYearLabel, indiaDate } from "@/shared/financial-year";
-import { parseRupeesToPaise } from "@/shared/money";
 import { payments } from "./schema";
+import { receiptInputSchema } from "./validation";
+
+export { receiptInputSchema };
 
 /**
  * Customer receipts: money received against a customer's dues, not tied to one bill (spec §4).
@@ -28,29 +30,6 @@ export const PAYMENTS_RECORD = "payments.record" as const;
 export const PAYMENTS_REVERSE = "payments.reverse" as const;
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
-
-export const receiptInputSchema = z.object({
-  idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/, "This form has expired. Reload the page."),
-  customerId: z.string().regex(/^[0-9a-f-]{36}$/i, "Choose a customer."),
-  amount: z
-    .string()
-    .trim()
-    .transform((value, ctx) => {
-      const paise = parseRupeesToPaise(value);
-      if (paise === null || paise <= 0) {
-        ctx.addIssue({ code: "custom", message: "Enter the amount received, more than 0." });
-        return z.NEVER;
-      }
-      return paise;
-    }),
-  method: z.enum(["cash", "upi", "bank", "cheque"], { message: "Choose how it was paid." }),
-  reference: z
-    .string()
-    .trim()
-    .max(40)
-    .optional()
-    .transform((value) => value || null),
-});
 
 export type RecordedReceipt = { id: string; receiptNumber: string; balanceBeforePaise: number; balanceAfterPaise: number; advancePaise: number; replayed: boolean };
 

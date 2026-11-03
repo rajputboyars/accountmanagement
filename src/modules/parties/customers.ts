@@ -8,8 +8,11 @@ import { withTransaction } from "@/server/db";
 import { isUniqueViolation } from "@/server/db-errors";
 import { ConflictError, NotFoundError } from "@/server/errors";
 import { indiaDate } from "@/shared/financial-year";
-import { parseRupeesToPaise } from "@/shared/money";
+import { LANGUAGES, type Language } from "@/shared/i18n/languages";
 import { customers } from "./schema";
+import { customerCreateSchema, customerFields } from "./validation";
+
+export { customerCreateSchema };
 
 /**
  * Customer records (spec §4, §8). Balances are never typed in: an opening balance at go-live is one
@@ -18,56 +21,6 @@ import { customers } from "./schema";
  */
 
 const CUSTOMERS_EDIT = "customers.edit" as const;
-
-const rupees = z
-  .string()
-  .trim()
-  .optional()
-  .transform((value, ctx): number => {
-    if (!value) return 0;
-    const paise = parseRupeesToPaise(value);
-    if (paise === null) {
-      ctx.addIssue({ code: "custom", message: "Enter an amount in rupees." });
-      return z.NEVER;
-    }
-    return paise;
-  });
-
-const customerFields = z.object({
-  name: z.string().trim().min(2, "Enter the customer's name.").max(120),
-  phone: z
-    .string()
-    .trim()
-    .optional()
-    .transform((value) => value?.replace(/[\s-]/g, "") || null)
-    .pipe(z.string().regex(/^\d{10}$/, "Phone must be 10 digits.").nullable()),
-  type: z.enum(["retail", "wholesale"], { message: "Choose retail or wholesale." }),
-  area: z
-    .string()
-    .trim()
-    .max(80)
-    .optional()
-    .transform((value) => value || null),
-  gstin: z
-    .string()
-    .trim()
-    .optional()
-    .transform((value) => value?.toUpperCase() || null)
-    .pipe(z.string().regex(/^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/, "That doesn't look like a GSTIN.").nullable()),
-  creditLimit: rupees,
-  whatsappConsent: z.union([z.boolean(), z.literal("on"), z.literal("")]).optional().transform((value) => value === true || value === "on"),
-});
-
-export const customerCreateSchema = customerFields.extend({
-  /** Owed at go-live (positive) or paid in advance (use advance). */
-  openingOwed: rupees,
-  openingAdvance: rupees,
-  oldestBillDate: z
-    .string()
-    .optional()
-    .transform((value) => value || null)
-    .pipe(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose the date of the oldest unpaid bill.").nullable()),
-});
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
 
@@ -94,6 +47,7 @@ export async function createCustomer(session: SessionContext, input: unknown): P
         creditLimitPaise: data.creditLimit,
         whatsappConsent: data.whatsappConsent,
         consentUpdatedAt: data.whatsappConsent ? new Date() : null,
+        communicationLanguage: data.communicationLanguage ?? null,
       });
       const opening = data.openingOwed || data.openingAdvance;
       if (opening) {
@@ -113,13 +67,27 @@ export async function createCustomer(session: SessionContext, input: unknown): P
         action: "parties.customer_added",
         entityType: "customer",
         entityId: id,
-        after: { name: data.name, phone: data.phone, type: data.type, creditLimitPaise: data.creditLimit, whatsappConsent: data.whatsappConsent, openingOwedPaise: data.openingOwed, openingAdvancePaise: data.openingAdvance, oldestBillDate: data.oldestBillDate },
+        after: { name: data.name, phone: data.phone, type: data.type, creditLimitPaise: data.creditLimit, whatsappConsent: data.whatsappConsent, communicationLanguage: data.communicationLanguage ?? null, openingOwedPaise: data.openingOwed, openingAdvancePaise: data.openingAdvance, oldestBillDate: data.oldestBillDate },
       });
       return { id };
     });
   } catch (error) {
     throw phoneConflict(error);
   }
+}
+
+/** Saves only the message language, for the bill-sharing screen. Same permission as editing the customer; audited. */
+export async function setCustomerCommunicationLanguage(session: SessionContext, customerId: string, input: unknown): Promise<Language> {
+  await requirePermission(session, CUSTOMERS_EDIT);
+  const language = z.enum(LANGUAGES, { message: "Choose a message language." }).parse(input);
+  if (!/^[0-9a-f-]{36}$/i.test(customerId)) throw new NotFoundError("Customer not found.");
+  await withTransaction(async (tx) => {
+    const [before] = await tx.select().from(customers).where(and(eq(customers.id, customerId), eq(customers.shopId, session.shopId))).limit(1).for("update");
+    if (!before || before.type === "walkin") throw new NotFoundError("Customer not found.");
+    await tx.update(customers).set({ communicationLanguage: language }).where(eq(customers.id, customerId));
+    await recordAudit(tx, actorOf(session), { action: "parties.customer_language_set", entityType: "customer", entityId: customerId, before: { communicationLanguage: before.communicationLanguage }, after: { communicationLanguage: language } });
+  });
+  return language;
 }
 
 export async function updateCustomer(session: SessionContext, customerId: string, input: unknown): Promise<void> {
@@ -141,14 +109,15 @@ export async function updateCustomer(session: SessionContext, customerId: string
           creditLimitPaise: data.creditLimit,
           whatsappConsent: data.whatsappConsent,
           consentUpdatedAt: data.whatsappConsent !== before.whatsappConsent ? new Date() : before.consentUpdatedAt,
+          communicationLanguage: data.communicationLanguage === undefined ? before.communicationLanguage : data.communicationLanguage,
         })
         .where(eq(customers.id, customerId));
       await recordAudit(tx, actorOf(session), {
         action: "parties.customer_updated",
         entityType: "customer",
         entityId: customerId,
-        before: { name: before.name, phone: before.phone, type: before.type, creditLimitPaise: before.creditLimitPaise, whatsappConsent: before.whatsappConsent },
-        after: { name: data.name, phone: data.phone, type: data.type, creditLimitPaise: data.creditLimit, whatsappConsent: data.whatsappConsent },
+        before: { name: before.name, phone: before.phone, type: before.type, creditLimitPaise: before.creditLimitPaise, whatsappConsent: before.whatsappConsent, communicationLanguage: before.communicationLanguage },
+        after: { name: data.name, phone: data.phone, type: data.type, creditLimitPaise: data.creditLimit, whatsappConsent: data.whatsappConsent, communicationLanguage: data.communicationLanguage === undefined ? before.communicationLanguage : data.communicationLanguage },
       });
     });
   } catch (error) {

@@ -1,5 +1,6 @@
 "use server";
 
+import { localizeServerMessage } from "@/server/i18n";
 import { revalidatePath } from "next/cache";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { ZodError } from "zod";
@@ -21,16 +22,16 @@ export type ReturnPayload = {
 
 type Failure = { error: string; code?: string; fieldErrors?: Record<string, string> };
 
-function failure(error: unknown): Failure {
+async function failure(error: unknown): Promise<Failure> {
   if (error instanceof ZodError) {
     const fieldErrors: Record<string, string> = {};
     for (const issue of error.issues) {
       const key = issue.path.join(".");
-      if (key && !fieldErrors[key]) fieldErrors[key] = issue.message;
+      if (key && !fieldErrors[key]) fieldErrors[key] = await localizeServerMessage(issue.message);
     }
-    return { error: error.issues[0]?.message ?? "Please check the return.", code: "VALIDATION", fieldErrors };
+    return { error: await localizeServerMessage(error.issues[0]?.message ?? "Please check the return."), code: "VALIDATION", fieldErrors };
   }
-  const result = toActionError(error);
+  const result = await toActionError(error);
   return { error: result.error, code: result.code, fieldErrors: result.details?.fieldErrors as Record<string, string> | undefined };
 }
 
@@ -41,9 +42,9 @@ export async function findInvoiceAction(_previous: { error?: string }, formData:
     found = await findInvoiceByNumber(await requireSession(), number);
   } catch (error) {
     unstable_rethrow(error);
-    return { error: toActionError(error).error };
+    return { error: (await toActionError(error)).error };
   }
-  if (!found) return { error: `No bill numbered "${number.trim()}" in this shop.` };
+  if (!found) return { error: await localizeServerMessage(`No bill numbered "${number.trim()}" in this shop.`) };
   redirect(`/billing/returns/new?invoice=${found.id}`);
 }
 
@@ -65,7 +66,7 @@ export async function saveReturnAction(input: ReturnPayload & { idempotencyKey: 
     return { creditNoteId: result.id };
   } catch (error) {
     unstable_rethrow(error);
-    const preview = toActionError(error).details?.preview as ReturnPreview | undefined;
-    return { ...failure(error), preview };
+    const preview = (await toActionError(error)).details?.preview as ReturnPreview | undefined;
+    return { ...(await failure(error)), preview };
   }
 }

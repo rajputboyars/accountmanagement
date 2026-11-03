@@ -1,12 +1,16 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, index, jsonb, pgTable, primaryKey, smallint, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, check, index, integer, jsonb, pgTable, primaryKey, smallint, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 import { devices, shops } from "../settings/schema";
 import { createdAt, id, oneOf } from "../../server/schema-helpers";
+import { DEFAULT_LANGUAGE, LANGUAGES, type Language } from "../../shared/i18n/languages";
 
 /** Owned by the identity module: people, permissions, sessions, OTPs and owner approvals. */
 
 export const ROLES = ["owner", "manager", "cashier", "inventory"] as const;
 export type Role = (typeof ROLES)[number];
+
+export const USER_GUIDANCE_STATUSES = ["done", "dismissed", "in_progress", "paused", "skipped", "completed"] as const;
+export type UserGuidanceStatus = (typeof USER_GUIDANCE_STATUSES)[number];
 
 export const users = pgTable(
   "users",
@@ -18,12 +22,14 @@ export const users = pgTable(
     role: text("role").$type<Role>().notNull(),
     pinHash: text("pin_hash"), // owner approval PIN, Argon2id
     isActive: boolean("is_active").notNull().default(true),
+    language: text("language").$type<Language>().notNull().default(DEFAULT_LANGUAGE),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex("users_shop_phone_key").on(t.shopId, t.phone),
     uniqueIndex("one_owner_per_shop").on(t.shopId).where(sql`${t.role} = 'owner'`),
     check("users_role_check", oneOf(t.role, ROLES)),
+    check("users_language_check", oneOf(t.language, LANGUAGES)),
   ],
 );
 
@@ -131,4 +137,31 @@ export const notificationPreferences = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.userId, t.kind] }), check("notification_preferences_kind_check", oneOf(t.kind, NOTIFICATION_KINDS))],
+);
+
+/**
+ * Which first-time tips and guided tasks each person has been through. Task and step only: never form contents.
+ * kind 'tip': status done or dismissed. kind 'task': in_progress, paused, skipped or completed.
+ */
+export const userGuidance = pgTable(
+  "user_guidance",
+  {
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    kind: text("kind").notNull(),
+    key: text("key").notNull(),
+    status: text("status").notNull(),
+    step: integer("step").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.kind, t.key] }),
+    index("user_guidance_shop_user_idx").on(t.shopId, t.userId),
+    check("user_guidance_kind_check", sql`${t.kind} in ('tip', 'task')`),
+    check("user_guidance_status_check", oneOf(t.status, USER_GUIDANCE_STATUSES)),
+    check("user_guidance_step_check", sql`${t.step} >= 0`),
+  ],
 );

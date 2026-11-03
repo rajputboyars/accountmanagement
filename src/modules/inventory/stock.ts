@@ -202,9 +202,10 @@ export async function listOpeningCandidates(session: SessionContext) {
         name: product.name,
         sku: product.sku,
         baseUnit: product.baseUnit,
+        baseAllowsDecimal: product.baseAllowsDecimal,
         units: [
-          { code: product.baseUnit, label: `${product.baseUnitName} (${product.baseUnit})`, factor: "1" },
-          ...product.saleUnits.map((unit) => ({ code: unit.code, label: `${unit.name} of ${formatQuantity(unit.factor)} ${product.baseUnit}`, factor: formatQuantity(unit.factor) })),
+          { code: product.baseUnit, name: product.baseUnitName, isBase: true, factor: "1" },
+          ...product.saleUnits.map((unit) => ({ code: unit.code, name: unit.name, isBase: false, factor: formatQuantity(unit.factor) })),
         ],
       })),
   };

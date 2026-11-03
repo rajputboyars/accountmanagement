@@ -210,3 +210,100 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/*
+ * Tables on phones: each row becomes a small card, so nothing needs a sideways swipe.
+ * Mark cells with data-title (heads the row), data-key (the figure beside it), data-lead (a small
+ * number before the title) and data-label (the column name, shown beside the value). Screen only:
+ * printing and wider screens keep the normal table. Not in a layer, so it wins over the table's utilities.
+ */
+@media screen and (max-width: 767.98px) {
+  .stack-table {
+    display: block;
+    min-width: 0;
+  }
+  .stack-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .stack-table tbody,
+  .stack-table tfoot {
+    display: block;
+  }
+  .stack-table tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.25rem 0.75rem;
+    padding-block: 0.75rem;
+  }
+  .stack-table-flush tr {
+    padding-inline: 1.25rem;
+  }
+  .stack-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    padding: 0;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-align: right;
+    white-space: normal;
+  }
+  .stack-table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    max-width: 60%;
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 400;
+    text-align: left;
+  }
+  .stack-table td:empty {
+    display: none;
+  }
+  .stack-table td[data-lead] {
+    order: -3;
+    width: auto;
+    flex: 0 0 auto;
+  }
+  .stack-table td[data-title] {
+    order: -2;
+    display: block;
+    flex: 1 1 0;
+    width: auto;
+    text-align: left;
+  }
+  .stack-table td[data-title]::before {
+    margin-inline-end: 0.375rem;
+  }
+  .stack-table td[data-key] {
+    order: -1;
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0;
+    width: auto;
+    max-width: 60%;
+    font-weight: 600;
+  }
+  .stack-table td[data-key]::before {
+    max-width: none;
+    text-align: right;
+  }
+  .stack-table td[data-lead]::before,
+  .stack-table td[data-key]:not([data-label])::before,
+  .stack-table td[data-title]:not([data-label])::before {
+    content: none;
+  }
+}
+
