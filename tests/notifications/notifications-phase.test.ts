@@ -102,12 +102,12 @@ describe("import finished", () => {
 describe("WhatsApp bill summary", () => {
   it("uses the saved bill's figures and only mentions dues when something is owed", () => {
     const facts = { shopName: "Sharma Sanitary", shopPhone: "98290 12345", upiId: "sharma@okhdfc", number: "INV/26-27/00012", date: "2026-10-28" };
-    const credit = billShareText({ ...facts, customerName: "Gupta Builders", totalPaise: 100000, paidPaise: 40000 });
+    const credit = billShareText({ ...facts, customerName: "Gupta Builders", totalPaise: 100000, paidPaise: 40000 }, "hinglish");
     expect(credit).toContain("Namaste Gupta Builders ji");
     expect(credit).toContain("Bill amount: ₹1,000.00");
     expect(credit).toContain("Payment mila: ₹400.00");
     expect(credit).toContain("baaki (udhaar): ₹600.00 · UPI: sharma@okhdfc");
-    const paid = billShareText({ ...facts, customerName: null, totalPaise: 50000, paidPaise: 50000 });
+    const paid = billShareText({ ...facts, customerName: null, totalPaise: 50000, paidPaise: 50000 }, "hinglish");
     expect(paid).toMatch(/^Namaste 🙏/);
     expect(paid).toContain("Pura payment ho gaya.");
     expect(paid).not.toContain("UPI");

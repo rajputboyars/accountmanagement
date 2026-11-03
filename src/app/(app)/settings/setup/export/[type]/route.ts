@@ -14,6 +14,6 @@ export async function GET(_request: Request, context: { params: Promise<{ type: 
     return new Response(toCsv(data.rows), { headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="nexora-${data.type}-${indiaDate()}.csv"`, "cache-control": "no-store" } });
   } catch (error) {
     unstable_rethrow(error);
-    return new Response(toActionError(error).error, { status: isAppError(error) ? error.status : 500 });
+    return new Response((await toActionError(error)).error, { status: isAppError(error) ? error.status : 500 });
   }
 }

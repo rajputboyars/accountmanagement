@@ -1,1 +1,1 @@
-export { countRecentFailures, recordAudit, redact, type AuditActor, type AuditEvent } from "./service";
+export { countRecentFailures, hasAuditSince, recordAudit, redact, type AuditActor, type AuditEvent } from "./service";

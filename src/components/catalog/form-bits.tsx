@@ -5,6 +5,8 @@ import { useFormStatus } from "react-dom";
 import { CircleAlert, CircleCheck, LoaderCircle } from "lucide-react";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
+import { HelpHint } from "@/components/nexora/help-hint";
+import type { HelpTopic } from "@/shared/i18n/help";
 
 export const selectClass =
   "h-11 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground aria-invalid:border-destructive";
@@ -38,14 +40,27 @@ export function Field({
   hint,
   error,
   className,
+  help,
   children,
 }: {
   label: React.ReactNode;
   hint?: string;
   error?: string;
   className?: string;
+  /** Puts an information button at the end of the label row. It sits outside the <label>, which may hold only its input. */
+  help?: HelpTopic;
   children: React.ReactNode;
 }) {
+  if (help) {
+    return (
+      <div className={cn("relative", className)}>
+        <HelpHint topic={help} className="absolute top-0 right-0 text-muted-foreground" />
+        <Field label={<span className="pr-7">{label}</span>} hint={hint} error={error}>
+          {children}
+        </Field>
+      </div>
+    );
+  }
   return (
     <label className={cn("flex flex-col gap-1.5 text-sm font-medium text-foreground", className)}>
       {label}

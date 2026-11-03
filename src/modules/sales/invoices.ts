@@ -635,7 +635,7 @@ export async function getInvoice(session: SessionContext, invoiceId: string) {
     ...header,
     // Printed as issued: the frozen seller and buyer when the bill has them (see documentParties).
     shop: printedSeller(shop, invoice.seller),
-    customer: { id: customer.id, type: customer.type, name: customer.name, phone: customer.phone, gstin: customer.gstin, area: customer.area, ...(invoice.buyer ?? {}) },
+    customer: { id: customer.id, type: customer.type, name: customer.name, phone: customer.phone, gstin: customer.gstin, area: customer.area, communicationLanguage: customer.communicationLanguage, ...(invoice.buyer ?? {}) },
     lines: lines.map((line) => ({
       ...line,
       unitCostPaise: undefined,

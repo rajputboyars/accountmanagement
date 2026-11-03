@@ -7,22 +7,24 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
-import { getNavItem } from "@/config/navigation";
 import { isOwnerPinSet, listStaff } from "@/modules/identity";
 import { checkPagePermission } from "@/server/auth";
 import { getBusinessSettings } from "@/modules/settings";
+import { getT } from "@/server/i18n";
 import { GstForm, InvoiceForm, ProfileForm } from "./business-forms";
 import { AddStaffForm, PinForm, RevokeAccessButton, StaffActiveToggle, StaffRoleForm } from "./settings-forms";
 
-const item = getNavItem("settings");
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getT();
+  return { title: t("nav.settings.label") };
+}
 
-export const metadata: Metadata = { title: "Settings" };
-
-const ROLE_LABELS = { owner: "Owner", manager: "Manager", cashier: "Cashier", inventory: "Inventory staff" } as const;
+const ROLE_KEYS = { owner: "role.owner", manager: "role.manager", cashier: "role.cashier", inventory: "settings.roleInventoryStaff" } as const;
+const ELSEWHERE_KEYS = ["settings.elsewhere.import", "settings.elsewhere.language", "settings.elsewhere.theme"] as const;
 
 export default function SettingsPage() {
   return (
-    <ProtectedPage title="Settings">
+    <ProtectedPage title="Settings" guide="settings">
       <SettingsContent />
     </ProtectedPage>
   );
@@ -32,16 +34,17 @@ async function SettingsContent() {
   const { session, allowed: canManageStaff } = await checkPagePermission("staff.manage");
   const [staff, pinSet, business] = await Promise.all([canManageStaff ? listStaff(session) : Promise.resolve([]), isOwnerPinSet(session), getBusinessSettings(session)]);
   const isOwner = session.role === "owner";
+  const t = await getT();
 
   return (
     <PageContainer>
       <PageIntro
-        description={item.description}
+        description={t("nav.settings.description")}
         actions={
           isOwner ? (
             <Link href="/settings/setup" className={buttonVariants({ size: "touch", variant: "outline" })}>
               <ListChecks aria-hidden="true" />
-              Go-live setup & import
+              {t("settings.goLive")}
             </Link>
           ) : null
         }
@@ -49,65 +52,65 @@ async function SettingsContent() {
 
       {business.canEdit ? (
         <>
-          <SectionCard title="Business details" description="Printed on every bill and statement.">
+          <SectionCard title={t("settings.business")} description={t("settings.businessHelp")}>
             <ProfileForm profile={business.profile} />
           </SectionCard>
           <div className="grid gap-6 xl:grid-cols-2">
-            <SectionCard title="GST" description="How bills are taxed. Changes apply to bills made after saving; issued bills never change.">
+            <SectionCard title={t("settings.gst")} description={t("settings.gstHelp")}>
               <GstForm gst={business.gst} />
             </SectionCard>
-            <SectionCard title="Invoice" description="Numbering, payment details and terms on bills.">
+            <SectionCard title={t("settings.invoice")} description={t("settings.invoiceHelp")}>
               <InvoiceForm invoice={business.invoice} />
             </SectionCard>
           </div>
         </>
       ) : (
-        <SectionCard title="Business details" description="Only the owner can change these.">
+        <SectionCard title={t("settings.business")} description={t("settings.businessOwnerOnly")}>
           <dl className="grid gap-2 text-sm sm:grid-cols-2">
             <div>
-              <dt className="text-muted-foreground">Shop</dt>
+              <dt className="text-muted-foreground">{t("settings.shop")}</dt>
               <dd className="font-medium text-foreground">{business.profile.legalName ?? business.profile.name}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">GST</dt>
-              <dd className="font-medium text-foreground">{business.gst.registration === "regular" ? `Registered · ${business.gst.gstin ?? "GSTIN missing"}` : business.gst.registration === "composition" ? "Composition scheme" : "Not registered"}</dd>
+              <dt className="text-muted-foreground">{t("settings.gst")}</dt>
+              <dd className="font-medium text-foreground">{business.gst.registration === "regular" ? t("settings.gstRegistered", { gstin: business.gst.gstin ?? t("settings.gstinMissing") }) : business.gst.registration === "composition" ? t("settings.compositionScheme") : t("settings.notRegistered")}</dd>
             </div>
           </dl>
         </SectionCard>
       )}
 
       {canManageStaff ? (
-        <SectionCard title="Staff & access" description="Each person signs in with their own mobile number. Their role decides what they can open." flush>
+        <SectionCard title={t("settings.staff")} description={t("settings.staffHelp")} flush>
           <div className="flex flex-col gap-5">
-            <Table>
+            <Table className="stack-table stack-table-flush">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="pl-5">Name</TableHead>
-                  <TableHead>Mobile</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead className="pl-5">{t("common.name")}</TableHead>
+                  <TableHead>{t("settings.mobile")}</TableHead>
+                  <TableHead>{t("settings.role")}</TableHead>
+                  <TableHead>{t("common.status")}</TableHead>
                   <TableHead className="pr-5 text-right">
-                    <span className="sr-only">Actions</span>
+                    <span className="sr-only">{t("settings.actions")}</span>
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {staff.map((member) => (
                   <TableRow key={member.id}>
-                    <TableCell className="pl-5 font-medium text-foreground">
+                    <TableCell data-title className="pl-5 font-medium text-foreground">
                       {member.name}
-                      {member.id === session.userId ? <span className="ml-1.5 text-xs text-muted-foreground">(you)</span> : null}
+                      {member.id === session.userId ? <span className="ml-1.5 text-xs text-muted-foreground">{t("settings.you")}</span> : null}
                     </TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">{member.phone}</TableCell>
-                    <TableCell>
+                    <TableCell data-label={t("settings.mobile")} className="tabular-nums text-muted-foreground">{member.phone}</TableCell>
+                    <TableCell data-label={t("settings.role")}>
                       {member.role !== "owner" && isOwner ? (
                         <StaffRoleForm userId={member.id} currentRole={member.role} name={member.name} />
                       ) : (
-                        <Badge variant={member.role === "owner" ? "info" : "neutral"}>{ROLE_LABELS[member.role]}</Badge>
+                        <Badge variant={member.role === "owner" ? "info" : "neutral"}>{t(ROLE_KEYS[member.role])}</Badge>
                       )}
                     </TableCell>
-                    <TableCell>
-                      <Badge variant={member.isActive ? "success" : "neutral"}>{member.isActive ? "Active" : "Deactivated"}</Badge>
+                    <TableCell data-key>
+                      <Badge variant={member.isActive ? "success" : "neutral"}>{t(member.isActive ? "settings.active" : "settings.deactivated")}</Badge>
                     </TableCell>
                     <TableCell className="pr-5 text-right">
                       {member.role !== "owner" && member.id !== session.userId ? (
@@ -124,52 +127,50 @@ async function SettingsContent() {
             <div className="flex flex-col gap-3 border-t border-border px-5 pt-5">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <Users className="size-4" aria-hidden="true" />
-                Add a person
+                {t("settings.addPerson")}
               </h3>
               <AddStaffForm />
             </div>
           </div>
         </SectionCard>
       ) : (
-        <SectionCard title="Staff & access" description="Only the owner can add staff or change access.">
-          <p className="text-sm text-muted-foreground">You&apos;re signed in as {ROLE_LABELS[session.role].toLowerCase()}. Ask the owner if your access needs to change.</p>
+        <SectionCard title={t("settings.staff")} description={t("settings.staffOwnerOnly")}>
+          <p className="text-sm text-muted-foreground">{t("settings.signedInAsRole", { role: t(ROLE_KEYS[session.role]) })}</p>
         </SectionCard>
       )}
 
       <SectionCard
-        title="Owner approval PIN"
-        description="Needed for discounts above a cashier's limit, credit beyond a customer's limit, and other approvals."
+        title={t("settings.pin")}
+        description={t("settings.pinHelp")}
         action={
           pinSet ? (
             <Badge variant="success" className="h-6 gap-1.5 px-2.5">
               <CircleCheck aria-hidden="true" />
-              Set
+              {t("settings.pinIsSet")}
             </Badge>
           ) : (
             <Badge variant="warning" className="h-6 gap-1.5 px-2.5">
               <KeyRound aria-hidden="true" />
-              Not set
+              {t("settings.pinNotSet")}
             </Badge>
           )
         }
       >
         {isOwner ? (
           <div className="flex flex-col gap-3">
-            <p className="text-sm text-muted-foreground">4 to 6 digits. Avoid easy PINs like 1111 or 1234. Five wrong entries lock approvals for 15 minutes.</p>
+            <p className="text-sm text-muted-foreground">{t("settings.pinRules")}</p>
             <PinForm pinSet={pinSet} />
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">Only the owner can set or change this PIN.</p>
+          <p className="text-sm text-muted-foreground">{t("settings.pinOwnerOnly")}</p>
         )}
       </SectionCard>
 
-      <SectionCard title="Coming later" description="Other settings arrive with their modules.">
+      <SectionCard title={t("settings.later")} description={t("settings.laterHelp")}>
         <ul className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
-          {item.planned
-            .filter((feature) => !feature.startsWith("Staff"))
-            .map((feature) => (
-              <li key={feature}>• {feature}</li>
-            ))}
+          {ELSEWHERE_KEYS.map((feature) => (
+            <li key={feature}>• {t(feature)}</li>
+          ))}
         </ul>
       </SectionCard>
     </PageContainer>

@@ -15,6 +15,7 @@ import { cancelInvoice, createInvoice, getInvoice, previewBill, type BillInput }
 import { invoices } from "@/modules/sales/schema";
 import { withTransaction } from "@/server/db";
 import { ForbiddenError, NotFoundError } from "@/server/errors";
+import { translateServerMessage } from "@/shared/i18n";
 import { indiaDate } from "@/shared/financial-year";
 import { createTestShop, signInAs, type TestShop } from "../helpers/factories";
 import { setupTestDatabase } from "../helpers/test-db";
@@ -259,6 +260,80 @@ describe("concurrency and duplicates", () => {
     const saved = await sell(session, { ...input, cashReceived: "400" }, { idempotencyKey });
     expect(saved.replayed).toBe(false);
     expect(await sell(session, { ...input, cashReceived: "400" }, { idempotencyKey })).toMatchObject({ id: saved.id, replayed: true });
+  });
+});
+
+describe("an unreadable payment amount", () => {
+  it("is refused untouched, and correcting it saves the bill once: one invoice, one payment, one audit row", async () => {
+    const session = await owner();
+    const line = [{ productId: valve, unit: "pc", quantity: "1" }];
+    const idempotencyKey = key();
+    const auditRows = async () => (await db.owner.select().from(auditLog).where(and(eq(auditLog.shopId, shopA.shopId), eq(auditLog.action, "sales.invoice_issued")))).length;
+    const before = await counts(shopA.shopId);
+    const audit0 = await auditRows();
+    for (const bad of ["abc", "1.2.3", "-5", "12.345", "₹x"]) {
+      await expect(previewBill(session, { lines: line, payments: { cash: bad } }), bad).rejects.toBeTruthy();
+    }
+    expect(await counts(shopA.shopId)).toEqual(before);
+    // decimals and the existing shapes are accepted as before; empty means nothing paid by that method
+    const preview = await previewBill(session, { lines: line, payments: { cash: "", upi: "378.00" } });
+    expect(preview.problems).toEqual([]);
+    const input: BillInput = { lines: line, payments: { cash: "378" } };
+    const first = await sell(session, input, { idempotencyKey });
+    const again = await sell(session, input, { idempotencyKey });
+    expect(again).toMatchObject({ id: first.id, replayed: true });
+    const after = await counts(shopA.shopId);
+    expect({ i: after.i - before.i, p: after.p - before.p }).toEqual({ i: 1, p: 1 });
+    expect((await auditRows()) - audit0).toBe(1);
+    // too much paid is still the server's refusal
+    expect((await previewBill(session, { lines: line, payments: { cash: "999" } })).problems.map((problem) => problem.code)).toEqual(["OVERPAID"]);
+  });
+});
+
+describe("billing payment restrictions follow the employee's language", () => {
+  const LANGUAGES = ["en", "hinglish", "hi"] as const;
+  // Hinglish keeps loan words such as bill, cash and customer, so only whole English phrases count as a leak.
+  const ENGLISH_SENTENCE = /(Payments add up|more than the bill total|Choose a customer|would go over|Take more payment|less than the cash amount|Cash received is)/;
+
+  it("overpayment, credit with no customer, credit over the limit and short cash read in each language, with the amounts kept", async () => {
+    const session = await owner();
+    const line = [{ productId: valve, unit: "pc", quantity: "1" }];
+    const limited = await customer(shopA, "retail", 0);
+    const cases: { code: string; input: BillInput; keeps: string[] }[] = [
+      { code: "OVERPAID", input: { lines: line, payments: { cash: "999" } }, keeps: ["₹999", "₹378"] },
+      { code: "CREDIT_NEEDS_CUSTOMER", input: { lines: line, payments: { cash: "100" } }, keeps: [] },
+      { code: "CREDIT_LIMIT", input: { customerId: limited, lines: line, payments: { cash: "100" } }, keeps: ["₹0"] },
+      { code: "CASH_SHORT", input: { lines: line, payments: { cash: "378" }, cashReceived: "350" }, keeps: ["₹28"] },
+    ];
+    const before = await counts(shopA.shopId);
+    for (const { code, input, keeps } of cases) {
+      const problem = (await previewBill(session, input)).problems.find((p) => p.code === code);
+      expect(problem, code).toBeTruthy();
+      expect(translateServerMessage(problem!.message, "en")).toBe(problem!.message);
+      for (const language of LANGUAGES.filter((l) => l !== "en")) {
+        const text = translateServerMessage(problem!.message, language);
+        expect(text, `${code} ${language}`).not.toBe(problem!.message);
+        expect(text, `${code} ${language}`).not.toMatch(ENGLISH_SENTENCE);
+        for (const amount of keeps) expect(text, `${code} ${language}`).toContain(amount);
+        if (language === "hi") {
+          expect(text).toMatch(/[ऀ-ॿ]/);
+          // the customer's own name is the only Latin text allowed
+          if (code !== "CREDIT_LIMIT") expect(text, `${code} hi`).not.toMatch(/[A-Za-z]{3,}/);
+        }
+        if (language === "hi") {
+          expect(text).toMatch(/[ऀ-ॿ]/);
+          if (code !== "CREDIT_LIMIT") expect(text, `${code} hi`).not.toMatch(/[A-Za-z]{3,}/); // the customer's own name is the only Latin text allowed
+        }
+      }
+      // the save is refused with the same words, and nothing is written
+      const refusal = await sell(session, input).then(
+        () => null,
+        (error: unknown) => (error as Error).message,
+      );
+      expect(refusal, code).toBeTruthy();
+      for (const language of LANGUAGES.filter((l) => l !== "en")) expect(translateServerMessage(refusal!, language), `refused ${code} ${language}`).not.toMatch(ENGLISH_SENTENCE);
+    }
+    expect(await counts(shopA.shopId)).toEqual(before);
   });
 });
 

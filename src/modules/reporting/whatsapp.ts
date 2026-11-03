@@ -5,6 +5,7 @@ import { findCustomer } from "@/modules/parties";
 import { getDb, withTransaction } from "@/server/db";
 import { ConflictError, NotFoundError } from "@/server/errors";
 import { indiaDate } from "@/shared/financial-year";
+import { queuedMessageText, type QueuedTemplate } from "@/shared/reminder";
 import { CUSTOMER_TERMS_DAYS, listReceivables, prepareReminder } from "./accounts";
 import { getReminderProvider, ProviderError, type ReminderProvider } from "./reminder-provider";
 import { whatsappMessages, type WhatsAppStatus } from "./schema";
@@ -30,7 +31,7 @@ async function enqueue(session: SessionContext, customerId: string, provider: Re
   return withTransaction(async (tx) => {
     const [created] = await tx
       .insert(whatsappMessages)
-      .values({ shopId: session.shopId, customerId, phone: reminder.phone, purpose: "dues_reminder", body: reminder.text, dedupeKey, createdBy: session.userId })
+      .values({ shopId: session.shopId, customerId, phone: reminder.phone, purpose: "dues_reminder", body: reminder.text, template: { kind: "dues_reminder", facts: reminder.facts }, dedupeKey, createdBy: session.userId })
       .onConflictDoNothing({ target: [whatsappMessages.shopId, whatsappMessages.dedupeKey] })
       .returning({ id: whatsappMessages.id, status: whatsappMessages.status });
     if (!created) {
@@ -86,12 +87,12 @@ export async function processWhatsAppOutbox(options: { shopId?: string; limit?: 
     returning id, shop_id, customer_id`);
   for (const row of stuck.rows) await failAndAlert({ id: row.id, shopId: row.shop_id, customerId: row.customer_id }, "Sending was interrupted; the outcome is unknown, so it was not sent again.");
 
-  const claimed = await db.execute<{ id: string; shop_id: string; customer_id: string; phone: string; body: string; attempts: number }>(sql`
+  const claimed = await db.execute<{ id: string; shop_id: string; customer_id: string; phone: string; body: string; template: QueuedTemplate | null; attempts: number }>(sql`
     update whatsapp_messages set status = 'sending', attempts = attempts + 1, updated_at = now()
     where id in (
       select id from whatsapp_messages where status = 'queued' and next_attempt_at <= now() ${shopFilter}
       order by next_attempt_at limit ${Math.min(Math.max(options.limit ?? 20, 1), 100)} for update skip locked)
-    returning id, shop_id, customer_id, phone, body, attempts`);
+    returning id, shop_id, customer_id, phone, body, template, attempts`);
   if (claimed.rows.length === 0) return { sent: 0, retrying: 0, failed: stuck.rows.length };
 
   let provider: ReminderProvider | null = null;
@@ -116,7 +117,11 @@ export async function processWhatsAppOutbox(options: { shopId?: string; limit?: 
       continue;
     }
     try {
-      const { providerMessageId } = await provider.send({ phone: row.phone, text: row.body });
+      // A standard reminder follows the customer's language at sending time; `body` then records what actually went.
+      const language = customer.communicationLanguage ?? "hinglish";
+      const text = queuedMessageText(row, language);
+      if (text !== row.body) await db.update(whatsappMessages).set({ body: text }).where(eq(whatsappMessages.id, row.id));
+      const { providerMessageId } = await provider.send({ phone: row.phone, text, language });
       await db.update(whatsappMessages).set({ status: "sent", providerMessageId, lastError: null, updatedAt: sql`now()` }).where(eq(whatsappMessages.id, row.id));
       counts.sent += 1;
     } catch (error) {

@@ -1,10 +1,11 @@
 "use server";
 
+import { getT, localizeServerMessage } from "@/server/i18n";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { unstable_rethrow } from "next/navigation";
 import { ZodError } from "zod";
-import { createCustomer, updateCustomer } from "@/modules/parties";
+import { createCustomer, setCustomerCommunicationLanguage, updateCustomer } from "@/modules/parties";
 import { recordCustomerReceipt, reverseCustomerReceipt } from "@/modules/payments";
 import { logReminder, prepareReminder, processWhatsAppOutbox } from "@/modules/reporting";
 import { toActionError } from "@/server/action-result";
@@ -17,20 +18,20 @@ export type FormState = { ok?: boolean; message?: string; error?: string; fieldE
 
 const text = (formData: FormData, name: string) => String(formData.get(name) ?? "");
 
-function failure(error: unknown, values?: Record<string, string>): FormState {
+async function failure(error: unknown, values?: Record<string, string>): Promise<FormState> {
   if (error instanceof ZodError) {
     const fieldErrors: Record<string, string> = {};
     for (const issue of error.issues) {
       const key = String(issue.path[0] ?? "");
-      if (key && !fieldErrors[key]) fieldErrors[key] = issue.message;
+      if (key && !fieldErrors[key]) fieldErrors[key] = await localizeServerMessage(issue.message);
     }
-    return { error: error.issues[0]?.message ?? "Please check the form.", fieldErrors, values };
+    return { error: await localizeServerMessage(error.issues[0]?.message ?? "Please check the form."), fieldErrors, values };
   }
-  const result = toActionError(error);
+  const result = await toActionError(error);
   return { error: result.error, fieldErrors: result.details?.fieldErrors as Record<string, string> | undefined, values };
 }
 
-const FIELDS = ["name", "phone", "type", "area", "gstin", "creditLimit", "whatsappConsent", "openingOwed", "openingAdvance", "oldestBillDate"];
+const FIELDS = ["name", "phone", "type", "area", "gstin", "creditLimit", "whatsappConsent", "communicationLanguage", "openingOwed", "openingAdvance", "oldestBillDate"];
 
 export async function saveCustomerAction(_previous: FormState, formData: FormData): Promise<FormState> {
   const customerId = text(formData, "customerId");
@@ -45,7 +46,8 @@ export async function saveCustomerAction(_previous: FormState, formData: FormDat
   }
   revalidatePath("/customers");
   if (customerId) revalidatePath(`/customers/${customerId}`);
-  return { ok: true, message: customerId ? "Details saved." : `${values.name} added.` };
+  const t = await getT();
+  return { ok: true, message: customerId ? t("customers.saved") : t("customers.added", { name: values.name! }) };
 }
 
 export async function recordReceiptAction(_previous: FormState, formData: FormData): Promise<FormState> {
@@ -56,7 +58,8 @@ export async function recordReceiptAction(_previous: FormState, formData: FormDa
     revalidatePath(`/customers/${customerId}`);
     revalidatePath("/customers");
     revalidatePath("/cashbook");
-    return { ok: true, message: result.advancePaise > 0 ? `${result.receiptNumber} saved. ${formatPaise(result.advancePaise, { withPaise: true })} is kept as an advance.` : `${result.receiptNumber} saved.` };
+    const t = await getT();
+    return { ok: true, message: result.advancePaise > 0 ? t("customers.receiptAdvance", { number: result.receiptNumber, amount: formatPaise(result.advancePaise, { withPaise: true }) }) : t("customers.receiptSaved", { number: result.receiptNumber }) };
   } catch (error) {
     unstable_rethrow(error);
     return failure(error, values);
@@ -76,12 +79,24 @@ export async function reverseReceiptAction(_previous: FormState, formData: FormD
   return { ok: true };
 }
 
+/** Saves the language this customer reads messages in. Only runs when the person asks to save it. */
+export async function saveCustomerLanguageAction(customerId: string, language: string): Promise<{ ok?: true; error?: string }> {
+  try {
+    await setCustomerCommunicationLanguage(await requireSession(), customerId, language);
+    revalidatePath(`/customers/${customerId}`);
+    return { ok: true };
+  } catch (error) {
+    unstable_rethrow(error);
+    return { error: (await toActionError(error)).error };
+  }
+}
+
 export async function prepareReminderAction(customerId: string) {
   try {
     return { reminder: await prepareReminder(await requireSession(), customerId) };
   } catch (error) {
     unstable_rethrow(error);
-    return { error: toActionError(error).error };
+    return { error: (await toActionError(error)).error };
   }
 }
 
@@ -97,6 +112,6 @@ export async function logReminderAction(customerId: string, channel: "provider" 
     return result;
   } catch (error) {
     unstable_rethrow(error);
-    return { error: toActionError(error).error };
+    return { error: (await toActionError(error)).error };
   }
 }

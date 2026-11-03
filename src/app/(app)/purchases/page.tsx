@@ -12,42 +12,47 @@ import { getNavItem } from "@/config/navigation";
 import { hasPermission } from "@/modules/identity";
 import { listGoodsReceipts, listPurchaseOrders, PURCHASES_EDIT, STOCK_RECEIVE } from "@/modules/purchasing";
 import { requireSession } from "@/server/auth";
+import { getLanguage, getT } from "@/server/i18n";
+import { billDate } from "@/shared/i18n/labels";
 
 const item = getNavItem("purchases");
 
-export const metadata: Metadata = { title: "Purchases" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getT();
+  return { title: t("page.purchases") };
+}
 
 export default function PurchasesPage() {
   return (
-    <ProtectedPage permission="purchases.view" title={item.label}>
+    <ProtectedPage permission="purchases.view" title={item.label} guide="purchases">
       <Purchases />
     </ProtectedPage>
   );
 }
 
-const dateText = (value: string) => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
-
 async function Purchases() {
   const session = await requireSession();
+  const [t, language] = await Promise.all([getT(), getLanguage()]);
+  const dateText = (value: string) => billDate(value, language);
   const [orders, receipts, canOrder, canReceive] = await Promise.all([listPurchaseOrders(session), listGoodsReceipts(session), hasPermission(session, PURCHASES_EDIT), hasPermission(session, STOCK_RECEIVE)]);
   const open = orders.filter((order) => order.status === "ordered" || order.status === "partially_received");
 
   return (
     <PageContainer>
       <PageIntro
-        description="Order from suppliers and receive goods. Receiving adds stock, updates the cost price and adds the bill to what you owe."
+        description={t("purchases.intro")}
         actions={
           <>
             {canOrder ? (
               <Link href="/purchases/new" className={buttonVariants({ variant: "outline", size: "touch" })}>
                 <ClipboardList aria-hidden="true" />
-                New order
+                {t("purchases.newOrder")}
               </Link>
             ) : null}
             {canReceive ? (
               <Link href="/purchases/receive" className={buttonVariants({ size: "touch" })}>
                 <PackagePlus aria-hidden="true" />
-                Receive goods
+                {t("suppliers.receiveGoods")}
               </Link>
             ) : null}
           </>
@@ -56,21 +61,21 @@ async function Purchases() {
       <section className="grid grid-cols-2 gap-3 rounded-2xl bg-panel p-5 text-panel-foreground sm:grid-cols-3 sm:p-6">
         <div>
           <p className="text-2xl font-bold tabular-nums">{open.length}</p>
-          <p className="text-xs text-panel-muted">Orders waiting for goods</p>
+          <p className="text-xs text-panel-muted">{t("purchases.waiting")}</p>
         </div>
         <div>
           <p className="text-2xl font-bold tabular-nums">{orders.filter((order) => order.status === "partially_received").length}</p>
-          <p className="text-xs text-panel-muted">Received short</p>
+          <p className="text-xs text-panel-muted">{t("purchases.receivedShort")}</p>
         </div>
         <div>
           <p className="text-2xl font-bold tabular-nums">{receipts.filter((receipt) => receipt.status === "received").length}</p>
-          <p className="text-xs text-panel-muted">Goods receipts</p>
+          <p className="text-xs text-panel-muted">{t("purchases.receiptsCount")}</p>
         </div>
       </section>
       <div className="grid gap-6 xl:grid-cols-2">
-        <SectionCard title="Purchase orders" description="Newest first" flush>
+        <SectionCard help="purchaseOrder" title={t("purchases.orders")} anchorId="purchase-orders" description={t("purchases.newestFirst")} flush>
           {orders.length === 0 ? (
-            <p className="border-t border-border px-5 py-10 text-center text-sm text-muted-foreground">No orders yet. Ordering first is optional: you can receive goods directly.</p>
+            <p className="border-t border-border px-5 py-10 text-center text-sm text-muted-foreground">{t("purchases.noOrders")}</p>
           ) : (
             <ul className="flex flex-col divide-y divide-border border-t border-border">
               {orders.map((order) => (
@@ -82,16 +87,16 @@ async function Purchases() {
                         {dateText(order.orderDate)} · {order.supplierName}
                       </span>
                     </span>
-                    <Badge variant={ORDER_STATUS[order.status]?.variant ?? "neutral"}>{ORDER_STATUS[order.status]?.label ?? order.status}</Badge>
+                    <Badge variant={ORDER_STATUS[order.status]?.variant ?? "neutral"}>{ORDER_STATUS[order.status] ? t(ORDER_STATUS[order.status]!.label) : order.status}</Badge>
                   </Link>
                 </li>
               ))}
             </ul>
           )}
         </SectionCard>
-        <SectionCard title="Goods received" description="Newest first" flush>
+        <SectionCard help="goodsReceived" title={t("purchases.received")} anchorId="goods-received" description={t("purchases.newestFirst")} flush>
           {receipts.length === 0 ? (
-            <p className="border-t border-border px-5 py-10 text-center text-sm text-muted-foreground">Nothing received yet.</p>
+            <p className="border-t border-border px-5 py-10 text-center text-sm text-muted-foreground">{t("suppliers.nothingReceived")}</p>
           ) : (
             <ul className="flex flex-col divide-y divide-border border-t border-border">
               {receipts.map((receipt) => (
@@ -101,12 +106,12 @@ async function Purchases() {
                       <span className="block font-semibold text-foreground">{receipt.number}</span>
                       <span className="block text-xs text-muted-foreground">
                         {dateText(receipt.receivedDate)} · {receipt.supplierName}
-                        {receipt.supplierBillNo ? ` · bill ${receipt.supplierBillNo}` : ""}
+                        {receipt.supplierBillNo ? ` · ${t("suppliers.billNumber", { number: receipt.supplierBillNo })}` : ""}
                       </span>
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-1">
                       <Money paise={receipt.totalPaise} withPaise className="font-semibold text-foreground" />
-                      {receipt.status === "cancelled" ? <Badge variant="neutral">Cancelled</Badge> : null}
+                      {receipt.status === "cancelled" ? <Badge variant="neutral">{t("purchases.status.cancelled")}</Badge> : null}
                     </span>
                   </Link>
                 </li>

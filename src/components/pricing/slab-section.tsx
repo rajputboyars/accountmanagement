@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { addSlabAction, setSlabActiveAction, updateSlabAction, type PricingFormState } from "@/app/(app)/pricing/actions";
 import { Field, FormAlert, SubmitButton } from "@/components/catalog/form-bits";
+import { useT } from "@/components/nexora/language-provider";
+import { unitShort } from "@/shared/i18n/unit-labels";
 
 export type SlabView = {
   id: string;
@@ -21,16 +23,19 @@ export type SlabView = {
 };
 
 function ConfirmBelowCost({ show, defaultChecked }: { show: boolean; defaultChecked?: boolean }) {
+  const t = useT();
   if (!show) return null;
   return (
     <label className="flex min-h-11 items-start gap-2 rounded-lg bg-amber-soft px-3 py-2 text-sm text-amber-ink">
       <input type="checkbox" name="confirmBelowCost" defaultChecked={defaultChecked} className="mt-0.5 size-5 shrink-0 accent-[var(--teal-strong)]" />
-      I confirm selling below cost at this price.
+      {t("pricing.confirmBelowCost")}
     </label>
   );
 }
 
 function SlabRow({ productId, baseUnit, slab }: { productId: string; baseUnit: string; slab: SlabView }) {
+  const t = useT();
+  const unit = unitShort(t, baseUnit);
   const [editing, setEditing] = useState(false);
   const [updateState, updateAction] = useActionState<PricingFormState, FormData>(async (previous, formData) => {
     const result = await updateSlabAction(previous, formData);
@@ -44,18 +49,18 @@ function SlabRow({ productId, baseUnit, slab }: { productId: string; baseUnit: s
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 text-sm">
           <p className="text-foreground">
-            <span className="font-semibold">{slab.rangeLabel}:</span> <span className="font-semibold tabular-nums">{slab.priceText}</span> per {baseUnit}
+            <span className="font-semibold">{slab.rangeLabel}:</span> <span className="font-semibold tabular-nums">{slab.priceText}</span> {t("pricing.perUnit", { unit })}
           </p>
           <div className="mt-1 flex flex-wrap gap-1.5">
-            {!slab.isActive ? <Badge variant="neutral">Retired</Badge> : null}
-            {slab.belowCost ? <Badge variant="danger">Below cost</Badge> : null}
-            {slab.marginText ? <span className="text-xs text-muted-foreground">Margin {slab.marginText}</span> : null}
+            {!slab.isActive ? <Badge variant="neutral">{t("pricing.retired")}</Badge> : null}
+            {slab.belowCost ? <Badge variant="danger">{t("pricing.belowCost")}</Badge> : null}
+            {slab.marginText ? <span className="text-xs text-muted-foreground">{t("pricing.margin", { value: slab.marginText })}</span> : null}
           </div>
         </div>
         <div className="flex shrink-0 gap-1">
           {slab.isActive ? (
             <Button type="button" size="sm" variant="ghost" onClick={() => setEditing((value) => !value)}>
-              {editing ? "Cancel" : "Change price"}
+              {editing ? t("common.cancel") : t("pricing.changePrice")}
             </Button>
           ) : null}
           <form action={toggleAction}>
@@ -63,7 +68,7 @@ function SlabRow({ productId, baseUnit, slab }: { productId: string; baseUnit: s
             <input type="hidden" name="slabId" value={slab.id} />
             <input type="hidden" name="active" value={slab.isActive ? "false" : "true"} />
             <Button type="submit" size="sm" variant="outline">
-              {slab.isActive ? "Retire" : "Use again"}
+              {t(slab.isActive ? "pricing.retire" : "pricing.useAgain")}
             </Button>
           </form>
         </div>
@@ -73,10 +78,10 @@ function SlabRow({ productId, baseUnit, slab }: { productId: string; baseUnit: s
           <input type="hidden" name="productId" value={productId} />
           <input type="hidden" name="slabId" value={slab.id} />
           <div className="flex flex-wrap items-end gap-2">
-            <Field label={`Price per ${baseUnit} (₹)`} error={updateState.fieldErrors?.price ?? updateState.error}>
+            <Field label={t("pricing.pricePer", { unit })} error={updateState.fieldErrors?.price ?? updateState.error}>
               <Input name="price" defaultValue={updateState.values?.price ?? slab.priceInput} inputMode="decimal" className="h-11 w-36 tabular-nums" />
             </Field>
-            <SubmitButton>Save price</SubmitButton>
+            <SubmitButton>{t("pricing.savePrice")}</SubmitButton>
           </div>
           <ConfirmBelowCost show={Boolean(updateState.needsCostConfirm)} />
         </form>
@@ -106,6 +111,8 @@ export function SlabSection({
   baselineLabel: string | null;
   slabs: SlabView[];
 }) {
+  const t = useT();
+  const unit = unitShort(t, baseUnit);
   const [state, action] = useActionState<PricingFormState, FormData>(addSlabAction, {});
   const active = slabs.filter((slab) => slab.isActive);
   const retired = slabs.filter((slab) => !slab.isActive);
@@ -114,17 +121,17 @@ export function SlabSection({
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
-        Wholesale bills only. A slab gives a lower price per {baseUnit} once the quantity, counted in {baseUnit}, reaches its minimum. Retail bills always use the retail price.
+        {t("pricing.slabsHelp", { unit })}
       </p>
       {active.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border px-4 py-5 text-center text-sm text-muted-foreground">
-          No slabs yet. Every wholesale quantity gets {wholesaleText} per {baseUnit}.
+          {t("pricing.noSlabs", { amount: wholesaleText, unit })}
         </p>
       ) : null}
       {baselineLabel ? (
         <p className="text-sm text-foreground">
-          <span className="font-semibold">{baselineLabel}:</span> <span className="font-semibold tabular-nums">{wholesaleText}</span> per {baseUnit}{" "}
-          <span className="text-muted-foreground">(wholesale price)</span>
+          <span className="font-semibold">{baselineLabel}:</span> <span className="font-semibold tabular-nums">{wholesaleText}</span> {t("pricing.perUnit", { unit })}{" "}
+          <span className="text-muted-foreground">{t("pricing.wholesalePrice")}</span>
         </p>
       ) : null}
       {slabs.length > 0 ? (
@@ -138,17 +145,17 @@ export function SlabSection({
       <form key={state.nonce ?? "add"} action={action} className="flex flex-col gap-3 border-t border-border pt-4">
         <input type="hidden" name="productId" value={productId} />
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={`From quantity (${baseUnit})`} hint={allowDecimal ? "More than 1, up to 3 decimals." : "A whole number more than 1."} error={state.fieldErrors?.minQty}>
-            <Input name="minQty" defaultValue={values.minQty} inputMode="decimal" placeholder="e.g. 100" className="h-11 tabular-nums" />
+          <Field label={t("pricing.fromQuantity", { unit })} hint={t(allowDecimal ? "pricing.minDecimalHint" : "pricing.minWholeHint")} error={state.fieldErrors?.minQty}>
+            <Input name="minQty" defaultValue={values.minQty} inputMode="decimal" placeholder={t("pricing.exampleSlabQty")} className="h-11 tabular-nums" />
           </Field>
-          <Field label={`Price per ${baseUnit} (₹)`} hint={`Not above the wholesale price, ${wholesaleText}.`} error={state.fieldErrors?.price}>
-            <Input name="price" defaultValue={values.price} inputMode="decimal" placeholder="e.g. 440" className="h-11 tabular-nums" />
+          <Field label={t("pricing.pricePer", { unit })} hint={t("pricing.notAboveWholesale", { amount: wholesaleText })} error={state.fieldErrors?.price}>
+            <Input name="price" defaultValue={values.price} inputMode="decimal" placeholder={t("pricing.exampleSlabPrice")} className="h-11 tabular-nums" />
           </Field>
         </div>
         <ConfirmBelowCost show={Boolean(state.needsCostConfirm)} />
         <FormAlert error={state.fieldErrors ? undefined : state.error} message={state.message} />
         <div>
-          <SubmitButton variant="outline">Add slab</SubmitButton>
+          <SubmitButton variant="outline">{t("pricing.addSlab")}</SubmitButton>
         </div>
       </form>
     </div>

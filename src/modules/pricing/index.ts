@@ -4,7 +4,6 @@ export { defaultPriceList, priceBillLine, quoteForSession, rateReasonFor, type B
 export {
   addCustomerRule,
   addSlab,
-  describeRule,
   getPricingProduct,
   listAllProductRules,
   listPricingCustomers,

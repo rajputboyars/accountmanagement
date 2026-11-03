@@ -16,6 +16,9 @@ export function toCsv(rows: readonly (readonly (string | number | null | undefin
   return rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
 }
 
+/** A download body. The byte-order mark lets Excel read Hindi as UTF-8; it is not part of any cell. */
+export const csvDownload = (csv: string) => `\uFEFF${csv}`;
+
 /** Paise as rupees with integer maths: -1234 → "-12.34". */
 export function csvRupees(paise: number): string {
   const abs = Math.abs(paise);

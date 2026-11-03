@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
+import { check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
+import type { QueuedTemplate } from "../../shared/reminder";
 import { customers } from "../parties/schema";
 import { shops } from "../settings/schema";
 import { users } from "../identity/schema";
@@ -26,6 +27,7 @@ export const whatsappMessages = pgTable(
     phone: varchar("phone", { length: 15 }).notNull(),
     purpose: text("purpose").notNull(), // 'dues_reminder'
     body: text("body").notNull(),
+    template: jsonb("template").$type<QueuedTemplate>(), // a standard message's facts; null = send `body` as saved
     dedupeKey: text("dedupe_key").notNull(),
     status: text("status").$type<WhatsAppStatus>().notNull().default("queued"),
     attempts: integer("attempts").notNull().default(0),

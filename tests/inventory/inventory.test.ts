@@ -9,6 +9,7 @@ import { stockAdjustments, stockLevels, stockMovements } from "@/modules/invento
 import { getDb } from "@/server/db";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
 import { indiaDate } from "@/shared/financial-year";
+import { translateServerMessage } from "@/shared/i18n";
 import { createTestShop, signInAs, type TestShop } from "../helpers/factories";
 import { setupTestDatabase } from "../helpers/test-db";
 
@@ -83,6 +84,49 @@ describe("opening stock", () => {
     await open([{ productId: id, unit: "length", quantity: "4", unitCost: "29.50" }]);
     const [movement] = await db.owner.select().from(stockMovements).where(eq(stockMovements.productId, id));
     expect(movement).toMatchObject({ qtyBase: "11.000", unitCostPaise: 2950 });
+  });
+
+  it("recovers from invalid opening amounts and records one movement and audit on the corrected retry", async () => {
+    const id = await elbow();
+    const session = await owner();
+    const idempotencyKey = key();
+    const invalidQuantity = [{ productId: id, unit: "pc", quantity: "abc", unitCost: "" }];
+    const invalidCost = [{ productId: id, unit: "pc", quantity: "25", unitCost: "abc" }];
+    const auditBefore = await db.owner.select().from(auditLog).where(and(eq(auditLog.shopId, shopA.shopId), eq(auditLog.action, "inventory.opening_recorded")));
+
+    expect(await db.owner.select().from(stockMovements).where(eq(stockMovements.productId, id))).toHaveLength(0);
+    await expect(open(invalidQuantity, { session, idempotencyKey })).rejects.toMatchObject({
+      issues: expect.arrayContaining([expect.objectContaining({ path: ["lines", 0, "quantity"], message: "Quantity must be a number like 50 or 2.5." })]),
+    });
+    await expect(open(invalidCost, { session, idempotencyKey })).rejects.toMatchObject({
+      issues: expect.arrayContaining([expect.objectContaining({ path: ["lines", 0, "unitCost"], message: "Enter the cost in rupees, for example 402 or 21.50." })]),
+    });
+    for (const language of ["en", "hinglish", "hi"] as const) {
+      const quantityError = translateServerMessage("Quantity must be a number like 50 or 2.5.", language);
+      const costError = translateServerMessage("Enter the cost in rupees, for example 402 or 21.50.", language);
+      expect(quantityError.trim()).not.toBe("");
+      expect(costError.trim()).not.toBe("");
+      if (language !== "en") {
+        expect(quantityError).not.toBe("Quantity must be a number like 50 or 2.5.");
+        expect(costError).not.toBe("Enter the cost in rupees, for example 402 or 21.50.");
+      }
+      if (language === "hi") {
+        expect(quantityError).toMatch(/[ऀ-ॿ]/);
+        expect(costError).toMatch(/[ऀ-ॿ]/);
+      }
+    }
+    expect(await db.owner.select().from(stockMovements).where(eq(stockMovements.productId, id))).toHaveLength(0);
+    expect(await db.owner.select().from(auditLog).where(and(eq(auditLog.shopId, shopA.shopId), eq(auditLog.action, "inventory.opening_recorded")))).toHaveLength(auditBefore.length);
+
+    const corrected = await open([{ productId: id, unit: "pc", quantity: "25", unitCost: "22.00" }], { session, idempotencyKey });
+    expect(corrected.replayed).toBe(false);
+    expect(await open([{ productId: id, unit: "pc", quantity: "25", unitCost: "22.00" }], { session, idempotencyKey })).toMatchObject({ batchId: corrected.batchId, replayed: true });
+
+    const movements = await db.owner.select().from(stockMovements).where(eq(stockMovements.productId, id));
+    const audits = await db.owner.select().from(auditLog).where(and(eq(auditLog.entityId, corrected.batchId), eq(auditLog.action, "inventory.opening_recorded")));
+    expect(movements).toHaveLength(1);
+    expect(movements[0]).toMatchObject({ kind: "opening", qtyBase: "25.000", unitCostPaise: 2200 });
+    expect(audits).toHaveLength(1);
   });
 
   it("refuses zero, negative and over-precise quantities, fractions of a piece, unknown units and future dates", async () => {

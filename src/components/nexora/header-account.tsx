@@ -4,8 +4,7 @@ import { signOutAction } from "@/app/(auth)/login/actions";
 import { countUnreadNotifications } from "@/modules/identity";
 import { getCurrentShop } from "@/modules/settings";
 import { getCurrentSession } from "@/server/auth";
-
-const ROLE_LABELS = { owner: "Owner", manager: "Manager", cashier: "Cashier", inventory: "Inventory" } as const;
+import { getT } from "@/server/i18n";
 
 function initials(name: string) {
   return name
@@ -28,10 +27,11 @@ export async function HeaderShopName() {
 export async function HeaderAccount() {
   const session = await getCurrentSession();
   if (!session) return null;
-  const unread = await countUnreadNotifications(session);
+  const [unread, t] = await Promise.all([countUnreadNotifications(session), getT()]);
+  const roleLabel = t(`role.${session.role}`);
   return (
     <div className="flex items-center gap-2">
-      <Link href="/notifications" className="relative grid size-11 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}>
+      <Link href="/notifications" className="relative grid size-11 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={unread ? t("common.notificationsUnread", { count: unread }) : t("common.notifications")}>
         <Bell className="size-5" aria-hidden="true" />
         {unread ? (
           <span aria-hidden="true" className="absolute top-1.5 right-1.5 grid min-w-5 place-items-center rounded-full bg-danger px-1 text-[11px] font-semibold text-white tabular-nums">
@@ -45,17 +45,17 @@ export async function HeaderAccount() {
         </span>
         <span className="hidden flex-col leading-tight sm:flex">
           <span className="text-sm font-semibold text-foreground">{session.name}</span>
-          <span className="text-xs text-muted-foreground">{ROLE_LABELS[session.role]}</span>
+          <span className="text-xs text-muted-foreground">{roleLabel}</span>
         </span>
         <span className="sr-only sm:hidden">
-          Signed in as {session.name}, {ROLE_LABELS[session.role]}
+          {t("common.signedInAs", { name: session.name, role: roleLabel })}
         </span>
       </div>
       <form action={signOutAction}>
         <button
           type="submit"
-          aria-label="Sign out"
-          title="Sign out"
+          aria-label={t("common.signOut")}
+          title={t("common.signOut")}
           className="grid size-11 place-items-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-muted md:size-10"
         >
           <LogOut className="size-[18px]" aria-hidden="true" />

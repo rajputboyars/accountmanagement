@@ -4,15 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { CircleCheck, Circle, X } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { useT } from "./language-provider";
+import { en } from "@/shared/i18n/messages/en";
+import { makeTranslate, splitMessage, type Translate } from "@/shared/i18n/translate";
 import { formatPaise } from "@/shared/money";
 import type { Onboarding, OnboardingStepKey } from "@/modules/reporting";
 
-const STEP_TEXT: Record<OnboardingStepKey, { title: string; detail: string; action: string }> = {
-  business: { title: "Add your shop's address and phone", detail: "They are printed on every bill.", action: "Open settings" },
-  product: { title: "Add your first product", detail: "Name and selling price. You can add the rest later.", action: "Add a product" },
-  stock: { title: "Enter how much stock you have", detail: "Count what is on the shelf (opening stock), so bills can check it.", action: "Enter stock" },
-  bill: { title: "Make your first bill", detail: "Bill a walk-in customer, or pick a customer to give udhaar (credit).", action: "New bill" },
-};
+const english = makeTranslate(en);
 
 /** Today's figures for the "you're set up" card. Profit is null when the viewer can't see it. */
 export type TodaySummary = {
@@ -30,9 +28,11 @@ export function checklistMode(onboarding: Onboarding, today: TodaySummary | null
   return today ? "done" : "hidden";
 }
 
+const stepKey = (key: OnboardingStepKey, part: "title" | "detail" | "action") => `setup.${key}.${part}` as const;
+
 /** The line under a step: done, what to do, or who can do it. */
-export function stepHint(step: Onboarding["steps"][number]): string {
-  return step.done ? "Done." : step.canAct ? STEP_TEXT[step.key].detail : "Ask the owner to do this.";
+export function stepHint(step: Onboarding["steps"][number], t: Translate = english): string {
+  return t(step.done ? "setup.done" : step.canAct ? stepKey(step.key, "detail") : "setup.askOwner");
 }
 
 /**
@@ -40,6 +40,7 @@ export function stepHint(step: Onboarding["steps"][number]): string {
  * component only remembers, on this device, that the person closed it.
  */
 export function SetupChecklist({ shopId, onboarding, today }: { shopId: string; onboarding: Onboarding; today: TodaySummary | null }) {
+  const t = useT();
   const storageKey = `nexora:setup-checklist:${shopId}:${onboarding.complete ? "done" : "steps"}`;
   const [hidden, setHidden] = useState<boolean | null>(null);
   useEffect(() => {
@@ -63,7 +64,7 @@ export function SetupChecklist({ shopId, onboarding, today }: { shopId: string; 
     setHidden(true);
   };
   const close = (
-    <button type="button" onClick={dismiss} className="-m-2 grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close">
+    <button type="button" onClick={dismiss} className="-m-2 grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={t("common.close")}>
       <X className="size-5" aria-hidden="true" />
     </button>
   );
@@ -71,21 +72,21 @@ export function SetupChecklist({ shopId, onboarding, today }: { shopId: string; 
   if (mode === "done" && today) {
     const profit = today.profit;
     const rows: { label: string; value: string; note?: string }[] = [
-      { label: "Today's sales", value: formatPaise(today.billedPaise), note: `${today.billCount} ${today.billCount === 1 ? "bill" : "bills"}` },
-      { label: "Payments received", value: formatPaise(today.collectedPaise) },
-      ...(today.receivablePaise !== null ? [{ label: "Customers owe you (udhaar)", value: formatPaise(today.receivablePaise) }] : []),
-      { label: "Expenses", value: formatPaise(today.expensesPaise) },
-      ...(profit ? [profit.reliable ? { label: "Profit", value: formatPaise(profit.grossProfitPaise), note: "before GST" } : { label: "Profit", value: "Not available", note: "add cost prices" }] : []),
+      { label: t("setup.todaySales"), value: formatPaise(today.billedPaise), note: t(today.billCount === 1 ? "common.bill" : "common.bills", { count: today.billCount }) },
+      { label: t("setup.paymentsReceived"), value: formatPaise(today.collectedPaise) },
+      ...(today.receivablePaise !== null ? [{ label: t("setup.customersOwe"), value: formatPaise(today.receivablePaise) }] : []),
+      { label: t("setup.expenses"), value: formatPaise(today.expensesPaise) },
+      ...(profit ? [profit.reliable ? { label: t("setup.profit"), value: formatPaise(profit.grossProfitPaise), note: t("setup.beforeGst") } : { label: t("setup.profit"), value: t("setup.notAvailable"), note: t("setup.addCostPrices") }] : []),
     ];
     return (
-      <section aria-label="Setup done" className="flex flex-col gap-4 rounded-2xl border border-teal/40 bg-teal-soft p-5">
+      <section aria-label={t("setup.doneLabel")} className="flex flex-col gap-4 rounded-2xl border border-teal/40 bg-teal-soft p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
             <h2 className="flex items-center gap-2 font-semibold text-foreground">
               <CircleCheck className="size-5 text-teal-strong" aria-hidden="true" />
-              Your shop is set up
+              {t("setup.doneTitle")}
             </h2>
-            <p className="text-sm text-muted-foreground">This dashboard is your daily summary. Check these five numbers at the end of each day:</p>
+            <p className="text-sm text-muted-foreground">{t("setup.doneBody")}</p>
           </div>
           {close}
         </div>
@@ -104,23 +105,23 @@ export function SetupChecklist({ shopId, onboarding, today }: { shopId: string; 
 
   const total = onboarding.steps.length;
   const next = onboarding.steps.find((step) => !step.done);
+  const [importBefore, importAfter] = splitMessage(t("setup.import"), "link");
   return (
-    <section aria-label="Set up your shop" className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5">
+    <section aria-label={t("setup.label")} className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
-          <h2 className="font-semibold text-foreground">Get your shop ready in {total} steps</h2>
+          <h2 className="font-semibold text-foreground">{t("setup.title", { total })}</h2>
           <p className="text-sm text-muted-foreground">
-            {onboarding.doneCount} of {total} done. Each step ticks itself off when you finish it.
+            {t("setup.progress", { done: onboarding.doneCount, total })}
           </p>
         </div>
         {close}
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={total} aria-valuenow={onboarding.doneCount}>
+      <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={t("setup.progressLabel")} aria-valuemin={0} aria-valuemax={total} aria-valuenow={onboarding.doneCount}>
         <div className="h-full rounded-full bg-teal transition-[width]" style={{ width: `${(onboarding.doneCount / total) * 100}%` }} />
       </div>
       <ol className="flex flex-col gap-3">
         {onboarding.steps.map((step) => {
-          const text = STEP_TEXT[step.key];
           const isNext = step.key === next?.key;
           return (
             <li key={step.key} className="flex flex-col gap-3 rounded-xl border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -128,15 +129,15 @@ export function SetupChecklist({ shopId, onboarding, today }: { shopId: string; 
                 {step.done ? <CircleCheck className="mt-0.5 size-5 shrink-0 text-teal-strong" aria-hidden="true" /> : <Circle className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden="true" />}
                 <div className="flex flex-col">
                   <span className={step.done ? "font-medium text-muted-foreground line-through" : "font-medium text-foreground"}>
-                    {text.title}
-                    <span className="sr-only">{step.done ? " (done)" : " (to do)"}</span>
+                    {t(stepKey(step.key, "title"))}
+                    <span className="sr-only">{` ${t(step.done ? "setup.stepDone" : "setup.stepToDo")}`}</span>
                   </span>
-                  <span className="text-sm text-muted-foreground">{stepHint(step)}</span>
+                  <span className="text-sm text-muted-foreground">{stepHint(step, t)}</span>
                 </div>
               </div>
               {!step.done && step.canAct ? (
                 <Link href={step.href} className={buttonVariants({ variant: isNext ? "default" : "outline", size: "touch" })}>
-                  {text.action}
+                  {t(stepKey(step.key, "action"))}
                 </Link>
               ) : null}
             </li>
@@ -145,11 +146,11 @@ export function SetupChecklist({ shopId, onboarding, today }: { shopId: string; 
       </ol>
       {onboarding.canImport ? (
         <p className="text-sm text-muted-foreground">
-          Already have a list in Excel or another app?{" "}
+          {importBefore}
           <Link href="/settings/setup#import" className="font-semibold text-teal-strong hover:underline">
-            Import products, customers and suppliers from a spreadsheet
+            {t("setup.importLink")}
           </Link>
-          . Every row is checked before anything is saved.
+          {importAfter}
         </p>
       ) : null}
     </section>

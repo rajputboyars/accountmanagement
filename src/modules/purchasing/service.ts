@@ -539,6 +539,6 @@ export async function purchasableProducts(session: SessionContext) {
       sku: product.sku,
       baseUnit: product.baseUnit,
       gstRateBp: product.gstRateBp,
-      units: [{ code: product.baseUnit, label: product.baseUnitName }, ...product.saleUnits.map((unit) => ({ code: unit.code, label: `${unit.name} of ${formatQuantity(unit.factor)}` }))],
+      units: [{ code: product.baseUnit, name: product.baseUnitName, factor: null as string | null }, ...product.saleUnits.map((unit) => ({ code: unit.code, name: unit.name, factor: formatQuantity(unit.factor) as string | null }))],
     }));
 }

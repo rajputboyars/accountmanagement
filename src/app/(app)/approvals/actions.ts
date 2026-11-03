@@ -9,6 +9,8 @@ import { findInvoiceByNumber } from "@/modules/sales";
 import { toActionError } from "@/server/action-result";
 import { requireSession } from "@/server/auth";
 import { NotFoundError } from "@/server/errors";
+import { getLanguage, getT, localizeServerMessage } from "@/server/i18n";
+import { systemName } from "@/shared/i18n/labels";
 import { parseRupeesToPaise } from "@/shared/money";
 import { parsePercentToBasisPoints } from "@/shared/pricing-engine";
 
@@ -47,12 +49,12 @@ export async function requestApprovalAction(_previous: FormState, formData: Form
     }
     if (action === "discount_over_limit") {
       limitBp = parsePercentToBasisPoints(text("discountPercent"));
-      if (limitBp === null || limitBp <= 0 || limitBp > 10_000) return { error: "Enter the discount % you need, for example 10." };
+      if (limitBp === null || limitBp <= 0 || limitBp > 10_000) return { error: await localizeServerMessage("Enter the discount % you need, for example 10.") };
     }
     if (action === "credit_over_limit" || action === "stock_adjustment") {
       const raw = text("amount");
       amountPaise = raw ? parseRupeesToPaise(raw) : null;
-      if (raw && (amountPaise === null || amountPaise <= 0)) return { error: "Enter the amount in rupees, more than 0." };
+      if (raw && (amountPaise === null || amountPaise <= 0)) return { error: await localizeServerMessage("Enter the amount in rupees, more than 0.") };
     }
     const result = await requestApproval(session, {
       action,
@@ -64,16 +66,16 @@ export async function requestApprovalAction(_previous: FormState, formData: Form
       quantity: text("quantity") || null,
     });
     revalidatePath("/approvals");
+    const [t, language] = await Promise.all([getT(), getLanguage()]);
+    const name = systemName(result.targetLabel, language);
     return {
       ok: true,
-      message: result.duplicate
-        ? `You already asked about ${result.targetLabel}; it is still waiting for the owner.`
-        : `Asked the owner about ${result.targetLabel}. The approval lasts 10 minutes once given. ${result.notification.note}`,
+      message: result.duplicate ? t("approvals.alreadyAsked", { name }) : t("approvals.asked", { name, note: await localizeServerMessage(result.notification.note) }),
       nonce: Date.now(),
     };
   } catch (error) {
     unstable_rethrow(error);
-    return toActionError(error);
+    return await toActionError(error);
   }
 }
 
@@ -91,14 +93,16 @@ export async function decideApprovalAction(_previous: FormState, formData: FormD
     });
 
     revalidatePath("/approvals");
+    const [t, language] = await Promise.all([getT(), getLanguage()]);
+    const name = systemName(result.targetLabel, language);
 
     return {
       ok: true,
-      message: `${result.targetLabel}: ${result.status === "approved" ? "approved. The requester can now go ahead (within 10 minutes)." : "rejected."}`,
+      message: t(result.status === "approved" ? "approvals.decidedApproved" : "approvals.decidedRejected", { name }),
       nonce: Date.now(),
     };
   } catch (error) {
     unstable_rethrow(error);
-    return toActionError(error);
+    return await toActionError(error);
   }
 }

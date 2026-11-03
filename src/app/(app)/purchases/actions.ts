@@ -1,5 +1,6 @@
 "use server";
 
+import { localizeServerMessage } from "@/server/i18n";
 import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { ZodError } from "zod";
@@ -16,6 +17,7 @@ import {
   updateSupplier,
 } from "@/modules/purchasing";
 import { toActionError } from "@/server/action-result";
+import { getT } from "@/server/i18n";
 import { requireSession } from "@/server/auth";
 
 /**
@@ -25,16 +27,16 @@ import { requireSession } from "@/server/auth";
 
 export type FormResult = { ok?: boolean; id?: string; number?: string; message?: string; error?: string; code?: string; fieldErrors?: Record<string, string>; values?: Record<string, string> };
 
-function failure(error: unknown, values?: Record<string, string>): FormResult {
+async function failure(error: unknown, values?: Record<string, string>): Promise<FormResult> {
   if (error instanceof ZodError) {
     const fieldErrors: Record<string, string> = {};
     for (const issue of error.issues) {
       const key = issue.path.join(".");
-      if (key && !fieldErrors[key]) fieldErrors[key] = issue.message;
+      if (key && !fieldErrors[key]) fieldErrors[key] = await localizeServerMessage(issue.message);
     }
-    return { error: error.issues[0]?.message ?? "Please check the form.", code: "VALIDATION", fieldErrors, values };
+    return { error: await localizeServerMessage(error.issues[0]?.message ?? "Please check the form."), code: "VALIDATION", fieldErrors, values };
   }
-  const result = toActionError(error);
+  const result = await toActionError(error);
   return { error: result.error, code: result.code, fieldErrors: result.details?.fieldErrors as Record<string, string> | undefined, values };
 }
 
@@ -56,7 +58,8 @@ export async function saveSupplierAction(_previous: FormResult, formData: FormDa
     return failure(error, values);
   }
   refresh(supplierId ? `/suppliers/${supplierId}` : "/suppliers");
-  return { ok: true, message: supplierId ? "Supplier saved." : `${values.name} added.` };
+  const t = await getT();
+  return { ok: true, message: supplierId ? t("suppliers.saved") : t("customers.added", { name: values.name }) };
 }
 
 export async function setSupplierActiveAction(_previous: FormResult, formData: FormData): Promise<FormResult> {
@@ -81,7 +84,7 @@ export async function paySupplierAction(_previous: FormResult, formData: FormDat
     return failure(error, values);
   }
   refresh(`/suppliers/${supplierId}`);
-  return { ok: true, message: "Payment recorded." };
+  return { ok: true, message: (await getT())("suppliers.paymentRecorded") };
 }
 
 /** One action for every "are you sure? give a reason" reversal on these screens. */
@@ -95,13 +98,13 @@ export async function reversalAction(_previous: FormResult, formData: FormData):
     else if (kind === "order-cancel") await cancelPurchaseOrder(session, targetId, input);
     else if (kind === "order-close") await closePurchaseOrder(session, targetId, input);
     else if (kind === "payment") await reverseSupplierPayment(session, targetId, input);
-    else return { error: "Unknown action." };
+    else return { error: (await getT())("server.unknownAction") };
   } catch (error) {
     unstable_rethrow(error);
     return failure(error);
   }
   refresh(`/purchases/receipts/${targetId}`, `/purchases/orders/${targetId}`, text(formData, "refreshPath"));
-  return { ok: true, message: "Done." };
+  return { ok: true, message: (await getT())("suppliers.done") };
 }
 
 export async function createOrderAction(input: unknown): Promise<FormResult> {

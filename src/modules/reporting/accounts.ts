@@ -3,7 +3,7 @@ import { getCurrentShop, invoiceProfile } from "@/modules/settings";
 import { hasPermission, requirePermission, type SessionContext } from "@/modules/identity";
 import { partyStatement, partyStatements, type StatementLine } from "@/modules/ledger";
 import { findCustomer, findSupplier, listShopCustomers, listShopSuppliers } from "@/modules/parties";
-import { customerReceipts, paymentDetails, PAYMENTS_RECORD, PAYMENTS_REVERSE, reversedPaymentIds } from "@/modules/payments";
+import { customerReceipts, paymentDetails, PAYMENTS_RECORD, PAYMENTS_REVERSE, reversedPaymentIds, reversingPaymentIds } from "@/modules/payments";
 import { receiptNumbersFor } from "@/modules/purchasing";
 import { documentNumbers } from "@/modules/sales";
 import { getDb, withTransaction } from "@/server/db";
@@ -48,12 +48,25 @@ function ageingEntries(lines: StatementLine[], owedSign: 1 | -1, labels: Map<str
 
 const KIND_LABEL: Record<string, string> = { opening: "Opening balance", invoice: "Bill", payment: "Payment", credit_note: "Credit note", cancellation: "Cancelled", purchase: "Goods received", correction: "Correction" };
 
+/**
+ * What a payment row was, from its own record. Money out against a bill or credit note is a refund; a row that
+ * undoes another payment is a reversal. Anything else can't be told apart, so it keeps the combined label.
+ */
+function paymentWord(pay: { id: string; partyType: string; direction: string; invoiceId: string | null; creditNoteId: string | null }, reversals: ReadonlySet<string>) {
+  if (pay.partyType === "supplier") return pay.direction === "out" ? "Paid" : "Reversal";
+  if (pay.direction === "in") return "Paid";
+  if (pay.invoiceId || pay.creditNoteId) return "Refund";
+  if (reversals.has(pay.id)) return "Reversal";
+  return "Refund / reversal";
+}
+
 async function labelsFor(shopId: string, lines: StatementLine[]) {
   const by = (type: string) => [...new Set(lines.filter((line) => line.sourceType === type).map((line) => line.sourceId))];
-  const [docs, grns, pays] = await Promise.all([
+  const [docs, grns, pays, reversals] = await Promise.all([
     documentNumbers(shopId, { invoiceIds: by("invoice"), creditNoteIds: by("credit_note") }),
     receiptNumbersFor(shopId, by("goods_receipt")),
     paymentDetails(db(), shopId, by("payment")),
+    reversingPaymentIds(db(), shopId, by("payment")),
   ]);
   const labels = new Map<string, string>([...docs, ...grns]);
   const links = new Map<string, string>();
@@ -64,7 +77,7 @@ async function labelsFor(shopId: string, lines: StatementLine[]) {
   }
   for (const [id, pay] of pays) {
     const method = pay.method.toUpperCase();
-    labels.set(id, pay.receiptNumber ? `${pay.receiptNumber} · ${method}` : `${pay.direction === "out" ? "Refund / reversal" : "Paid"} · ${method}${pay.reference ? ` ${pay.reference}` : ""}`);
+    labels.set(id, pay.receiptNumber ? `${pay.receiptNumber} · ${method}` : `${paymentWord({ ...pay, id }, reversals)} · ${method}${pay.reference ? ` ${pay.reference}` : ""}`);
     if (pay.invoiceId) links.set(id, `/billing/invoices/${pay.invoiceId}`);
     if (pay.creditNoteId) links.set(id, `/billing/returns/${pay.creditNoteId}`);
   }
@@ -217,9 +230,11 @@ export async function prepareReminder(session: SessionContext, customerId: strin
   if (!customer.whatsappConsent) throw new ConflictError("NO_CONSENT", `${customer.name} hasn't agreed to WhatsApp reminders. Turn it on in their details only if they agreed.`);
   if (!customer.phone) throw new ConflictError("NO_PHONE", `${customer.name} has no phone number.`);
   const { upiId } = await invoiceProfile(session.shopId);
-  const text = duesReminderText({ customerName: customer.name, shopName: shop.name, shopPhone: shop.phone, upiId, balancePaise: account.balancePaise, overduePaise: account.summary.overduePaise, oldest: account.summary.oldestUnpaid, asOf: account.asOf });
+  // Until someone chooses a language for this customer, reminders stay in Hinglish as they always have been.
+  const facts = { customerName: customer.name, shopName: shop.name, shopPhone: shop.phone, upiId, balancePaise: account.balancePaise, overduePaise: account.summary.overduePaise, oldest: account.summary.oldestUnpaid, asOf: account.asOf };
+  const text = duesReminderText(facts, customer.communicationLanguage ?? "hinglish");
   const provider = getReminderProvider();
-  return { customerId: customer.id, phone: customer.phone, text, shareUrl: `https://wa.me/91${customer.phone}?text=${encodeURIComponent(text)}`, providerConfigured: provider !== null };
+  return { customerId: customer.id, phone: customer.phone, text, facts, shareUrl: `https://wa.me/91${customer.phone}?text=${encodeURIComponent(text)}`, providerConfigured: provider !== null };
 }
 
 /**

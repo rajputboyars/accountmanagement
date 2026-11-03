@@ -15,9 +15,14 @@ import { hasPermission } from "@/modules/identity";
 import { getBusinessSettings } from "@/modules/settings";
 import { requireSession } from "@/server/auth";
 import { NotFoundError } from "@/server/errors";
+import { getT } from "@/server/i18n";
+import { unitName, unitShort } from "@/shared/i18n/unit-labels";
 import { paiseToRupeeInput } from "@/shared/money";
 
-export const metadata: Metadata = { title: "Product" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getT();
+  return { title: t("page.product") };
+}
 
 type Props = PageProps<"/inventory/[productId]">;
 
@@ -29,11 +34,10 @@ export default function ProductPage({ params, searchParams }: Props) {
   );
 }
 
-const GST_TEXT: Record<number, string> = { 0: "0% (exempt)", 500: "5%", 1200: "12%", 1800: "18%", 2800: "28%" };
-
 async function ProductDetailView({ params, searchParams }: Pick<Props, "params" | "searchParams">) {
   const [{ productId }, query] = await Promise.all([params, searchParams]);
   const session = await requireSession();
+  const t = await getT();
   const product = await getProduct(session, productId).catch((error: unknown) => {
     if (error instanceof NotFoundError) return null;
     throw error;
@@ -42,9 +46,9 @@ async function ProductDetailView({ params, searchParams }: Pick<Props, "params" 
   if (!product) {
     return (
       <PageContainer className="max-w-4xl">
-        <SectionCard title="Product not found" description="It may have been typed wrongly, or it belongs to a different shop.">
+        <SectionCard title={t("inventory.notFound")} anchorId="not-found" description={t("inventory.notFoundHelp")}>
           <Link href="/inventory" className="text-sm font-semibold text-teal-strong hover:underline">
-            Back to all products
+            {t("inventory.backAll")}
           </Link>
         </SectionCard>
       </PageContainer>
@@ -59,7 +63,7 @@ async function ProductDetailView({ params, searchParams }: Pick<Props, "params" 
     <PageContainer className="max-w-5xl">
       <Link href="/inventory" className="inline-flex items-center gap-1.5 self-start text-sm font-medium text-muted-foreground hover:text-foreground">
         <ArrowLeft className="size-4" aria-hidden="true" />
-        All products
+        {t("inventory.allProducts")}
       </Link>
 
       <section className="flex flex-col gap-4 rounded-2xl bg-panel p-5 text-panel-foreground sm:flex-row sm:items-end sm:justify-between sm:p-6">
@@ -67,19 +71,19 @@ async function ProductDetailView({ params, searchParams }: Pick<Props, "params" 
           <p className="text-xs font-semibold tracking-wide text-panel-muted uppercase">{product.sku}</p>
           <h2 className="text-xl font-bold sm:text-2xl">{product.name}</h2>
           <p className="text-sm text-panel-muted">
-            {product.categoryName ?? "No category"} · HSN {product.hsn} · GST {GST_TEXT[product.gstRateBp] ?? `${product.gstRateBp / 100}%`}
+            {product.categoryName ?? t("common.noCategory")} · HSN {product.hsn} · GST {product.gstRateBp === 0 ? t("inventory.gstExempt") : `${product.gstRateBp / 100}%`}
           </p>
-          <div className="mt-1">{product.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="neutral">Switched off</Badge>}</div>
+          <div className="mt-1">{product.isActive ? <Badge variant="success">{t("common.active")}</Badge> : <Badge variant="neutral">{t("common.switchedOff")}</Badge>}</div>
         </div>
         <dl className="grid grid-cols-2 gap-4 text-sm sm:text-right">
           <div>
-            <dt className="text-panel-muted">Retail / {product.baseUnit}</dt>
+            <dt className="text-panel-muted">{t("inventory.retailPer", { unit: unitShort(t, product.baseUnit) })}</dt>
             <dd className="text-lg font-semibold">
               <Money paise={product.retailPaise} withPaise />
             </dd>
           </div>
           <div>
-            <dt className="text-panel-muted">Wholesale / {product.baseUnit}</dt>
+            <dt className="text-panel-muted">{t("inventory.wholesalePer", { unit: unitShort(t, product.baseUnit) })}</dt>
             <dd className="text-lg font-semibold">
               <Money paise={product.wholesalePaise} withPaise />
             </dd>
@@ -90,12 +94,12 @@ async function ProductDetailView({ params, searchParams }: Pick<Props, "params" 
       {saved ? (
         <p role="status" className="flex gap-2 rounded-xl bg-success-soft px-4 py-3 text-sm text-success">
           <CircleCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          Product saved. Add pack sizes below if you sell it by the box or bundle.
+          {t("inventory.savedHelp")}
         </p>
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <SectionCard title={canManage ? "Edit details" : "Details"}>
+        <SectionCard title={canManage ? t("inventory.editDetails") : t("common.details")} anchorId="details">
           {canManage ? (
             <ProductForm
               key={product.version}
@@ -124,15 +128,15 @@ async function ProductDetailView({ params, searchParams }: Pick<Props, "params" 
             />
           ) : (
             <dl className="grid gap-4 text-sm sm:grid-cols-2">
-              <ReadOnly label="Barcode" value={product.barcode ?? "—"} />
-              <ReadOnly label="Base unit" value={product.baseUnitName} />
-              <ReadOnly label="Description" value={product.description ?? "—"} wide />
+              <ReadOnly label={t("inventory.barcode")} value={product.barcode ?? "—"} />
+              <ReadOnly label={t("inventory.baseUnit")} value={unitName(t, product.baseUnit, product.baseUnitName)} />
+              <ReadOnly label={t("inventory.description")} value={product.description ?? "—"} wide />
             </dl>
           )}
         </SectionCard>
 
         <div className="flex flex-col gap-6">
-          <SectionCard title="Pack sizes">
+          <SectionCard title={t("inventory.packSizes")} anchorId="pack-sizes">
             <PackagingSection
               productId={product.id}
               baseUnit={{ code: product.baseUnit, name: product.baseUnitName, allowDecimal: baseUnit?.allowDecimal ?? false }}
@@ -144,20 +148,21 @@ async function ProductDetailView({ params, searchParams }: Pick<Props, "params" 
 
           {canManage ? (
             <SectionCard
-              title={product.isActive ? "Switch off product" : "Switch product back on"}
+              title={product.isActive ? t("inventory.switchOffTitle") : t("inventory.switchOnTitle")}
+              anchorId="switch"
               description={
                 product.isActive
-                  ? "Hides it from the product list and new bills. Its history is kept; nothing is deleted."
-                  : "It will show in the product list again."
+                  ? t("inventory.switchOffHelp")
+                  : t("inventory.switchOnHelp")
               }
             >
               <ConfirmAction
                 key={String(product.isActive)}
                 action={setProductActiveAction}
                 fields={{ productId: product.id, active: product.isActive ? "false" : "true" }}
-                label={product.isActive ? "Switch off" : "Switch on"}
-                confirmLabel={product.isActive ? "Yes, switch off" : "Yes, switch on"}
-                question={product.isActive ? `Switch off ${product.name}? You can switch it back on at any time.` : `Switch ${product.name} back on?`}
+                label={product.isActive ? t("common.switchOff") : t("common.switchOn")}
+                confirmLabel={product.isActive ? t("common.yesSwitchOff") : t("common.yesSwitchOn")}
+                question={product.isActive ? t("inventory.switchOffQuestion", { name: product.name }) : t("inventory.switchOnQuestion", { name: product.name })}
                 destructive={product.isActive}
               />
             </SectionCard>

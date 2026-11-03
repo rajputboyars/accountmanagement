@@ -7,6 +7,8 @@ import { Ellipsis } from "lucide-react";
 import { cn } from "cn";
 import { NAV_ITEMS, findNavItemByPath, type NavKey } from "@/config/navigation";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { LanguageSelector } from "./language-selector";
+import { useT } from "./language-provider";
 import { NavLink } from "./nav-link";
 
 
@@ -16,6 +18,7 @@ const tabClass =
 /** Phone bottom bar (below 768px): four main destinations plus a "More" sheet. */
 export function MobileNav({ allowed }: { allowed: readonly NavKey[] }) {
   const pathname = usePathname();
+  const t = useT();
   const items = NAV_ITEMS.filter((item) => allowed.includes(item.key));
   const primaryItems = items.filter((item) => item.mobilePrimary);
   const moreItems = items.filter((item) => !item.mobilePrimary);
@@ -25,7 +28,7 @@ export function MobileNav({ allowed }: { allowed: readonly NavKey[] }) {
 
   return (
     <nav
-      aria-label="Main"
+      aria-label={t("common.mainMenu")}
       className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] backdrop-blur md:hidden print:hidden"
     >
       <div className="mx-auto flex max-w-lg items-stretch gap-1">
@@ -40,19 +43,19 @@ export function MobileNav({ allowed }: { allowed: readonly NavKey[] }) {
               className={cn(tabClass, active ? "bg-secondary text-foreground" : "text-muted-foreground")}
             >
               <Icon className="size-5" aria-hidden="true" />
-              {item.shortLabel}
+              {t(`nav.${item.key}.short`)}
             </Link>
           );
         })}
         <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
           <SheetTrigger className={cn(tabClass, moreActive || moreOpen ? "bg-secondary text-foreground" : "text-muted-foreground")}>
             <Ellipsis className="size-5" aria-hidden="true" />
-            More
+            {t("common.more")}
           </SheetTrigger>
           <SheetContent side="bottom" className="rounded-t-3xl pb-[calc(1rem+env(safe-area-inset-bottom))]">
             <SheetHeader>
-              <SheetTitle>More</SheetTitle>
-              <SheetDescription>{moreItems.map((item) => item.label).join(", ")}</SheetDescription>
+              <SheetTitle>{t("common.more")}</SheetTitle>
+              <SheetDescription>{moreItems.map((item) => t(`nav.${item.key}.label`)).join(", ")}</SheetDescription>
             </SheetHeader>
             <div className="flex flex-col gap-1 px-4">
               {moreItems.map((item) => (
@@ -64,6 +67,9 @@ export function MobileNav({ allowed }: { allowed: readonly NavKey[] }) {
                   onNavigate={() => setMoreOpen(false)}
                 />
               ))}
+              <div className="mt-2 border-t border-border pt-3">
+                <LanguageSelector variant="sheet" />
+              </div>
             </div>
           </SheetContent>
         </Sheet>

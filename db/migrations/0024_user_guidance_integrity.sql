@@ -1,0 +1,2 @@
+ALTER TABLE "user_guidance" ADD COLUMN "created_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
+ALTER TABLE "user_guidance" ADD CONSTRAINT "user_guidance_status_check" CHECK ("user_guidance"."status" in ('done', 'dismissed', 'in_progress', 'paused', 'skipped', 'completed'));

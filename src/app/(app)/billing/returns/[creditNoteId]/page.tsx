@@ -9,11 +9,18 @@ import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { getCreditNote } from "@/modules/sales";
 import { requireSession } from "@/server/auth";
+import { getLanguage, getT } from "@/server/i18n";
+import { billDate, systemName } from "@/shared/i18n/labels";
+import type { MessageKey } from "@/shared/i18n";
 import { NotFoundError } from "@/server/errors";
-import { rupeesInWords } from "@/shared/invoice";
+import { amountInWords } from "@/shared/i18n/amount-words";
 import { formatBasisPoints } from "@/shared/pricing-engine";
+import { HelpHint } from "@/components/nexora/help-hint";
 
-export const metadata: Metadata = { title: "Credit note" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getT();
+  return { title: t("page.creditNote") };
+}
 
 type Props = PageProps<"/billing/returns/[creditNoteId]">;
 
@@ -25,12 +32,12 @@ export default function CreditNotePage({ params, searchParams }: Props) {
   );
 }
 
-const dateText = (value: string) => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
-const SETTLEMENT: Record<string, string> = { ledger: "Adjusted against the customer's dues", cash: "Refunded in cash", upi: "Refunded by UPI", bank: "Refunded by bank transfer" };
+const SETTLEMENT: Record<string, MessageKey> = { ledger: "note.settled.ledger", cash: "note.settled.cash", upi: "note.settled.upi", bank: "note.settled.bank" };
 
 async function CreditNoteView({ params, searchParams }: Pick<Props, "params" | "searchParams">) {
   const [{ creditNoteId }, query] = await Promise.all([params, searchParams]);
   const session = await requireSession();
+  const [t, language] = await Promise.all([getT(), getLanguage()]);
   const note = await getCreditNote(session, creditNoteId).catch((error: unknown) => {
     if (error instanceof NotFoundError) return null;
     throw error;
@@ -38,9 +45,9 @@ async function CreditNoteView({ params, searchParams }: Pick<Props, "params" | "
   if (!note) {
     return (
       <PageContainer className="max-w-4xl">
-        <SectionCard title="Credit note not found" description="It may have been typed wrongly, or it belongs to a different shop.">
+        <SectionCard title={t("note.notFound")} description={t("bill.notFoundHelp")}>
           <Link href="/billing/returns" className="text-sm font-semibold text-teal-strong hover:underline">
-            Back to returns
+            {t("note.backToReturns")}
           </Link>
         </SectionCard>
       </PageContainer>
@@ -52,14 +59,14 @@ async function CreditNoteView({ params, searchParams }: Pick<Props, "params" | "
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Link href="/billing/returns" className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground">
           <ArrowLeft className="size-4" aria-hidden="true" />
-          Returns
+          {t("billing.returns")}
         </Link>
         <PrintButton />
       </div>
       {query.new === "1" ? (
         <p role="status" className="flex gap-2 rounded-xl bg-success-soft px-4 py-3 text-sm text-success print:hidden">
           <CircleCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          Credit note {note.number} saved. Stock and the customer&apos;s account are updated.
+          {t("note.saved", { number: note.number })}
         </p>
       ) : null}
 
@@ -73,47 +80,47 @@ async function CreditNoteView({ params, searchParams }: Pick<Props, "params" | "
                 {note.shop.pinCode ? ` – ${note.shop.pinCode}` : ""}
               </p>
             ) : null}
-            <p className="text-sm text-muted-foreground">{note.shop.gstin ? `GSTIN ${note.shop.gstin}` : note.shop.registration === "unregistered" ? "Not registered under GST" : "GSTIN not set"}</p>
+            <p className="text-sm text-muted-foreground">{note.shop.gstin ? t("common.gstinValue", { gstin: note.shop.gstin }) : t(note.shop.registration === "unregistered" ? "common.notRegistered" : "common.gstinNotSet")}</p>
           </div>
           <div className="sm:text-right">
-            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Credit note</p>
+            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t("page.creditNote")}</p>
             <p className="text-lg font-bold text-foreground">{note.number}</p>
-            <p className="text-sm text-muted-foreground">{dateText(note.businessDate)}</p>
+            <p className="text-sm text-muted-foreground">{billDate(note.businessDate, language)}</p>
             <p className="text-sm text-muted-foreground">
-              Against <Link href={`/billing/invoices/${note.invoiceId}`} className="underline print:no-underline">{note.invoiceNumber}</Link> of {note.invoiceDate ? dateText(note.invoiceDate) : ""}
+              <Link href={`/billing/invoices/${note.invoiceId}`} className="underline print:no-underline">{t("note.againstBefore", { number: note.invoiceNumber, date: note.invoiceDate ? billDate(note.invoiceDate, language) : "" })}</Link>
             </p>
           </div>
         </header>
 
         <section className="text-sm">
-          <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Customer</p>
-          <p className="font-semibold text-foreground">{note.customer.name}</p>
-          {note.customer.gstin ? <p className="text-muted-foreground">GSTIN {note.customer.gstin}</p> : null}
-          <p className="mt-1 text-muted-foreground">Reason: {note.reason}</p>
+          <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t("common.customer.label")}</p>
+          <p className="font-semibold text-foreground">{systemName(note.customer.name, language)}</p>
+          {note.customer.gstin ? <p className="text-muted-foreground">{t("common.gstinValue", { gstin: note.customer.gstin })}</p> : null}
+          <p className="mt-1 text-muted-foreground">{t("note.reasonLine", { reason: note.reason })}</p>
         </section>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[32rem] text-sm">
+          <table className="stack-table w-full min-w-[32rem] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="py-2 pr-2 font-medium">Item</th>
-                <th className="py-2 pr-2 text-right font-medium">Qty</th>
+                <th className="py-2 pr-2 font-medium">{t("common.item")}</th>
+                <th className="py-2 pr-2 text-right font-medium">{t("common.qty")}</th>
                 <th className="py-2 pr-2 text-right font-medium">GST</th>
-                <th className="py-2 text-right font-medium">Taxable</th>
+                <th className="py-2 text-right font-medium">{t("common.taxable")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {note.lines.map((line) => (
                 <tr key={line.id}>
-                  <td className="py-2 pr-2">
+                  <td data-title className="py-2 pr-2">
                     <p className="font-medium text-foreground">{line.productName}</p>
-                    <p className="text-xs text-muted-foreground">{line.restock ? "Back to stock" : "Damaged, written off"}</p>
+                    <p className="text-xs text-muted-foreground">{t(line.restock ? "note.backToStock" : "note.damaged")}</p>
                   </td>
-                  <td className="py-2 pr-2 text-right whitespace-nowrap tabular-nums">
+                  <td data-label={t("common.qty")} className="py-2 pr-2 text-right whitespace-nowrap tabular-nums">
                     {line.baseQty} {line.baseUnit}
                   </td>
-                  <td className="py-2 pr-2 text-right text-muted-foreground">{formatBasisPoints(line.gstRateBp)}</td>
-                  <td className="py-2 text-right">
+                  <td data-label="GST" className="py-2 pr-2 text-right text-muted-foreground">{formatBasisPoints(line.gstRateBp)}</td>
+                  <td data-key data-label={t("common.taxable")} className="py-2 text-right">
                     <Money paise={line.taxablePaise} withPaise />
                   </td>
                 </tr>
@@ -123,7 +130,7 @@ async function CreditNoteView({ params, searchParams }: Pick<Props, "params" | "
         </div>
 
         <dl className="flex flex-col gap-1 self-end text-sm sm:w-72">
-          <Row label="Taxable value" paise={note.taxablePaise} />
+          <Row label={t("common.taxableValue")} paise={note.taxablePaise} />
           {note.taxMode === "intra" ? (
             <>
               <Row label="CGST" paise={note.cgstPaise} />
@@ -131,25 +138,25 @@ async function CreditNoteView({ params, searchParams }: Pick<Props, "params" | "
             </>
           ) : null}
           {note.taxMode === "inter" ? <Row label="IGST" paise={note.igstPaise} /> : null}
-          {note.taxMode === "none" ? <p className="text-xs text-muted-foreground">No GST on the original bill of supply.</p> : null}
-          {note.roundOffPaise !== 0 ? <Row label="Round off" paise={note.roundOffPaise} /> : null}
+          {note.taxMode === "none" ? <p className="text-xs text-muted-foreground">{t("note.noGst")}</p> : null}
+          {note.roundOffPaise !== 0 ? <Row label={t("common.roundOff")} paise={note.roundOffPaise} /> : null}
           <div className="mt-1 flex items-baseline justify-between border-t border-border pt-2">
-            <dt className="font-semibold text-foreground">Total</dt>
+            <dt className="font-semibold text-foreground">{t("common.total")}</dt>
             <dd className="text-xl font-bold text-foreground">
               <Money paise={note.totalPaise} withPaise />
             </dd>
           </div>
-          <p className="text-right text-xs text-muted-foreground">{rupeesInWords(note.totalPaise)}</p>
+          <p className="flex items-center justify-end gap-1 text-right text-xs text-muted-foreground">{amountInWords(note.totalPaise, language)}<HelpHint topic="amountInWords" /></p>
         </dl>
 
         <footer className="flex flex-col gap-1 border-t border-border pt-4 text-sm">
-          <p className="text-foreground">{SETTLEMENT[note.settlement]}.</p>
+          <p className="text-foreground">{SETTLEMENT[note.settlement] ? t(SETTLEMENT[note.settlement]!) : note.settlement}</p>
           {note.balanceNowPaise !== null ? (
             <p className="text-xs text-muted-foreground print:hidden">
-              {note.customer.name}&apos;s dues now: <Money paise={note.balanceNowPaise} withPaise />
+              {t("bill.outstandingNow", { name: systemName(note.customer.name, language) })}<Money paise={note.balanceNowPaise} withPaise />
             </p>
           ) : null}
-          <p className="text-xs text-muted-foreground">Issued by {note.createdByName}.</p>
+          <p className="text-xs text-muted-foreground">{t("note.issuedBy", { name: systemName(note.createdByName, language) })}</p>
         </footer>
       </article>
     </PageContainer>
