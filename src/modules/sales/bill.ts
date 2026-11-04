@@ -1,6 +1,6 @@
 import { findCustomer, type CustomerSummary } from "@/modules/parties";
 import { defaultPriceList, priceBillLine, type BillLinePrice } from "@/modules/pricing";
-import { stockOnHand } from "@/modules/inventory";
+import { godownList, stockOnHand } from "@/modules/inventory";
 import { partyBalance } from "@/modules/ledger";
 import { loadTaxSettings } from "@/modules/settings";
 import type { SessionContext } from "@/modules/identity";
@@ -29,6 +29,8 @@ export type ComputedBill = {
   customer: Pick<CustomerSummary, "id" | "name" | "type" | "creditLimitPaise" | "gstin"> | null;
   priceList: "retail" | "wholesale";
   lines: (BillLinePrice & { baseQtyNeeded: bigint; stockQty: bigint | null })[];
+  /** The godown the goods leave from; null while the shop has several and none was chosen. */
+  godownId: string | null;
   totals: InvoiceTotals;
   paidNowPaise: number;
   creditPaise: number;
@@ -64,7 +66,22 @@ export async function computeBill(
     priced.push(await priceBillLine(tx, session.shopId, { productId: line.productId, unit: line.unit, quantity: line.quantity, customer: registered, priceList }));
   }
 
-  const stock = await stockOnHand(session.shopId, priced.map((line) => line.product.id), tx);
+  // One godown: the Main Store, never asked. Several: the person must choose; stock is never taken from a place they did not pick.
+  const places = await godownList(tx, session.shopId);
+  let godownId: string | null = null;
+  let godownName: string | null = null;
+  if (places.length <= 1) {
+    godownId = places[0]?.id ?? null;
+  } else {
+    const chosen = places.find((place) => place.id === input.godownId);
+    if (chosen) {
+      godownId = chosen.id;
+      godownName = chosen.name;
+    } else {
+      problems.push({ code: "GODOWN_REQUIRED", field: "godownId", message: input.godownId ? "Choose one of your godowns." : "Choose which godown the goods are taken from." });
+    }
+  }
+  const stock = await stockOnHand(session.shopId, priced.map((line) => line.product.id), tx, godownId ? { godownId } : {});
   const lines = priced.map((line, index) => {
     const onHand = stock.get(line.product.id)?.qty ?? null;
     const needed = line.quote.baseQuantity;
@@ -72,7 +89,7 @@ export async function computeBill(
       problems.push({
         code: "INSUFFICIENT_STOCK",
         field: `lines.${index}.quantity`,
-        message: onHand === null ? `${line.product.name} has no stock entered yet.` : `Only ${formatQuantity(onHand > BigInt(0) ? onHand : BigInt(0))} ${line.product.baseUnit} of ${line.product.name} in stock.`,
+        message: onHand === null ? `${line.product.name} has no stock entered yet.` : `Only ${formatQuantity(onHand > BigInt(0) ? onHand : BigInt(0))} ${line.product.baseUnit} of ${line.product.name} in ${godownName ?? "stock"}.`,
       });
     }
     return { ...line, baseQtyNeeded: needed, stockQty: onHand };
@@ -131,6 +148,7 @@ export async function computeBill(
     customer: customer ? { id: customer.id, name: customer.name, type: customer.type, creditLimitPaise: customer.creditLimitPaise, gstin: customer.gstin } : null,
     priceList,
     lines,
+    godownId,
     totals,
     paidNowPaise,
     creditPaise,

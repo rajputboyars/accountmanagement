@@ -15,6 +15,8 @@ export type Draft<P> = {
   priceList: string;
   discountPercent: string;
   placeOfSupply: string;
+  /** Where the goods are taken from; only used once the shop has more than one godown. */
+  godownId: string;
   lines: DraftLine<P>[];
   payments: Record<Method, string>;
   cashReceived: string;
@@ -25,7 +27,7 @@ export const newIdempotencyKey = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID().replace(/-/g, "") : `${Date.now()}${Math.random().toString(36).slice(2)}`;
 
 export function emptyDraft<P>(): Draft<P> {
-  return { customerId: "", priceList: "", discountPercent: "", placeOfSupply: "", lines: [], payments: { cash: "", upi: "", card: "", bank: "" }, cashReceived: "", idempotencyKey: newIdempotencyKey() };
+  return { customerId: "", priceList: "", discountPercent: "", placeOfSupply: "", godownId: "", lines: [], payments: { cash: "", upi: "", card: "", bank: "" }, cashReceived: "", idempotencyKey: newIdempotencyKey() };
 }
 
 /**

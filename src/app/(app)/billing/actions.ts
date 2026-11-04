@@ -26,6 +26,8 @@ export type BillInputPayload = {
   cashReceived: string;
   /** GST state code; empty = the shop's own state. */
   placeOfSupply?: string;
+  /** Where the goods are taken from; sent only when the shop has several godowns. */
+  godownId?: string;
 };
 
 type Failure = { error: string; code?: string; fieldErrors?: Record<string, string> };

@@ -24,4 +24,4 @@ export { addProductUnit, setProductUnitActive, updateProductUnitFactor } from ".
 export { createUnit, DEFAULT_UNITS, listUnits, seedDefaultUnits, setUnitActive, type Unit } from "./units";
 export { GST_RATE_OPTIONS, productInputSchema } from "./validation";
 export { loadProductNames, loadProductPricingInputs, type ProductPricingInputs } from "./pricing-inputs";
-export { applyReceivedCost, listShopProductsForStock, loadProductsForStock, lockProductsForStock, type ProductStockInputs, type ProductStockUnits } from "./stock-inputs";
+export { applyReceivedCost, convertQuantity, listShopProductsForStock, loadProductsForStock, lockProductsForStock, type ProductStockInputs, type ProductStockUnits } from "./stock-inputs";

@@ -9,7 +9,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { getNavItem } from "@/config/navigation";
 import { CATALOG_MANAGE, shopHasProducts } from "@/modules/catalog";
 import { hasPermission } from "@/modules/identity";
-import { BILLING_CREATE, listBillingCustomers } from "@/modules/sales";
+import { BILLING_CREATE, listBillingCustomers, listBillingGodowns } from "@/modules/sales";
 import { homePathForRole, requireSession } from "@/server/auth";
 import { getT } from "@/server/i18n";
 
@@ -38,7 +38,7 @@ async function NewBill() {
     );
   }
   const t = await getT();
-  const [customers, hasProducts, canAddProducts] = await Promise.all([listBillingCustomers(session), shopHasProducts(session.shopId), hasPermission(session, CATALOG_MANAGE)]);
+  const [customers, hasProducts, canAddProducts, godowns] = await Promise.all([listBillingCustomers(session), shopHasProducts(session.shopId), hasPermission(session, CATALOG_MANAGE), listBillingGodowns(session)]);
   return (
     <PageContainer>
       <PageIntro
@@ -56,7 +56,7 @@ async function NewBill() {
           </>
         }
       />
-      <BillingScreen customers={customers} firstRun={{ noProducts: !hasProducts, canAddProducts }} />
+      <BillingScreen customers={customers} godowns={godowns} firstRun={{ noProducts: !hasProducts, canAddProducts }} />
     </PageContainer>
   );
 }

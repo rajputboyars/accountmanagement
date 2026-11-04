@@ -38,7 +38,7 @@ function basePreview(product: OpeningProduct | undefined, unit: string, quantity
   }
 }
 
-export function OpeningStockForm({ products, canEnterCost, today }: { products: OpeningProduct[]; canEnterCost: boolean; today: string }) {
+export function OpeningStockForm({ products, canEnterCost, today, godownId }: { products: OpeningProduct[]; canEnterCost: boolean; today: string; godownId?: string }) {
   const t = useT();
   const [idempotencyKey, setIdempotencyKey] = useState(newKey);
   const [lines, setLines] = useState<Line[]>([{ rowId: 1, productId: "", unit: "", quantity: "", unitCost: "" }]);
@@ -120,6 +120,7 @@ export function OpeningStockForm({ products, canEnterCost, today }: { products: 
     idempotencyKey,
     movementDate,
     note,
+    ...(godownId ? { godownId } : {}),
     lines: lines.map(({ productId, unit, quantity, unitCost }) => ({ productId, unit, quantity, unitCost: canEnterCost ? unitCost : "" })),
   });
 

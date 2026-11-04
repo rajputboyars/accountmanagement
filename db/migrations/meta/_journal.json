@@ -204,6 +204,13 @@
       "when": 1793801253074,
       "tag": "0028_accounting_gap_resolutions",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793804572527,
+      "tag": "0029_inventory_godowns",
+      "breakpoints": true
     }
   ]
 }

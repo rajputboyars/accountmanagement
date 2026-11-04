@@ -29,6 +29,7 @@ const GO_LIVE_DATE = "2026-10-01";
 
 const SHOP_ID = sid("shop:sharma-sanitary");
 const OWNER_ID = sid("user:owner");
+const MAIN_STORE_ID = sid("godown:main-store");
 
 const USERS = [
   { key: "owner", name: "Rakesh Sharma", phone: "9000000001", role: "owner" },
@@ -240,6 +241,9 @@ async function main() {
         )
         .onConflictDoNothing();
 
+      // The shop's Main Store: every shop has one, created silently; stock is kept per godown.
+      await tx.insert(schema.godowns).values({ id: MAIN_STORE_ID, shopId: SHOP_ID, name: "Main Store", isDefault: true }).onConflictDoNothing();
+
       // Opening stock: one `opening` movement per product (journal), never a direct stock edit.
       await tx
         .insert(schema.stockMovements)
@@ -247,6 +251,7 @@ async function main() {
           PRODUCTS.map((product) => ({
             shopId: SHOP_ID,
             productId: sid(`product:${product.sku}`),
+            godownId: MAIN_STORE_ID,
             movementDate: GO_LIVE_DATE,
             kind: "opening" as const,
             qtyBase: product.openingStock,
@@ -261,9 +266,9 @@ async function main() {
 
       // The stock_levels cache, built from those movements in the same transaction.
       await tx.execute(sql`
-        insert into stock_levels (product_id, shop_id, qty_base, last_movement_id)
-        select product_id, shop_id, sum(qty_base), max(id) from stock_movements where shop_id = ${SHOP_ID} group by product_id, shop_id
-        on conflict (product_id) do nothing`);
+        insert into stock_levels (product_id, godown_id, shop_id, qty_base, last_movement_id)
+        select product_id, godown_id, shop_id, sum(qty_base), max(id) from stock_movements where shop_id = ${SHOP_ID} group by product_id, godown_id, shop_id
+        on conflict (product_id, godown_id) do nothing`);
 
       // Opening balances: customer owes = debit; shop owes supplier = credit.
       await tx
@@ -300,10 +305,10 @@ async function main() {
 
       // Caches are rebuilt from the journals (the source of truth), so they always agree.
       await tx.execute(sql`
-        insert into stock_levels (product_id, shop_id, qty_base, last_movement_id)
-        select product_id, shop_id, sum(qty_base), max(id) from stock_movements
-        where shop_id = ${SHOP_ID} group by product_id, shop_id
-        on conflict (product_id) do update
+        insert into stock_levels (product_id, godown_id, shop_id, qty_base, last_movement_id)
+        select product_id, godown_id, shop_id, sum(qty_base), max(id) from stock_movements
+        where shop_id = ${SHOP_ID} group by product_id, godown_id, shop_id
+        on conflict (product_id, godown_id) do update
           set qty_base = excluded.qty_base, last_movement_id = excluded.last_movement_id, updated_at = now()`);
       await tx.execute(sql`
         insert into party_balances (party_type, party_id, shop_id, balance_paise, last_entry_id)

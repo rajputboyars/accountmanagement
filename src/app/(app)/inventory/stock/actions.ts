@@ -4,7 +4,7 @@ import { localizeServerMessage } from "@/server/i18n";
 import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { ZodError } from "zod";
-import { rebuildStockCache, recordAdjustment, recordOpeningStock, type AdjustmentResult, type OpeningResult } from "@/modules/inventory";
+import { rebuildStockCache, recordAdjustment, recordOpeningStock, transferStock, type AdjustmentResult, type OpeningResult } from "@/modules/inventory";
 import { toActionError } from "@/server/action-result";
 import { requireSession } from "@/server/auth";
 import { getT } from "@/server/i18n";
@@ -54,7 +54,7 @@ export async function recordOpeningAction(_previous: OpeningFormState, formData:
 export type AdjustmentFormState = { result?: AdjustmentResult & { replayed: boolean }; values?: Record<string, string> } & Partial<Failure>;
 
 export async function recordAdjustmentAction(_previous: AdjustmentFormState, formData: FormData): Promise<AdjustmentFormState> {
-  const values = Object.fromEntries(["idempotencyKey", "productId", "kind", "direction", "unit", "quantity", "reason"].map((name) => [name, String(formData.get(name) ?? "")]));
+  const values = Object.fromEntries(["idempotencyKey", "productId", "godownId", "kind", "direction", "unit", "quantity", "reason"].map((name) => [name, String(formData.get(name) ?? "")]));
   try {
     const result = await recordAdjustment(await requireSession(), values);
     revalidatePath("/inventory/stock");
@@ -77,4 +77,25 @@ export async function rebuildCacheAction(_previous: { ok?: boolean; error?: stri
   revalidatePath("/inventory/stock");
   revalidatePath(`/inventory/stock/${productId}`);
   return { ok: true };
+}
+
+export type TransferFormState = { number?: string } & Partial<Failure>;
+
+/** Moves stock between godowns. The form sends its lines as JSON; the inventory service converts units, checks stock in the source godown and posts both legs together. */
+export async function transferStockAction(_previous: TransferFormState, formData: FormData): Promise<TransferFormState> {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(String(formData.get("payload") ?? "null"));
+  } catch {
+    return { ok: false, error: (await getT())("stock.formUnread") };
+  }
+  try {
+    const result = await transferStock(await requireSession(), payload);
+    revalidatePath("/inventory/stock");
+    revalidatePath("/inventory/stock/transfer");
+    return { number: result.number };
+  } catch (error) {
+    unstable_rethrow(error);
+    return failure(error);
+  }
 }

@@ -48,16 +48,21 @@ function bump(quantity: string, by: number): string {
 /** `noProducts`: the shop has no products yet, so the empty bill says what to do first. */
 type FirstRun = { noProducts: boolean; canAddProducts: boolean };
 
-export function BillingScreen({ customers, firstRun = { noProducts: false, canAddProducts: false } }: { customers: Customer[]; firstRun?: FirstRun }) {
+type Godown = { id: string; name: string; isDefault: boolean };
+
+export function BillingScreen({ customers, godowns = [], firstRun = { noProducts: false, canAddProducts: false } }: { customers: Customer[]; godowns?: Godown[]; firstRun?: FirstRun }) {
   const { bfcacheId } = useRouter();
-  return <BillDraft key={bfcacheId} customers={customers} firstRun={firstRun} />;
+  return <BillDraft key={bfcacheId} customers={customers} godowns={godowns} firstRun={firstRun} />;
 }
 
-function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: FirstRun }) {
+function BillDraft({ customers, godowns, firstRun }: { customers: Customer[]; godowns: Godown[]; firstRun: FirstRun }) {
   const router = useRouter();
   const t = useT();
   const [draft, setDraft] = useState<Draft<Product>>(emptyDraft);
   const { customerId, priceList, discountPercent, placeOfSupply, lines, payments, cashReceived, idempotencyKey } = draft;
+  // Asked only when the shop has more than one godown; the choice is never made for the cashier.
+  const manyGodowns = godowns.length > 1;
+  const godownId = manyGodowns && godowns.some((godown) => godown.id === draft.godownId) ? draft.godownId : "";
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
   const [bill, setBill] = useState<BillView | null>(null);
@@ -85,8 +90,8 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
   };
 
   const payload: BillInputPayload = useMemo(
-    () => ({ customerId, priceList, discountPercent, lines: lines.map((line) => ({ productId: line.product.id, unit: line.unit, quantity: line.quantity })), payments, cashReceived, placeOfSupply }),
-    [customerId, priceList, discountPercent, lines, payments, cashReceived, placeOfSupply],
+    () => ({ customerId, priceList, discountPercent, lines: lines.map((line) => ({ productId: line.product.id, unit: line.unit, quantity: line.quantity })), payments, cashReceived, placeOfSupply, ...(godownId ? { godownId } : {}) }),
+    [customerId, priceList, discountPercent, lines, payments, cashReceived, placeOfSupply, godownId],
   );
   const payloadKey = JSON.stringify(payload);
   // Unreadable amounts stay as typed and are pointed out in place; nothing is asked of the server until they are corrected.
@@ -325,6 +330,18 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
 
       <section aria-label={t("billing.summary")} className="flex flex-col gap-4 self-start rounded-2xl border border-border bg-card p-4 sm:p-5 lg:sticky lg:top-20">
         <div className="grid grid-cols-2 gap-3">
+          {manyGodowns ? (
+            <Field label={t("godown.takeFrom")} className="col-span-2" error={problems.find((problem) => problem.field === "godownId")?.message}>
+              <select data-guide="bill-godown" value={godownId} onChange={(event) => update({ godownId: event.target.value })} className={selectClass}>
+                <option value="">{t("godown.choose")}</option>
+                {godowns.map((godown) => (
+                  <option key={godown.id} value={godown.id}>
+                    {godown.isDefault && godown.name === "Main Store" ? t("godown.mainStore") : godown.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
           <Field label={t("common.customer.label")} className="col-span-2" error={customerProblem?.message}>
             <select data-guide="bill-customer" value={customerId} onChange={(event) => update({ customerId: event.target.value })} className={selectClass}>
               <option value="">{t("common.walkInCustomer")}</option>

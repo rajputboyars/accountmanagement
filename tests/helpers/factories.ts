@@ -3,6 +3,7 @@ import { createSession, validateSessionToken, type OtpSender, type SessionContex
 import { DEFAULT_UNITS } from "@/modules/catalog/units";
 import { units } from "@/modules/catalog/schema";
 import { rolePermissions, users } from "@/modules/identity/schema";
+import { godowns } from "@/modules/inventory/schema";
 import { shops } from "@/modules/settings/schema";
 import { withTransaction } from "@/server/db";
 import { defaultPermissionRows, type RoleName } from "@/shared/permissions";
@@ -21,6 +22,8 @@ export async function createTestShop(db: TestDatabase, name = "Test Shop"): Prom
   const shopId = shop!.id;
   await db.owner.insert(rolePermissions).values(defaultPermissionRows().map((row) => ({ shopId, ...row })));
   await db.owner.insert(units).values(DEFAULT_UNITS.map((unit) => ({ shopId, ...unit })));
+  // Like first-time setup: every shop keeps its stock in a Main Store from the start.
+  await db.owner.insert(godowns).values({ shopId, name: "Main Store", isDefault: true });
   const roles: RoleName[] = ["owner", "manager", "cashier", "inventory"];
   const created = {} as Record<RoleName, TestUser>;
   for (const role of roles) {

@@ -20,3 +20,24 @@ export {
 export { ADJUSTMENT_KINDS, openingLineSchema } from "./validation";
 /** For billing: lock stock rows (product-id order), read on-hand quantity from the journal, append a movement with its cache update. */
 export { appendMovement as appendStockMovement, ledgerTotals as stockOnHand, lockCacheRows as lockStockRows, type NewMovement } from "./ledger";
+export {
+  createGodown,
+  godownList,
+  godownStock,
+  GODOWN_MANAGE,
+  hasManyGodowns,
+  listGodowns,
+  listTransfers,
+  renameGodown,
+  resolveGodown,
+  setGodownActive,
+  transferInputSchema,
+  transferOptions,
+  transferStock,
+  type GodownStockRow,
+  type GodownView,
+  type TransferOptions,
+  type TransferResult,
+  type TransferView,
+} from "./godowns";
+export { defaultGodownId, originalGodowns } from "./ledger";

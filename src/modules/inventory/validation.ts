@@ -52,6 +52,8 @@ export const openingInputSchema = z
       .regex(/^\d{4}-\d{2}-\d{2}$/, "Choose the opening date.")
       .refine((value) => value <= indiaDate(), "The opening date can't be in the future."),
     note: z.string().trim().max(200, "Keep the note under 200 characters.").optional().default(""),
+    /** Only when the shop has more than one godown; otherwise the Main Store. */
+    godownId: z.string().trim().optional(),
     lines: z.array(openingLineSchema).min(1, "Add at least one product.").max(200, "Enter at most 200 products at a time."),
   })
   .superRefine((data, ctx) => {
@@ -72,6 +74,8 @@ export const adjustmentInputSchema = z
   .object({
     idempotencyKey: idempotencyKeySchema,
     productId: uuid("Choose a product."),
+    /** Required when the shop has more than one godown: where the stock is. */
+    godownId: z.string().trim().optional(),
     kind: z.enum(ADJUSTMENT_KINDS, { message: "Choose what happened." }),
     /** Only for a count fix: "in" adds stock, "out" removes it. */
     direction: z.enum(["in", "out", ""]).optional(),

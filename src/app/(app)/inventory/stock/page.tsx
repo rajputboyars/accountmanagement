@@ -11,7 +11,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { listCategories } from "@/modules/catalog";
 import { hasPermission } from "@/modules/identity";
-import { listAdjustments, listStock, STOCK_OPENING, STOCK_STATUS_FILTERS, type StockStatus, type StockStatusFilter } from "@/modules/inventory";
+import { listAdjustments, listGodowns, listStock, STOCK_ADJUST, STOCK_OPENING, STOCK_STATUS_FILTERS, type StockStatus, type StockStatusFilter } from "@/modules/inventory";
 import { requireSession } from "@/server/auth";
 import { getT } from "@/server/i18n";
 import type { MessageKey } from "@/shared/i18n";
@@ -42,11 +42,16 @@ async function StockList({ searchParams }: { searchParams: Search }) {
   const t = await getT();
   const q = one(params.q).trim();
   const categoryId = one(params.category);
+  const godownParam = one(params.godown);
   const statusParam = one(params.status);
   const status: StockStatusFilter = (STOCK_STATUS_FILTERS as readonly string[]).includes(statusParam) ? (statusParam as StockStatusFilter) : "all";
   const page = Math.max(1, Number.parseInt(one(params.page), 10) || 1);
+  const [places, canMove] = await Promise.all([listGodowns(session), hasPermission(session, STOCK_ADJUST)]);
+  // Godown choices exist only once the shop has more than one godown.
+  const manyGodowns = places.length > 1;
+  const godownId = manyGodowns && places.some((place) => place.id === godownParam) ? godownParam : "";
   const [result, categories, canOpen, adjustments] = await Promise.all([
-    listStock(session, { q, categoryId: categoryId || undefined, status, page }),
+    listStock(session, { q, categoryId: categoryId || undefined, godownId: godownId || undefined, status, page }),
     listCategories(session),
     hasPermission(session, STOCK_OPENING),
     listAdjustments(session, 8),
@@ -54,7 +59,7 @@ async function StockList({ searchParams }: { searchParams: Search }) {
   const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
   const href = (changes: Record<string, string | number | null>) => {
     const next = new URLSearchParams();
-    const merged = { q, category: categoryId, status: status === "all" ? "" : status, page: "", ...changes };
+    const merged = { q, category: categoryId, godown: godownId, status: status === "all" ? "" : status, page: "", ...changes };
     for (const [name, value] of Object.entries(merged)) if (value) next.set(name, String(value));
     const query = next.toString();
     return query ? `/inventory/stock?${query}` : "/inventory/stock";
@@ -66,12 +71,19 @@ async function StockList({ searchParams }: { searchParams: Search }) {
       <PageIntro
         description={t("stock.intro")}
         actions={
-          canOpen && result.counts.uncounted > 0 ? (
-            <Link href="/inventory/stock/opening" className={buttonVariants({ size: "touch" })}>
-              <ClipboardList aria-hidden="true" />
-              {t("stock.enterOpening")}
-            </Link>
-          ) : null
+          <>
+            {manyGodowns && canMove ? (
+              <Link href="/inventory/stock/transfer" className={buttonVariants({ size: "touch", variant: "outline" })}>
+                {t("godown.transfer.link")}
+              </Link>
+            ) : null}
+            {canOpen && result.counts.uncounted > 0 ? (
+              <Link href="/inventory/stock/opening" className={buttonVariants({ size: "touch" })}>
+                <ClipboardList aria-hidden="true" />
+                {t("stock.enterOpening")}
+              </Link>
+            ) : null}
+          </>
         }
       />
       <CatalogTabs current="stock" />
@@ -97,7 +109,7 @@ async function StockList({ searchParams }: { searchParams: Search }) {
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)]">
         <SectionCard title={filtered ? t("inventory.matching") : t("common.products")} anchorId="products" description={t(result.total === 1 ? "common.productCountOne" : "common.productCount", { count: result.total.toLocaleString("en-IN") })} flush>
-          <form role="search" action="/inventory/stock" className="grid grid-cols-2 gap-2 px-5 pb-3 sm:grid-cols-[minmax(0,1fr)_11rem_10rem_auto]">
+          <form role="search" action="/inventory/stock" className="grid grid-cols-2 gap-2 px-5 pb-3 sm:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]">
             <label className="relative col-span-2 sm:col-span-1">
               <span className="sr-only">{t("inventory.search")}</span>
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
@@ -114,6 +126,19 @@ async function StockList({ searchParams }: { searchParams: Search }) {
                 ))}
               </select>
             </label>
+            {manyGodowns ? (
+              <label>
+                <span className="sr-only">{t("godown.label")}</span>
+                <select name="godown" defaultValue={godownId} className={selectClass}>
+                  <option value="">{t("godown.all")}</option>
+                  {places.map((place) => (
+                    <option key={place.id} value={place.id}>
+                      {place.isDefault && place.name === "Main Store" ? t("godown.mainStore") : place.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label>
               <span className="sr-only">{t("stock.statusLabel")}</span>
               <select name="status" defaultValue={status} className={selectClass}>

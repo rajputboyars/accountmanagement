@@ -84,6 +84,8 @@ export const receiptInputSchema = z
     /** Receiving against an order; empty for a direct purchase (spec: the "Ordered" step is optional). */
     purchaseOrderId: optionalId("Choose the order."),
     supplierId: optionalId("Choose a supplier."),
+    /** Where the goods are received. Left out, they go to the Main Store; only offered once the shop has more than one godown. */
+    godownId: z.string().trim().optional(),
     supplierBillNo: z
       .string()
       .trim()

@@ -5,7 +5,7 @@ import { postCreditNote, postPayment } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, loadProductsForStock } from "@/modules/catalog";
 import { loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
-import { appendStockMovement, lockStockRows } from "@/modules/inventory";
+import { appendStockMovement, lockStockRows, originalGodowns } from "@/modules/inventory";
 import { appendLedgerEntry, lockPartyBalance, partyBalance } from "@/modules/ledger";
 import { findCustomer, loadCustomerNames } from "@/modules/parties";
 import { recordCreditNoteRefund } from "@/modules/payments";
@@ -231,6 +231,8 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
       }
       const registered = plan.customer.type !== "walkin";
       await lockStockRows(tx, session.shopId, plan.lines.map((line) => line.productId));
+      // Returned goods go back to the godown the bill took them from.
+      const soldFrom = await originalGodowns(tx, session.shopId, "invoice", plan.invoice.id);
       if (registered) await lockPartyBalance(tx, session.shopId, "customer", plan.customer.id);
       const { fy, number } = await takeDocumentNumber(tx, session.shopId, "CN");
       const today = indiaDate();
@@ -268,7 +270,7 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
         })),
       );
       for (const line of plan.lines) {
-        const movement = { shopId: session.shopId, productId: line.productId, movementDate: today, unitCostPaise: line.unitCostPaise, sourceType: "credit_note", sourceId: creditNoteId, createdBy: session.userId };
+        const movement = { shopId: session.shopId, productId: line.productId, godownId: soldFrom.get(line.productId), movementDate: today, unitCostPaise: line.unitCostPaise, sourceType: "credit_note", sourceId: creditNoteId, createdBy: session.userId };
         await appendStockMovement(tx, { ...movement, kind: "return_in", qtyBase: line.returnBaseQty, reason: `${number}: ${data.reason}` });
         if (!line.restock) await appendStockMovement(tx, { ...movement, kind: "damage", qtyBase: -line.returnBaseQty, reason: `${number}: returned damaged` });
       }

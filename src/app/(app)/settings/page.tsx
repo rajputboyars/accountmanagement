@@ -7,10 +7,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
+import { listGodowns } from "@/modules/inventory";
 import { isOwnerPinSet, listStaff } from "@/modules/identity";
 import { checkPagePermission } from "@/server/auth";
 import { getBusinessSettings } from "@/modules/settings";
 import { getT } from "@/server/i18n";
+import { GodownSettings } from "@/components/inventory/godown-settings";
 import { GstForm, InvoiceForm, ProfileForm } from "./business-forms";
 import { AddStaffForm, PinForm, RevokeAccessButton, StaffActiveToggle, StaffRoleForm } from "./settings-forms";
 
@@ -35,6 +37,7 @@ async function SettingsContent() {
   const [staff, pinSet, business] = await Promise.all([canManageStaff ? listStaff(session) : Promise.resolve([]), isOwnerPinSet(session), getBusinessSettings(session)]);
   const isOwner = session.role === "owner";
   const t = await getT();
+  const godowns = business.canEdit ? await listGodowns(session, { includeInactive: true }).catch(() => []) : [];
 
   return (
     <PageContainer>
@@ -55,6 +58,11 @@ async function SettingsContent() {
           <SectionCard title={t("settings.business")} description={t("settings.businessHelp")}>
             <ProfileForm profile={business.profile} />
           </SectionCard>
+          {godowns.length > 0 ? (
+            <SectionCard title={t("godown.settings.title")}>
+              <GodownSettings godowns={godowns} />
+            </SectionCard>
+          ) : null}
           <div className="grid gap-6 xl:grid-cols-2">
             <SectionCard title={t("settings.gst")} description={t("settings.gstHelp")}>
               <GstForm gst={business.gst} />

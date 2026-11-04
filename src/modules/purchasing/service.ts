@@ -1,9 +1,9 @@
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { postGoodsReceiptCancelled, postGoodsReceived, postPayment } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
-import { applyReceivedCost, createProductWithin, listShopProductsForStock, loadProductNames, loadProductsForStock, lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
+import { applyReceivedCost, convertQuantity, createProductWithin, listShopProductsForStock, loadProductNames, loadProductsForStock, lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
 import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
-import { appendStockMovement, lockStockRows, stockOnHand } from "@/modules/inventory";
+import { appendStockMovement, lockStockRows, originalGodowns, resolveGodown, stockOnHand } from "@/modules/inventory";
 import { appendLedgerEntry, lockPartyBalance, partyBalance, partyBalancesFor, partyStatement } from "@/modules/ledger";
 import { findSupplier, insertSupplier, listShopSuppliers, supplierNameTaken, updateSupplierRow } from "@/modules/parties";
 import { recordSupplierPayment, reverseSupplierPaymentRow, supplierPayments } from "@/modules/payments";
@@ -16,7 +16,7 @@ import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { financialYearLabel, indiaDate } from "@/shared/financial-year";
 import { formatPaise } from "@/shared/money";
 import { computePurchaseTotals, costPerBaseUnit, weightedAverageCost } from "@/shared/purchase";
-import { formatQuantity, isWholeQuantity, ONE_UNIT, parseQuantity, toBaseQuantity, toDbQuantity, type Milli } from "@/shared/quantity";
+import { formatQuantity, ONE_UNIT, parseQuantity, toBaseQuantity, toDbQuantity, type Milli } from "@/shared/quantity";
 import { PURCHASES_CANCEL, PURCHASES_EDIT, PURCHASES_VIEW, STOCK_RECEIVE, SUPPLIERS_PAY } from "./permissions";
 import { goodsReceiptLines, goodsReceipts, purchaseOrderLines, purchaseOrders, supplierProducts } from "./schema";
 import { purchaseOrderInputSchema, reasonSchema, receiptInputSchema, supplierInputSchema, supplierPaymentInputSchema } from "./validation";
@@ -121,19 +121,12 @@ export async function getSupplier(session: SessionContext, supplierId: string) {
 
 // ── Purchase orders ──────────────────────────────────────────────────────────
 
-function factorFor(product: ProductStockUnits, unit: string): Milli | null {
-  return unit === product.baseUnit ? ONE_UNIT : (product.saleUnits.find((candidate) => candidate.code === unit)?.factor ?? null);
-}
-
 function baseQuantity(product: ProductStockUnits, unit: string, quantity: Milli, field: string): { factor: Milli; base: Milli } {
-  const factor = factorFor(product, unit);
-  if (!factor) throw new ValidationError(`${product.name} isn't bought in "${unit}".`, { fieldErrors: { [field]: "Choose one of this product's units." } });
-  const base = toBaseQuantity(quantity, factor);
-  if (base === null) throw new ValidationError("That quantity can't be stored exactly. Use fewer decimal places.", { fieldErrors: { [field]: "Use fewer decimal places." } });
-  if (!product.baseAllowsDecimal && !isWholeQuantity(base)) {
-    throw new ValidationError(`${product.baseUnitName} can't be split: ${product.name} must come to a whole number of ${product.baseUnit}.`, { fieldErrors: { [field]: "Whole numbers only." } });
-  }
-  return { factor, base };
+  const converted = convertQuantity(product, unit, quantity);
+  if (!("error" in converted)) return converted;
+  if (converted.error === "unit") throw new ValidationError(`${product.name} isn't bought in "${unit}".`, { fieldErrors: { [field]: "Choose one of this product's units." } });
+  if (converted.error === "precision") throw new ValidationError("That quantity can't be stored exactly. Use fewer decimal places.", { fieldErrors: { [field]: "Use fewer decimal places." } });
+  throw new ValidationError(`${product.baseUnitName} can't be split: ${product.name} must come to a whole number of ${product.baseUnit}.`, { fieldErrors: { [field]: "Whole numbers only." } });
 }
 
 export async function createPurchaseOrder(session: SessionContext, input: unknown): Promise<{ id: string; number: string; replayed: boolean }> {
@@ -269,6 +262,8 @@ export async function receiveGoods(session: SessionContext, input: unknown): Pro
         if (!order) await requireSupplierProducts(tx, session.shopId, supplier, planned.map((line) => ({ index: line.index, productId: line.product.id, name: line.product.name })));
         const totals = computePurchaseTotals(planned.map((line) => ({ quantity: line.quantity, costPaisePerUnit: line.cost, gstRateBp: line.gstRateBp })));
         const stock = await stockOnHand(session.shopId, planned.map((line) => line.product.id), tx);
+        // Goods go to the Main Store unless another godown is chosen on the receipt.
+        const godownId = await resolveGodown(tx, session.shopId, data.godownId, "receive");
 
         // 4. Supplier balance, then 5. the receipt number.
         await lockPartyBalance(tx, session.shopId, "supplier", supplier.id);
@@ -299,7 +294,7 @@ export async function receiveGoods(session: SessionContext, input: unknown): Pro
           });
           const onHand = stock.get(line.product.id)?.qty ?? BigInt(0);
           const newCost = weightedAverageCost(onHand, line.product.costPaise, line.base, value);
-          await appendStockMovement(tx, { shopId: session.shopId, productId: line.product.id, movementDate: today, kind: "purchase", qtyBase: line.base, unitCostPaise: perBase, sourceType: "goods_receipt", sourceId: receiptId, reason: number, createdBy: session.userId });
+          await appendStockMovement(tx, { shopId: session.shopId, productId: line.product.id, godownId, movementDate: today, kind: "purchase", qtyBase: line.base, unitCostPaise: perBase, sourceType: "goods_receipt", sourceId: receiptId, reason: number, createdBy: session.userId });
           if (newCost !== line.product.costPaise) {
             await applyReceivedCost(tx, session.shopId, line.product.id, newCost, receiptId);
             costChanges.push({ productId: line.product.id, from: line.product.costPaise, to: newCost });
@@ -346,10 +341,11 @@ export async function cancelGoodsReceipt(session: SessionContext, receiptId: str
     const productIds = lines.map((line) => line.productId);
     const products = new Map((await lockProductsForStock(tx, session.shopId, productIds)).map((product) => [product.id, product]));
     await lockStockRows(tx, session.shopId, productIds);
-    const stock = await stockOnHand(session.shopId, productIds, tx);
+    // The receipt is undone in the godown it came into, and only if that godown still holds the goods.
+    const receivedInto = await originalGodowns(tx, session.shopId, "goods_receipt", receipt.id);
     for (const line of lines) {
       const need = parseQuantity(line.qtyBase);
-      const have = stock.get(line.productId)?.qty ?? BigInt(0);
+      const have = (await stockOnHand(session.shopId, [line.productId], tx, receivedInto.get(line.productId) ? { godownId: receivedInto.get(line.productId)! } : {})).get(line.productId)?.qty ?? BigInt(0);
       if (have < need) {
         const product = products.get(line.productId);
         throw new ConflictError("STOCK_ALREADY_USED", `Only ${formatQuantity(have)} ${product?.baseUnit ?? ""} of ${product?.name ?? "a product"} are left, less than this receipt brought in. Record a stock adjustment instead.`);
@@ -359,7 +355,7 @@ export async function cancelGoodsReceipt(session: SessionContext, receiptId: str
     const today = indiaDate();
     await tx.update(goodsReceipts).set({ status: "cancelled", cancelledAt: new Date(), cancelledBy: session.userId, cancelReason: reason }).where(eq(goodsReceipts.id, receipt.id));
     for (const line of lines) {
-      await appendStockMovement(tx, { shopId: session.shopId, productId: line.productId, movementDate: today, kind: "purchase", qtyBase: -parseQuantity(line.qtyBase), unitCostPaise: line.unitCostPaise, sourceType: "goods_receipt_cancel", sourceId: receipt.id, reason: `Cancelled ${receipt.number}: ${reason}`, createdBy: session.userId });
+      await appendStockMovement(tx, { shopId: session.shopId, productId: line.productId, godownId: receivedInto.get(line.productId), movementDate: today, kind: "purchase", qtyBase: -parseQuantity(line.qtyBase), unitCostPaise: line.unitCostPaise, sourceType: "goods_receipt_cancel", sourceId: receipt.id, reason: `Cancelled ${receipt.number}: ${reason}`, createdBy: session.userId });
     }
     await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: receipt.supplierId, entryDate: today, kind: "cancellation", sourceType: "goods_receipt", sourceId: receipt.id, debitPaise: receipt.totalPaise });
     await postGoodsReceiptCancelled(tx, booksOf(session), { receiptId: receipt.id, date: today });

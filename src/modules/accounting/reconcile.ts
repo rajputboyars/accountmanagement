@@ -50,7 +50,7 @@ export async function stockValueComparison(db: Db, shopId: string): Promise<{ bo
     where l.shop_id = ${shopId} and a.system_key = 'inventory'`);
   const cost = await db.execute<{ value: string; unvalued: string }>(sql`
     select coalesce(sum(round(s.qty_base * p.cost_paise)) filter (where p.cost_paise is not null), 0) as value,
-           count(*) filter (where p.cost_paise is null and s.qty_base > 0) as unvalued
+           count(distinct s.product_id) filter (where p.cost_paise is null and s.qty_base > 0) as unvalued
     from stock_levels s join products p on p.id = s.product_id where s.shop_id = ${shopId}`);
   return { booksPaise: num(books.rows[0]?.amount), atCostPaise: num(cost.rows[0]?.value), unvaluedProducts: num(cost.rows[0]?.unvalued) };
 }

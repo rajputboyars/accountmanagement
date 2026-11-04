@@ -5,7 +5,7 @@ import { postInvoiceCancelled, postInvoiceIssued, postPayment } from "@/modules/
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, searchShopProducts } from "@/modules/catalog";
 import { ANY_TARGET, consumeApproval, consumeMatchingApproval, hasPermission, loadUserNames, requirePermission, verifyOwnerPin, type SessionContext } from "@/modules/identity";
-import { appendStockMovement, lockStockRows, stockOnHand } from "@/modules/inventory";
+import { appendStockMovement, godownList, lockStockRows, originalGodowns, stockOnHand } from "@/modules/inventory";
 import { appendLedgerEntry, lockPartyBalance, partyBalance } from "@/modules/ledger";
 import { ensureWalkInCustomer, findCustomer, listActiveCustomers, loadCustomerNames } from "@/modules/parties";
 import { paymentsForInvoice, recordCounterPayment, refundInvoicePayments } from "@/modules/payments";
@@ -187,6 +187,7 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
           shopId: session.shopId,
           productId: line.product.id,
           movementDate: businessDate,
+          godownId: computed.godownId ?? undefined,
           kind: "sale",
           qtyBase: -line.quote.baseQuantity,
           unitCostPaise: line.product.costPaise,
@@ -259,6 +260,7 @@ export async function cancelInvoice(session: SessionContext, invoiceId: string, 
 
     const lines = await tx.select().from(invoiceLines).where(eq(invoiceLines.invoiceId, invoice.id)).orderBy(asc(invoiceLines.lineNo));
     await lockStockRows(tx, session.shopId, lines.map((line) => line.productId));
+    const soldFrom = await originalGodowns(tx, session.shopId, "invoice", invoice.id);
     const customer = await findCustomer(session.shopId, invoice.customerId, tx);
     const registered = customer.type !== "walkin";
     if (registered) await lockPartyBalance(tx, session.shopId, "customer", customer.id);
@@ -269,6 +271,7 @@ export async function cancelInvoice(session: SessionContext, invoiceId: string, 
         shopId: session.shopId,
         productId: line.productId,
         movementDate: today,
+        godownId: soldFrom.get(line.productId),
         kind: "sale_cancel",
         qtyBase: parseQuantity(line.baseQty),
         unitCostPaise: line.unitCostPaise,
@@ -394,10 +397,12 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
           })
           .where(eq(invoices.id, original.id));
 
+        const origSoldFrom = await originalGodowns(tx, session.shopId, "invoice", original.id);
         for (const line of origLines) {
           await appendStockMovement(tx, {
             shopId: session.shopId,
             productId: line.productId,
+            godownId: origSoldFrom.get(line.productId),
             movementDate: today,
             kind: "sale_cancel",
             qtyBase: parseQuantity(line.baseQty),
@@ -539,6 +544,7 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
           await appendStockMovement(tx, {
             shopId: session.shopId,
             productId: line.product.id,
+            godownId: computed.godownId ?? undefined,
             movementDate: today,
             kind: "sale",
             qtyBase: -line.quote.baseQuantity,
@@ -700,6 +706,13 @@ export async function searchSellableProducts(session: SessionContext, q: string)
     units: [{ code: item.baseUnit, label: item.baseUnitName }, ...item.conversions.map((conversion) => ({ code: conversion.unit, label: `${conversion.unitName} of ${conversion.factor}` }))],
     stockQty: stock.has(item.id) ? formatQuantity(stock.get(item.id)!.qty) : null,
   }));
+}
+
+/** The godowns a bill can take goods from, only when there is more than one to choose from (a one-godown shop is never asked). */
+export async function listBillingGodowns(session: SessionContext) {
+  await requirePermission(session, BILLING_CREATE);
+  const places = await godownList(getDb(), session.shopId);
+  return places.length > 1 ? places.map((place) => ({ id: place.id, name: place.name, isDefault: place.isDefault })) : [];
 }
 
 export async function listBillingCustomers(session: SessionContext) {

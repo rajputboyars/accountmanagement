@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { postStockAdjustment } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
-import { lockProductsForStock } from "@/modules/catalog";
+import { convertQuantity, lockProductsForStock } from "@/modules/catalog";
 import { consumeApproval, consumeMatchingApproval, requirePermission, verifyOwnerPin, type SessionContext } from "@/modules/identity";
 import { takeDocumentNumber } from "@/modules/settings";
 import { withIdempotency } from "@/modules/sync";
@@ -10,7 +10,8 @@ import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { indiaDate } from "@/shared/financial-year";
 import { formatPaise } from "@/shared/money";
 import { multiplyQuantity } from "@/shared/pricing-engine";
-import { formatQuantity, isWholeQuantity, ONE_UNIT, toBaseQuantity, type Milli } from "@/shared/quantity";
+import { formatQuantity, toDbQuantity, type Milli } from "@/shared/quantity";
+import { resolveGodown } from "./godowns";
 import { appendMovement, ledgerTotals, lockCacheRows, signedQuantity } from "./ledger";
 import { OWNER_APPROVAL_THRESHOLD_PAISE, STOCK_ADJUST, STOCK_VIEW } from "./permissions";
 import { stockAdjustments, stockMovements } from "./schema";
@@ -39,18 +40,21 @@ export async function recordAdjustment(session: SessionContext, input: unknown):
     const outcome = await withIdempotency<AdjustmentResult>(tx, { shopId: session.shopId, userId: session.userId, key: idempotencyKey }, { action: "inventory.adjustment", ...body, quantity: body.quantity.toString() }, async () => {
       const [product] = await lockProductsForStock(tx, session.shopId, [body.productId]);
       if (!product) throw new NotFoundError("Product not found.");
-      await lockCacheRows(tx, session.shopId, [product.id]);
+      // Stock leaves or is corrected in one named place once there are several; a one-godown shop is never asked.
+      const godownId = await resolveGodown(tx, session.shopId, body.godownId, "dispatch");
+      await lockCacheRows(tx, session.shopId, [product.id], [godownId]);
 
-      const factor = body.unit === product.baseUnit ? ONE_UNIT : product.saleUnits.find((unit) => unit.code === body.unit)?.factor;
-      if (!factor) throw new ValidationError(`${product.name} isn't sold in "${body.unit}".`, { fieldErrors: { unit: "Choose one of this product's units." } });
-      const base = toBaseQuantity(body.quantity, factor);
-      if (base === null) throw new ValidationError("That quantity can't be stored exactly. Use fewer decimal places.", { fieldErrors: { quantity: "Use fewer decimal places." } });
-      if (!product.baseAllowsDecimal && !isWholeQuantity(base)) {
+      const converted = convertQuantity(product, body.unit, body.quantity);
+      if ("error" in converted) {
+        if (converted.error === "unit") throw new ValidationError(`${product.name} isn't sold in "${body.unit}".`, { fieldErrors: { unit: "Choose one of this product's units." } });
+        if (converted.error === "precision") throw new ValidationError("That quantity can't be stored exactly. Use fewer decimal places.", { fieldErrors: { quantity: "Use fewer decimal places." } });
         throw new ValidationError(`${product.baseUnitName} can't be split, so this must come to a whole number of ${product.baseUnit}.`, { fieldErrors: { quantity: "Must be a whole number of pieces." } });
       }
+      const { factor, base } = converted;
 
-      const ledger = (await ledgerTotals(session.shopId, [product.id], tx)).get(product.id);
-      if (!ledger) throw new ConflictError("NO_OPENING_STOCK", `Enter opening stock for ${product.name} first.`);
+      // The product must have been opened somewhere; the quantity that matters is what this godown holds.
+      if (!(await ledgerTotals(session.shopId, [product.id], tx)).has(product.id)) throw new ConflictError("NO_OPENING_STOCK", `Enter opening stock for ${product.name} first.`);
+      const ledger = { qty: (await ledgerTotals(session.shopId, [product.id], tx, { godownId })).get(product.id)?.qty ?? BigInt(0) };
       const sign = body.kind === "damage" || (body.kind === "count" && body.direction === "out") ? BigInt(-1) : BigInt(1);
       const change: Milli = base * sign;
       const newQty = ledger.qty + change;
@@ -95,8 +99,10 @@ export async function recordAdjustment(session: SessionContext, input: unknown):
       await appendMovement(tx, {
         shopId: session.shopId,
         productId: product.id,
+        godownId,
         movementDate: indiaDate(),
         kind: body.kind,
+        entered: { qty: toDbQuantity(body.quantity), unit: body.unit, factor: toDbQuantity(factor) },
         qtyBase: change,
         unitCostPaise: product.costPaise,
         sourceType: "stock_adjustment",

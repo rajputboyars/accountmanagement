@@ -47,6 +47,8 @@ export const billInputSchema = z
       .optional()
       .transform((value) => value || null)
       .pipe(id("Choose a customer.").nullable()),
+    /** Where the goods are dispatched from. Only asked (and required) once the shop has more than one godown. */
+    godownId: z.string().trim().optional(),
     /** Empty means from the customer type. */
     priceList: z
       .enum(["", "retail", "wholesale"])

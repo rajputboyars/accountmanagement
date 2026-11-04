@@ -6,6 +6,7 @@ import { quickOptions } from "../quick-options";
 import { PageContainer } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
+import { listGodowns } from "@/modules/inventory";
 import { getPurchaseOrder, listSuppliers, purchasableProducts, supplierProductLinks } from "@/modules/purchasing";
 import { requireSession } from "@/server/auth";
 import { NotFoundError } from "@/server/errors";
@@ -36,6 +37,7 @@ async function Receive({ searchParams }: { searchParams: PageProps<"/purchases/r
         throw error;
       })
     : null;
+  const godowns = order ? [] : await listGodowns(session).catch(() => []);
   const [suppliers, products, links, quick] = await Promise.all([listSuppliers(session), order ? Promise.resolve([]) : purchasableProducts(session).catch(() => []), order ? Promise.resolve({}) : supplierProductLinks(session).catch(() => ({})), order ? Promise.resolve(undefined) : quickOptions(session, t).catch(() => undefined)]);
 
   return (
@@ -63,6 +65,7 @@ async function Receive({ searchParams }: { searchParams: PageProps<"/purchases/r
             products={products.map((product) => ({ ...product, units: product.units.map((unit) => ({ code: unit.code, label: unit.factor ? packLabel(t, unit.code, unit.name, unit.factor) : unitName(t, unit.code, unit.name) })) }))}
             links={links}
             quick={quick}
+            godowns={godowns.length > 1 ? godowns : undefined}
             order={order ? { id: order.id, supplierName: order.supplier.name, lines: order.lines.filter((line) => line.leftBase !== "0").map((line) => ({ ...line, unitLabel: unitShort(t, line.unit), baseUnitLabel: unitShort(t, line.baseUnit) })) } : undefined}
           />
         </SectionCard>

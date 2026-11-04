@@ -55,6 +55,7 @@ export function PurchaseLinesForm({
   defaultSupplierId = "",
   links = {},
   quick,
+  godowns,
 }: {
   mode: "order" | "receipt";
   defaultSupplierId?: string;
@@ -63,6 +64,8 @@ export function PurchaseLinesForm({
   order?: { id: string; supplierName: string; lines: OrderLineForReceipt[] };
   /** Supplier id → ids of the products that supplier supplies. */
   links?: Record<string, string[]>;
+  /** Where goods can be received, only when the shop has more than one godown; the Main Store is the default. */
+  godowns?: { id: string; name: string; isDefault: boolean }[];
   /** What the signed-in person may quick-add; omitted when nothing is offered. */
   quick?: { canAddSupplier: boolean; canLinkProducts: boolean; productCreate: ProductQuickCreate | null };
 }) {
@@ -122,6 +125,7 @@ export function PurchaseLinesForm({
     }
     setLines((all) => all.map((line) => (line.key === key ? { ...line, ...patch } : line)));
   };
+  const [godownId, setGodownId] = useState(() => godowns?.find((godown) => godown.isDefault)?.id ?? "");
   const included = lines.filter((line) => line.quantity.trim() !== "" && line.quantity.trim() !== "0");
   const totals = previewTotal(mode === "order" ? included.map((line) => ({ ...line, gstRateBp: "0" })) : included);
 
@@ -136,6 +140,7 @@ export function PurchaseLinesForm({
               supplierId: order ? "" : supplierId,
               supplierBillNo: billNo,
               supplierBillDate: billDate,
+              ...(godowns && godownId ? { godownId } : {}),
               lines: included.map((line) => ({ purchaseOrderLineId: line.purchaseOrderLineId, productId: line.productId, unit: line.unit, quantity: line.quantity, cost: line.cost, gstRateBp: line.gstRateBp })),
             });
       if (result.ok && result.id) {
@@ -168,6 +173,17 @@ export function PurchaseLinesForm({
           </select>
         </Field>
       )}
+      {mode === "receipt" && godowns ? (
+        <Field label={t("godown.receiveInto")} error={fieldErrors.godownId}>
+          <select value={godownId} onChange={(event) => setGodownId(event.target.value)} className={selectClass}>
+            {godowns.map((godown) => (
+              <option key={godown.id} value={godown.id}>
+                {godown.isDefault && godown.name === "Main Store" ? t("godown.mainStore") : godown.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
       {mode === "receipt" ? (
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label={<span>{t("purchases.billNumber")} <span className="font-normal text-muted-foreground">{t("common.optional")}</span></span>} hint={t("purchases.billOnce")} error={fieldErrors.supplierBillNo}>

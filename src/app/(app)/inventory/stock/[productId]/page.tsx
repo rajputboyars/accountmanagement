@@ -8,7 +8,7 @@ import { PageContainer } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { buttonVariants } from "@/components/ui/button";
-import { getProductStock } from "@/modules/inventory";
+import { getProductStock, listGodowns } from "@/modules/inventory";
 import { requireSession } from "@/server/auth";
 import { NotFoundError } from "@/server/errors";
 import { getLanguage, getT } from "@/server/i18n";
@@ -34,6 +34,8 @@ export default function ProductStockPage({ params, searchParams }: Props) {
 
 const KIND_LABEL: Record<string, MessageKey> = {
   opening: "stock.kind.opening",
+  transfer_in: "stock.kind.transferIn",
+  transfer_out: "stock.kind.transferOut",
   sale: "stock.kind.sale",
   sale_cancel: "stock.kind.saleCancel",
   return_in: "stock.kind.returnIn",
@@ -69,6 +71,10 @@ async function ProductStock({ params, searchParams }: Pick<Props, "params" | "se
   const base = unitShort(t, stock.baseUnit);
   const units = [{ code: stock.baseUnit, label: `${unitName(t, stock.baseUnit, stock.baseUnitName)} (${base})` }, ...stock.saleUnits.map((unit) => ({ code: unit.code, label: packLabel(t, unit.code, unit.name, unit.factor) }))];
   const showCost = stock.movements.some((movement) => movement.unitCostPaise !== null);
+  // Godown figures and pickers appear only when the shop has more than one godown.
+  const places = await listGodowns(session);
+  const manyGodowns = places.length > 1;
+  const mainName = (name: string, isDefault = false) => (isDefault && name === "Main Store" ? t("godown.mainStore") : name);
 
   return (
     <PageContainer className="max-w-6xl">
@@ -94,6 +100,19 @@ async function ProductStock({ params, searchParams }: Pick<Props, "params" | "se
           <p data-guide="stock-available" className="text-3xl font-bold tabular-nums">{stock.qty === null ? t("stock.notCounted") : `${stock.qty} ${base}`}</p>
         </div>
       </section>
+
+      {manyGodowns && stock.byGodown.length > 0 ? (
+        <SectionCard title={t("godown.byGodown")} anchorId="by-godown">
+          <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {stock.byGodown.map((entry) => (
+              <li key={entry.godownId} className="flex items-baseline justify-between gap-3 rounded-xl bg-muted/40 px-3 py-2 text-sm">
+                <span className="text-muted-foreground">{mainName(entry.name, places.find((place) => place.id === entry.godownId)?.isDefault)}</span>
+                <span className="font-semibold tabular-nums">{entry.qty} {base}</span>
+              </li>
+            ))}
+          </ul>
+        </SectionCard>
+      ) : null}
 
       {stock.problem ? (
         <div role="alert" className="flex flex-col gap-3 rounded-2xl border border-amber/40 bg-amber-soft p-4 text-sm text-amber-ink">
@@ -128,6 +147,8 @@ async function ProductStock({ params, searchParams }: Pick<Props, "params" | "se
                       <td data-title className="px-3 py-2.5">
                         <p className="font-medium text-foreground">{KIND_LABEL[movement.kind] ? t(KIND_LABEL[movement.kind]!) : movement.kind}</p>
                         {movement.reason ? <p className="text-xs text-muted-foreground">{movementReason(movement.reason, language)}</p> : null}
+                        {manyGodowns && movement.godownName ? <p className="text-xs text-muted-foreground">{mainName(movement.godownName, movement.godownName === "Main Store")}</p> : null}
+                        {movement.entered ? <p className="text-xs text-muted-foreground">{t("godown.entered", { qty: movement.entered.qty.replace(/^-/, ""), unit: movement.entered.unit })}</p> : null}
                       </td>
                       <td data-key data-label={t("stock.change")} className={`px-3 py-2.5 text-right font-semibold whitespace-nowrap tabular-nums ${movement.qty.startsWith("-") ? "text-danger" : "text-success"}`}>
                         {movement.qty.startsWith("-") ? movement.qty : `+${movement.qty}`} {base}
@@ -172,7 +193,7 @@ async function ProductStock({ params, searchParams }: Pick<Props, "params" | "se
               )}
             </div>
           ) : stock.permissions.canAdjust ? (
-            <AdjustmentForm productId={stock.productId} units={units} baseUnit={stock.baseUnit} baseUnitLabel={base} />
+            <AdjustmentForm productId={stock.productId} units={units} baseUnit={stock.baseUnit} baseUnitLabel={base} godowns={manyGodowns ? places.map((place) => ({ id: place.id, name: mainName(place.name, place.isDefault) })) : undefined} />
           ) : (
             <p className="text-sm text-muted-foreground">{t("stock.cantChange")}</p>
           )}

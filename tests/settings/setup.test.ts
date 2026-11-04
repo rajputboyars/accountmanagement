@@ -61,7 +61,7 @@ describe("first-run setup", () => {
     expect(permissionRows[0]!.n).toBe(PERMISSIONS.length * ROLE_NAMES.length);
 
     const series = await db.owner.select().from(numberSeries).where(eq(numberSeries.shopId, shop!.id));
-    expect(series.map((s) => s.series).sort()).toEqual(["ADJ", "CN", "GRN", "INV", "PO", "RCPT"]);
+    expect(series.map((s) => s.series).sort()).toEqual(["ADJ", "CN", "GRN", "INV", "PO", "RCPT", "TRF"]);
 
     const shopUnits = await db.owner.select({ code: units.code }).from(units).where(eq(units.shopId, shop!.id));
     expect(shopUnits.map((u) => u.code)).toEqual(expect.arrayContaining(["pc", "box", "bundle", "m", "length"]));
