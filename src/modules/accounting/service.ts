@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { recordAudit } from "@/modules/audit";
 import { requirePermission, type SessionContext } from "@/modules/identity";
@@ -16,6 +16,7 @@ import {
   type JournalDraft,
 } from "@/shared/accounting";
 import { indiaDate } from "@/shared/financial-year";
+import { reconcileParties } from "./reconcile";
 import { accountingGaps, accounts, accountingSettings, journalLines, journals } from "./schema";
 
 /**
@@ -36,6 +37,7 @@ const OPENING_SOURCE = "opening_balance";
 const isRealDate = (value: string) => DATE.test(value) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 const dayBefore = (value: string) => new Date(new Date(`${value}T00:00:00Z`).getTime() - 86_400_000).toISOString().slice(0, 10);
 const num = (value: unknown) => Number(value ?? 0);
+const addDays = (value: string, days: number) => new Date(new Date(`${value}T00:00:00Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10);
 
 /** Who is posting. Automatic postings made by the system (no signed-in user) pass `userId: null`. */
 export type PostingContext = { shopId: string; userId: string | null };
@@ -68,6 +70,12 @@ async function accountIds(db: Db, shopId: string, keys: readonly string[]): Prom
 
 const canonical = (lines: { account: string; debitPaise: number; creditPaise: number; partyType?: string | null; partyId?: string | null }[]) =>
   JSON.stringify(lines.map((line) => [line.account, line.debitPaise, line.creditPaise, line.partyType ?? null, line.partyId ?? null]).sort());
+
+/** Whether the opening journal has been posted. */
+export async function openingRecorded(db: Db, shopId: string): Promise<boolean> {
+  const settings = await loadAccountingSettings(db, shopId);
+  return Boolean(settings?.openingRecordedAt);
+}
 
 export type PostInput = {
   entryDate: string;
@@ -186,15 +194,55 @@ export async function reverseJournal(tx: Transaction, ctx: PostingContext, input
   return { status: "posted", journalId: created!.id };
 }
 
+/** Marks open gaps of a document as resolved (for example, a cancelled bill no longer needs its missing cost). */
+export async function resolveGapsFor(tx: Transaction, ctx: PostingContext, sourceType: string, sourceId: string): Promise<void> {
+  await tx.update(accountingGaps).set({ resolvedAt: new Date(), resolvedBy: ctx.userId }).where(and(eq(accountingGaps.shopId, ctx.shopId), eq(accountingGaps.sourceType, sourceType), eq(accountingGaps.sourceId, sourceId), isNull(accountingGaps.resolvedAt)));
+}
+
+/** Reverses the journal a document posted for one event. Nothing to reverse (books off, or the document pre-dates them) is a no-op. */
+export async function reverseBySource(tx: Transaction, ctx: PostingContext, input: { sourceType: string; sourceId: string; event: string; entryDate: string; memo?: string }): Promise<PostResult> {
+  const [found] = await tx.select({ id: journals.id }).from(journals).where(and(eq(journals.shopId, ctx.shopId), eq(journals.sourceType, input.sourceType), eq(journals.sourceId, input.sourceId), eq(journals.event, input.event))).limit(1);
+  if (!found) {
+    const settings = await loadAccountingSettings(tx, ctx.shopId);
+    return { status: "skipped", reason: settings ? "before_coverage" : "not_active" };
+  }
+  return reverseJournal(tx, ctx, { journalId: found.id, entryDate: input.entryDate, memo: input.memo });
+}
+
+/** The latest date on which any bill, payment, stock movement, expense or cash movement was recorded. */
+export async function latestActivityDate(db: Db, shopId: string): Promise<string | null> {
+  const result = await db.execute<{ d: string | null }>(sql`
+    select max(d)::text as d from (
+      select max(entry_date) as d from ledger_entries where shop_id = ${shopId}
+      union all select max(movement_date) from stock_movements where shop_id = ${shopId}
+      union all select max(business_date) from payments where shop_id = ${shopId}
+      union all select max(business_date) from expenses where shop_id = ${shopId}
+      union all select max(business_date) from cash_movements where shop_id = ${shopId}
+    ) x`);
+  return result.rows[0]?.d ?? null;
+}
+
+/** The earliest start date that leaves no recorded business outside the books (the day after the latest activity), or the first of this month for a new business. */
+export async function suggestedStartDate(session: SessionContext): Promise<string> {
+  await requirePermission(session, ACCOUNTING_MANAGE);
+  const latest = await latestActivityDate(getDb(), session.shopId);
+  return latest ? addDays(latest, 1) : `${indiaDate().slice(0, 8)}01`;
+}
+
 const startDateSchema = z.object({ coverageStartDate: z.string().refine(isRealDate, "Choose a valid date.") });
 
 /** Turn Business Accounts on. Books cover this date onward; nothing earlier is ever posted. Opening balances are entered next. */
 export async function activateBusinessAccounts(session: SessionContext, input: unknown): Promise<{ coverageStartDate: string }> {
   await requirePermission(session, ACCOUNTING_MANAGE);
   const data = startDateSchema.parse(input);
-  if (data.coverageStartDate > indiaDate()) throw new ValidationError("The books cannot start in the future.");
+  // Up to tomorrow, so a shop that has already traded today can start cleanly from the next day.
+  if (data.coverageStartDate > addDays(indiaDate(), 1)) throw new ValidationError("The books cannot start in the future.");
   return withTransaction(async (tx) => {
     if (await loadAccountingSettings(tx, session.shopId)) throw new ConflictError("ACCOUNTING_ACTIVE", "Business Accounts are already on.");
+    // Opening balances are worked out as at the day before the start, and only later business is posted. Business already
+    // recorded on or after the start would be in neither, so it is refused rather than left out of the books.
+    const latest = await latestActivityDate(tx, session.shopId);
+    if (latest && latest >= data.coverageStartDate) throw new ConflictError("ACCOUNTING_START_HAS_ACTIVITY", `Business was already recorded up to ${latest}. Choose ${addDays(latest, 1)} or later as the start date.`);
     await tx.insert(accountingSettings).values({ shopId: session.shopId, coverageStartDate: data.coverageStartDate, activatedBy: session.userId });
     await ensureChart(tx, session.shopId);
     await recordAudit(tx, actorOf(session), { action: "accounting.activated", entityType: "shop", entityId: session.shopId, after: { coverageStartDate: data.coverageStartDate } });
@@ -234,14 +282,20 @@ const openingSchema = z.object({
  * "opening balance clearing" account, not to owner's capital, until the owner confirms it (confirmOpeningBalances).
  * Figures are supplied by the server-side derivation (Phase 1b) or entered by the owner; parties must belong to this shop.
  */
-export async function recordOpeningBalances(session: SessionContext, input: unknown): Promise<{ journalId: string; clearingBalancePaise: number }> {
+export type OpeningData = z.infer<typeof openingSchema>;
+
+export async function recordOpeningBalances(session: SessionContext, input: unknown): Promise<{ journalId: string | null; clearingBalancePaise: number }> {
   await requirePermission(session, ACCOUNTING_MANAGE);
   const data = openingSchema.parse(input);
-  return withTransaction(async (tx) => {
+  return withTransaction((tx) => postOpeningWithin(tx, session, data));
+}
+
+/** The body of recordOpeningBalances, for callers that already hold a transaction (the derived opening reads and posts in one). */
+export async function postOpeningWithin(tx: Transaction, session: SessionContext, data: OpeningData): Promise<{ journalId: string | null; clearingBalancePaise: number }> {
+  {
     const settings = await loadAccountingSettings(tx, session.shopId);
     if (!settings) throw new ConflictError("ACCOUNTING_OFF", "Turn on Business Accounts first.");
-    const [existing] = await tx.select({ id: journals.id }).from(journals).where(and(eq(journals.shopId, session.shopId), eq(journals.sourceType, OPENING_SOURCE), eq(journals.kind, "opening"))).limit(1);
-    if (existing) throw new ConflictError("OPENING_ALREADY_RECORDED", "Opening balances were already recorded. Correct them with a dated adjustment instead.");
+    if (settings.openingRecordedAt) throw new ConflictError("OPENING_ALREADY_RECORDED", "Opening balances were already recorded. Correct them with a dated adjustment instead.");
     await assertPartiesBelong(tx, session.shopId, "customers", data.receivables.map((row) => row.partyId));
     await assertPartiesBelong(tx, session.shopId, "suppliers", data.payables.map((row) => row.partyId));
     let draft: JournalDraft;
@@ -252,12 +306,14 @@ export async function recordOpeningBalances(session: SessionContext, input: unkn
       throw error;
     }
     const result = await postJournal(tx, { shopId: session.shopId, userId: session.userId }, { entryDate: dayBefore(settings.coverageStartDate), sourceType: OPENING_SOURCE, sourceId: session.shopId, draft, kind: "opening", memo: "Opening balances" });
-    if (result.status === "duplicate") throw new ConflictError("OPENING_ALREADY_RECORDED", "Opening balances were already recorded. Correct them with a dated adjustment instead.");
-    if (result.status !== "posted") throw new ConflictError("OPENING_NOT_POSTED", "Opening balances could not be posted.");
+    // Nothing to open (a new business) posts no journal but still counts as opened; gaps, if any, were recorded.
+    if (result.status !== "posted" && !(result.status === "skipped" && result.reason === "nothing_to_post")) throw new ConflictError("OPENING_NOT_POSTED", "Opening balances could not be posted.");
+    await tx.update(accountingSettings).set({ openingRecordedAt: new Date() }).where(eq(accountingSettings.shopId, session.shopId));
     const clearing = await clearingBalance(tx, session.shopId);
-    await recordAudit(tx, actorOf(session), { action: "accounting.opening_recorded", entityType: "journal", entityId: result.journalId, after: { clearingBalancePaise: clearing, unvaluedProducts: data.unvaluedProductIds.length } });
-    return { journalId: result.journalId, clearingBalancePaise: clearing };
-  });
+    const journalId = result.status === "posted" ? result.journalId : null;
+    await recordAudit(tx, actorOf(session), { action: "accounting.opening_recorded", entityType: "shop", entityId: session.shopId, after: { clearingBalancePaise: clearing, unvaluedProducts: data.unvaluedProductIds.length } });
+    return { journalId, clearingBalancePaise: clearing };
+  }
 }
 
 async function assertPartiesBelong(tx: Transaction, shopId: string, table: "customers" | "suppliers", ids: string[]) {
@@ -268,7 +324,7 @@ async function assertPartiesBelong(tx: Transaction, shopId: string, table: "cust
 }
 
 /** Debit minus credit on the clearing account: positive means money is still waiting to be assigned. */
-async function clearingBalance(db: Db, shopId: string): Promise<number> {
+export async function clearingBalance(db: Db, shopId: string): Promise<number> {
   const result = await db.execute<{ balance: string }>(sql`
     select coalesce(sum(l.debit_paise - l.credit_paise), 0) as balance
     from journal_lines l join accounts a on a.id = l.account_id
@@ -285,12 +341,13 @@ export async function confirmOpeningBalances(session: SessionContext): Promise<{
   return withTransaction(async (tx) => {
     const settings = await loadAccountingSettings(tx, session.shopId);
     if (!settings) throw new ConflictError("ACCOUNTING_OFF", "Turn on Business Accounts first.");
-    const [opening] = await tx.select({ id: journals.id }).from(journals).where(and(eq(journals.shopId, session.shopId), eq(journals.sourceType, OPENING_SOURCE), eq(journals.kind, "opening"))).limit(1);
-    if (!opening) throw new ConflictError("OPENING_MISSING", "Enter the opening balances first.");
-    if (settings.openingStatus === "verified") return { movedToCapitalPaise: 0 };
+    if (!settings.openingRecordedAt) throw new ConflictError("OPENING_MISSING", "Enter the opening balances first.");
     const clearing = await clearingBalance(tx, session.shopId);
+    if (settings.openingStatus === "verified" && clearing === 0) return { movedToCapitalPaise: 0 };
     if (clearing !== 0) {
-      const result = await postJournal(tx, { shopId: session.shopId, userId: session.userId }, { entryDate: settings.coverageStartDate, sourceType: OPENING_SOURCE, sourceId: session.shopId, draft: openingReclass(clearing), kind: "adjustment", memo: "Opening balance confirmed by owner" });
+      // The first reclass uses the shop id so a retry is a no-op; later ones (new opening entries) get their own id.
+      const [first] = await tx.select({ id: journals.id }).from(journals).where(and(eq(journals.shopId, session.shopId), eq(journals.sourceType, OPENING_SOURCE), eq(journals.sourceId, session.shopId), eq(journals.event, "opening_reclass"))).limit(1);
+      const result = await postJournal(tx, { shopId: session.shopId, userId: session.userId }, { entryDate: first ? indiaDate() : settings.coverageStartDate, sourceType: OPENING_SOURCE, sourceId: first ? crypto.randomUUID() : session.shopId, draft: openingReclass(clearing), kind: "adjustment", memo: "Opening balance confirmed by owner" });
       if (result.status !== "posted") throw new ConflictError("OPENING_NOT_CONFIRMED", "The opening balances could not be confirmed. Try again.");
     }
     await tx.update(accountingSettings).set({ openingStatus: "verified" }).where(eq(accountingSettings.shopId, session.shopId));
@@ -308,18 +365,20 @@ export type AccountingStatus = {
   lockThrough: string | null;
   clearingBalancePaise: number;
   openGaps: { kind: string; count: number }[];
+  /** Customers or suppliers whose books balance differs from the party ledger (checked once the opening is recorded). */
+  partyMismatches: number;
   /** True only when nothing is unverified or missing. Reports must not look complete otherwise. */
   complete: boolean;
   /** Why the books are not complete, as stable codes the screens translate. */
-  incompleteReasons: ("not_active" | "opening_missing" | "opening_unverified" | "clearing_not_zero" | "gaps_open" | "input_gst_review")[];
+  incompleteReasons: ("not_active" | "opening_missing" | "opening_unverified" | "clearing_not_zero" | "gaps_open" | "party_mismatch" | "input_gst_review")[];
 };
 
 export async function getAccountingStatus(session: SessionContext): Promise<AccountingStatus> {
   await requirePermission(session, ACCOUNTING_VIEW);
   const db = getDb();
   const settings = await loadAccountingSettings(db, session.shopId);
-  if (!settings) return { active: false, coverageStartDate: null, openingRecorded: false, openingStatus: null, inputGstPolicy: null, lockThrough: null, clearingBalancePaise: 0, openGaps: [], complete: false, incompleteReasons: ["not_active"] };
-  const [opening] = await db.select({ id: journals.id }).from(journals).where(and(eq(journals.shopId, session.shopId), eq(journals.sourceType, OPENING_SOURCE), eq(journals.kind, "opening"))).limit(1);
+  if (!settings) return { active: false, coverageStartDate: null, openingRecorded: false, openingStatus: null, inputGstPolicy: null, lockThrough: null, clearingBalancePaise: 0, openGaps: [], partyMismatches: 0, complete: false, incompleteReasons: ["not_active"] };
+  const opening = settings.openingRecordedAt;
   const gaps = await db.execute<{ kind: string; n: string }>(sql`select kind, count(*) as n from accounting_gaps where shop_id = ${session.shopId} and resolved_at is null group by kind order by kind`);
   const clearing = await clearingBalance(db, session.shopId);
   const reasons: AccountingStatus["incompleteReasons"] = [];
@@ -327,6 +386,8 @@ export async function getAccountingStatus(session: SessionContext): Promise<Acco
   else if (settings.openingStatus !== "verified") reasons.push("opening_unverified");
   if (clearing !== 0) reasons.push("clearing_not_zero");
   if (gaps.rows.length > 0) reasons.push("gaps_open");
+  const tie = await reconcileParties(db, session.shopId, Boolean(opening));
+  if (tie.ready && tie.mismatches.length > 0) reasons.push("party_mismatch");
   if (settings.inputGstPolicy === "review") reasons.push("input_gst_review");
   return {
     active: true,
@@ -337,6 +398,7 @@ export async function getAccountingStatus(session: SessionContext): Promise<Acco
     lockThrough: settings.lockThrough,
     clearingBalancePaise: clearing,
     openGaps: gaps.rows.map((row) => ({ kind: row.kind, count: num(row.n) })),
+    partyMismatches: tie.ready ? tie.mismatches.length : 0,
     complete: reasons.length === 0,
     incompleteReasons: reasons,
   };

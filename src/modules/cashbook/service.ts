@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gt, lt, sql } from "drizzle-orm";
 import { z } from "zod";
+import { postCashMovement, postExpense, postExpenseVoided } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
 import { paymentsOnDay, paymentTotals } from "@/modules/payments";
@@ -29,6 +30,7 @@ export const DAY_CLOSE = "day.close" as const;
 export const DAY_REOPEN = "day.reopen" as const;
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
+const booksOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId });
 type Db = Database | Transaction;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -291,6 +293,7 @@ export async function recordExpense(session: SessionContext, input: unknown): Pr
         .insert(expenses)
         .values({ shopId: session.shopId, businessDate: data.businessDate, category: data.category, amountPaise: data.amount, method: data.method, note: data.note, reference: data.reference, createdBy: session.userId })
         .returning({ id: expenses.id });
+      await postExpense(tx, booksOf(session), { expenseId: row!.id, date: data.businessDate, category: data.category, method: data.method, amountPaise: data.amount });
       await recordAudit(tx, actorOf(session), { action: "cashbook.expense_recorded", entityType: "expense", entityId: row!.id, after: { ...data, amountPaise: data.amount, amount: undefined } });
       return { status: 201, body: { id: row!.id } };
     });
@@ -314,6 +317,7 @@ export async function voidExpense(session: SessionContext, expenseId: string, in
     const [expense] = await tx.select().from(expenses).where(and(eq(expenses.id, expenseId), eq(expenses.shopId, session.shopId))).limit(1).for("update");
     if (expense!.status === "voided") throw new ConflictError("ALREADY_VOIDED", "This expense is already voided.");
     await tx.update(expenses).set({ status: "voided", voidedAt: new Date(), voidedBy: session.userId, voidReason: reason }).where(and(eq(expenses.id, expenseId), eq(expenses.shopId, session.shopId)));
+    await postExpenseVoided(tx, booksOf(session), { expenseId, date: expense!.businessDate });
     await recordAudit(tx, actorOf(session), { action: "cashbook.expense_voided", entityType: "expense", entityId: expenseId, before: { status: "recorded", amountPaise: expense!.amountPaise }, after: { status: "voided" }, reason });
   });
 }
@@ -325,6 +329,7 @@ export async function recordCashMovement(session: SessionContext, input: unknown
     const outcome = await withIdempotency<{ id: string }>(tx, { shopId: session.shopId, userId: session.userId, key: idempotencyKey }, { action: "cashbook.cash_movement", ...data }, async () => {
       await lockDayForWrite(tx, session.shopId, data.businessDate);
       const [row] = await tx.insert(cashMovements).values({ shopId: session.shopId, businessDate: data.businessDate, kind: data.kind, amountPaise: data.amount, note: data.note, createdBy: session.userId }).returning({ id: cashMovements.id });
+      await postCashMovement(tx, booksOf(session), { movementId: row!.id, date: data.businessDate, kind: data.kind, amountPaise: data.amount });
       await recordAudit(tx, actorOf(session), { action: "cashbook.cash_movement_recorded", entityType: "cash_movement", entityId: row!.id, after: { businessDate: data.businessDate, kind: data.kind, amountPaise: data.amount, note: data.note } });
       return { status: 201, body: { id: row!.id } };
     });

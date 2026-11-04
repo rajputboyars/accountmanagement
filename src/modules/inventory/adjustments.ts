@@ -1,4 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
+import { postStockAdjustment } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { lockProductsForStock } from "@/modules/catalog";
 import { consumeApproval, consumeMatchingApproval, requirePermission, verifyOwnerPin, type SessionContext } from "@/modules/identity";
@@ -103,6 +104,7 @@ export async function recordAdjustment(session: SessionContext, input: unknown):
         reason: body.reason,
         createdBy: session.userId,
       });
+      await postStockAdjustment(tx, { shopId: session.shopId, userId: session.userId }, { adjustmentId: adjustment!.id, date: indiaDate(), line: { productId: product.id, qtyBase: formatQuantity(change), unitCostPaise: product.costPaise } });
       const result: AdjustmentResult = { id: adjustment!.id, number, productId: product.id, qtyChange: formatQuantity(change), newQty: formatQuantity(newQty), baseUnit: product.baseUnit };
       await recordAudit(tx, { shopId: session.shopId, userId: session.userId, role: session.role }, {
         action: "inventory.adjustment_recorded",

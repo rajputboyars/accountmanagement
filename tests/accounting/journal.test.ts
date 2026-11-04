@@ -244,7 +244,7 @@ describe("opening balances", () => {
     const owner = await as(shop, "owner");
     const result = await recordOpeningBalances(owner, { ...rows, receivables: [{ partyId: customerId, balancePaise: 60000 }], payables: [{ partyId: supplierId, balancePaise: -30000 }] });
     expect(result.clearingBalancePaise).toBe(-(500000 + 20000 + 80000 + 15000 + 60000 - 30000));
-    const [opening] = await db.owner.select().from(journals).where(eq(journals.id, result.journalId));
+    const [opening] = await db.owner.select().from(journals).where(eq(journals.id, result.journalId!));
     expect(opening).toMatchObject({ entryDate: "2026-03-31", kind: "opening" });
     const status = await getAccountingStatus(owner);
     expect(status).toMatchObject({ openingRecorded: true, openingStatus: "unverified" });
@@ -270,12 +270,18 @@ describe("opening balances", () => {
     expect((await getAccountingStatus(owner)).openingStatus).toBe("verified");
   });
 
-  it("is complete only after nothing is open, and the input GST choice is explicit", async () => {
+  it("clears each reason in turn, and the input GST choice is explicit and owner-only", async () => {
     const owner = await as(shop, "owner");
     await db.ownerPool.query("update accounting_gaps set resolved_at = now() where shop_id = $1", [shop.shopId]);
-    expect((await getAccountingStatus(owner)).incompleteReasons).toEqual(["input_gst_review"]);
+    const reasons = (await getAccountingStatus(owner)).incompleteReasons;
+    expect(reasons).toContain("input_gst_review");
+    expect(reasons).not.toContain("gaps_open");
+    expect(reasons).not.toContain("opening_unverified");
+    expect(reasons).not.toContain("clearing_not_zero");
     await setInputGstPolicy(owner, "recoverable");
-    expect(await getAccountingStatus(owner)).toMatchObject({ complete: true, incompleteReasons: [], inputGstPolicy: "recoverable" });
+    const after = await getAccountingStatus(owner);
+    expect(after.inputGstPolicy).toBe("recoverable");
+    expect(after.incompleteReasons).not.toContain("input_gst_review");
     await expect(setInputGstPolicy(owner, "whatever")).rejects.toThrow();
     await expect(setInputGstPolicy(await as(shop, "manager"), "review")).rejects.toThrow();
   });

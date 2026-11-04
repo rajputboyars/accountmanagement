@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { postGoodsReceiptCancelled, postGoodsReceived, postPayment } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { applyReceivedCost, createProductWithin, listShopProductsForStock, loadProductNames, loadProductsForStock, lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
 import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
@@ -33,6 +34,7 @@ import { purchaseOrderInputSchema, reasonSchema, receiptInputSchema, supplierInp
  */
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
+const booksOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId });
 type Db = Database | Transaction;
 const owedFrom = (ledgerBalance: number) => (ledgerBalance === 0 ? 0 : -ledgerBalance);
 
@@ -304,6 +306,7 @@ export async function receiveGoods(session: SessionContext, input: unknown): Pro
           }
         }
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: supplier.id, entryDate: today, kind: "purchase", sourceType: "goods_receipt", sourceId: receiptId, creditPaise: totals.totalPaise });
+        await postGoodsReceived(tx, booksOf(session), { receiptId, date: today, supplierId: supplier.id, taxablePaise: totals.taxablePaise, gstPaise: totals.gstPaise, totalPaise: totals.totalPaise });
         if (order) await tx.update(purchaseOrders).set({ status: await orderStatusAfter(tx, order.id) }).where(eq(purchaseOrders.id, order.id));
         await recordAudit(tx, actorOf(session), {
           action: "purchasing.goods_received",
@@ -359,6 +362,7 @@ export async function cancelGoodsReceipt(session: SessionContext, receiptId: str
       await appendStockMovement(tx, { shopId: session.shopId, productId: line.productId, movementDate: today, kind: "purchase", qtyBase: -parseQuantity(line.qtyBase), unitCostPaise: line.unitCostPaise, sourceType: "goods_receipt_cancel", sourceId: receipt.id, reason: `Cancelled ${receipt.number}: ${reason}`, createdBy: session.userId });
     }
     await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: receipt.supplierId, entryDate: today, kind: "cancellation", sourceType: "goods_receipt", sourceId: receipt.id, debitPaise: receipt.totalPaise });
+    await postGoodsReceiptCancelled(tx, booksOf(session), { receiptId: receipt.id, date: today });
     if (receipt.purchaseOrderId) {
       const [order] = await tx.select({ status: purchaseOrders.status }).from(purchaseOrders).where(eq(purchaseOrders.id, receipt.purchaseOrderId));
       if (order && order.status !== "closed" && order.status !== "cancelled") await tx.update(purchaseOrders).set({ status: await orderStatusAfter(tx, receipt.purchaseOrderId) }).where(eq(purchaseOrders.id, receipt.purchaseOrderId));
@@ -385,6 +389,7 @@ export async function paySupplier(session: SessionContext, input: unknown): Prom
         const today = indiaDate();
         const paymentId = await recordSupplierPayment(tx, { shopId: session.shopId, fy: financialYearLabel(), supplierId: supplier.id, method: data.method, amountPaise: data.amount, reference: data.method === "cash" ? null : data.reference, businessDate: today, recordedBy: session.userId });
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: supplier.id, entryDate: today, kind: "payment", sourceType: "payment", sourceId: paymentId, debitPaise: data.amount });
+        await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "out", partyType: "supplier", partyId: supplier.id, method: data.method, amountPaise: data.amount });
         await recordAudit(tx, actorOf(session), { action: "purchasing.supplier_paid", entityType: "payment", entityId: paymentId, after: { supplierId: supplier.id, amountPaise: data.amount, method: data.method, reference: data.reference, owedBeforePaise: owed } });
         return { status: 201, body: { id: paymentId, owedAfterPaise: owed - data.amount } };
       });
@@ -409,6 +414,7 @@ export async function reverseSupplierPayment(session: SessionContext, paymentId:
     const supplierId = result.original.partyId!;
     await lockPartyBalance(tx, session.shopId, "supplier", supplierId);
     await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: supplierId, entryDate: today, kind: "payment", sourceType: "payment", sourceId: result.reversalId, creditPaise: result.original.amountPaise });
+    await postPayment(tx, booksOf(session), { paymentId: result.reversalId, date: today, direction: "in", partyType: "supplier", partyId: supplierId, method: result.original.method, amountPaise: result.original.amountPaise });
     await recordAudit(tx, actorOf(session), { action: "purchasing.supplier_payment_reversed", entityType: "payment", entityId: result.original.id, before: { status: "recorded" }, after: { status: "reversed", reversalId: result.reversalId, amountPaise: result.original.amountPaise }, reason });
   });
 }

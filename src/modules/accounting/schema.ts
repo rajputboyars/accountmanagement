@@ -3,7 +3,7 @@ import { bigint, boolean, check, date, index, pgTable, text, timestamp, unique, 
 import { users } from "../identity/schema";
 import { shops } from "../settings/schema";
 import { ACCOUNT_TYPES, CASH_FLOW_CLASSES, GAP_KINDS, INPUT_GST_POLICIES } from "../../shared/accounting";
-import { createdAt, id, oneOf, paise } from "../../server/schema-helpers";
+import { createdAt, id, oneOf, paise, quantity } from "../../server/schema-helpers";
 
 /**
  * Owned by the accounting module ("Business Accounts"). Double-entry books kept beside, not instead of,
@@ -23,6 +23,8 @@ export const accountingSettings = pgTable(
     coverageStartDate: date("coverage_start_date", { mode: "string" }).notNull(),
     /** Where input GST goes. "review" decides nothing; "recoverable" and "non_recoverable" are explicit choices. */
     inputGstPolicy: text("input_gst_policy").$type<(typeof INPUT_GST_POLICIES)[number]>().notNull().default("review"),
+    /** When the opening balances were saved. A shop with nothing to open still records this, so "opened" never depends on a journal existing. */
+    openingRecordedAt: timestamp("opening_recorded_at", { withTimezone: true }),
     openingStatus: text("opening_status").$type<(typeof OPENING_STATUSES)[number]>().notNull().default("unverified"),
     /** Journals dated on or before this day cannot be added. */
     lockThrough: date("lock_through", { mode: "string" }),
@@ -133,5 +135,32 @@ export const accountingGaps = pgTable(
     uniqueIndex("accounting_gaps_key").on(t.shopId, t.kind, t.sourceType, t.sourceId, t.ref),
     index("accounting_gaps_open_idx").on(t.shopId, t.entryDate).where(sql`${t.resolvedAt} is null`),
     check("accounting_gaps_kind_check", oneOf(t.kind, GAP_KINDS)),
+  ],
+);
+
+/**
+ * A confirmed cost for opening stock that had none: who confirmed it, when, from what source, for how many units.
+ * One row per confirmation (a gap can be resolved in parts); its journal has this row as its source. Append-only.
+ */
+export const accountingGapResolutions = pgTable(
+  "accounting_gap_resolutions",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    gapId: uuid("gap_id").notNull().references(() => accountingGaps.id),
+    idempotencyKey: text("idempotency_key").notNull(),
+    quantity: quantity("quantity").notNull(),
+    /** Set when the owner gave a unit cost; null when they gave a total value. */
+    unitCostPaise: paise("unit_cost_paise"),
+    valuePaise: paise("value_paise").notNull(),
+    source: text("source").notNull(),
+    confirmedBy: uuid("confirmed_by").notNull().references(() => users.id),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("accounting_gap_resolutions_key").on(t.gapId, t.idempotencyKey),
+    index("accounting_gap_resolutions_gap_idx").on(t.gapId),
+    check("accounting_gap_resolutions_value_check", sql`${t.valuePaise} > 0 and ${t.quantity} > 0`),
   ],
 );

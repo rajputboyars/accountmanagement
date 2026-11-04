@@ -190,6 +190,20 @@
       "when": 1793795480771,
       "tag": "0026_accounting_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793798203999,
+      "tag": "0027_accounting_opening_recorded",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793801253074,
+      "tag": "0028_accounting_gap_resolutions",
+      "breakpoints": true
     }
   ]
 }

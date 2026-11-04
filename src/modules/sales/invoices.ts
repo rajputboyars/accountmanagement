@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { documentParties, printedSeller } from "./document-parties";
 import { and, asc, desc, eq, ilike, is, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
+import { postInvoiceCancelled, postInvoiceIssued, postPayment } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, searchShopProducts } from "@/modules/catalog";
 import { ANY_TARGET, consumeApproval, consumeMatchingApproval, hasPermission, loadUserNames, requirePermission, verifyOwnerPin, type SessionContext } from "@/modules/identity";
@@ -21,6 +22,7 @@ import { creditNotes, invoiceLines, invoices } from "./schema";
 import { billInputSchema, cancelInvoiceSchema, correctInvoiceSchema, saveBillSchema } from "./validation";
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
+const booksOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId });
 
 type SaveInput = ReturnType<typeof saveBillSchema.parse>;
 type ParsedBill = ReturnType<typeof billInputSchema.parse>;
@@ -197,10 +199,12 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
       if (registered) {
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: registered.id, entryDate: businessDate, kind: "invoice", sourceType: "invoice", sourceId: invoiceId, debitPaise: totals.totalPaise });
       }
+      await postInvoiceIssued(tx, booksOf(session), { invoiceId, date: businessDate, customerId: customer.id, taxablePaise: totals.taxablePaise, gstPaise: totals.cgstPaise + totals.sgstPaise + totals.igstPaise, roundOffPaise: totals.roundOffPaise, totalPaise: totals.totalPaise, lines: computed.lines.map((line) => ({ productId: line.product.id, qtyBase: toDbQuantity(line.quote.baseQuantity), unitCostPaise: line.product.costPaise })) });
       for (const method of ["cash", "upi", "card", "bank"] as const) {
         const amount = bill.payments[method];
         if (amount <= 0) continue;
         const paymentId = await recordCounterPayment(tx, { shopId: session.shopId, fy, customerId: registered?.id ?? null, invoiceId, method, amountPaise: amount, businessDate, recordedBy: session.userId });
+        await postPayment(tx, booksOf(session), { paymentId, date: businessDate, direction: "in", partyType: "customer", partyId: customer.id, method, amountPaise: amount });
         if (registered) {
           await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: registered.id, entryDate: businessDate, kind: "payment", sourceType: "payment", sourceId: paymentId, creditPaise: amount });
         }
@@ -283,6 +287,8 @@ export async function cancelInvoice(session: SessionContext, invoiceId: string, 
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: customer.id, entryDate: today, kind: "payment", sourceType: "payment", sourceId: refund.id, debitPaise: refund.amountPaise });
       }
     }
+    await postInvoiceCancelled(tx, booksOf(session), { invoiceId: invoice.id, date: today });
+    for (const refund of refunds) await postPayment(tx, booksOf(session), { paymentId: refund.id, date: today, direction: "out", partyType: "customer", partyId: customer.id, method: refund.method, amountPaise: refund.amountPaise });
     await recordAudit(tx, actorOf(session), {
       action: "sales.invoice_cancelled",
       entityType: "invoice",
@@ -454,6 +460,9 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
           reason: correction.reason,
         });
 
+        await postInvoiceCancelled(tx, booksOf(session), { invoiceId: original.id, date: today });
+        for (const refund of refunds) await postPayment(tx, booksOf(session), { paymentId: refund.id, date: today, direction: "out", partyType: "customer", partyId: origCustomer.id, method: refund.method, amountPaise: refund.amountPaise });
+
         // 2. Issue the new corrected invoice
 
         const { computed, discountApprovalId: consumedDiscountApprovalId, creditApprovalId: consumedCreditApprovalId } = await computeWithApprovals(tx, session, bill, save, registered?.id ?? null);
@@ -553,6 +562,7 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
             debitPaise: totals.totalPaise,
           });
         }
+        await postInvoiceIssued(tx, booksOf(session), { invoiceId: newInvoiceId, date: today, customerId: customer.id, taxablePaise: totals.taxablePaise, gstPaise: totals.cgstPaise + totals.sgstPaise + totals.igstPaise, roundOffPaise: totals.roundOffPaise, totalPaise: totals.totalPaise, lines: computed.lines.map((line) => ({ productId: line.product.id, qtyBase: toDbQuantity(line.quote.baseQuantity), unitCostPaise: line.product.costPaise })) });
 
         for (const method of ["cash", "upi", "card", "bank"] as const) {
           const amount = bill.payments[method];
@@ -567,6 +577,7 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
             businessDate: today,
             recordedBy: session.userId,
           });
+          await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "in", partyType: "customer", partyId: customer.id, method, amountPaise: amount });
           if (registered) {
             await appendLedgerEntry(tx, {
               shopId: session.shopId,

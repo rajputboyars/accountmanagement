@@ -82,6 +82,9 @@ export const EVENTS = {
   stockAdjustment: "stock_adjustment",
   opening: "opening",
   openingReclass: "opening_reclass",
+  partyOpening: "party_opening",
+  stockOpening: "stock_opening",
+  openingStockValued: "opening_stock_valued",
 } as const;
 
 export const reversalEvent = (event: string) => `reversal:${event}`;
@@ -342,4 +345,28 @@ export function cashFlowOf(lines: readonly CashFlowLine[]): CashFlowSplit {
   // A journal with no cash line moves no cash, whatever its other lines say.
   if (!lines.some((line) => line.cashFlow === "cash")) return { operating: 0, investing: 0, financing: 0, unclassified: 0, net: 0 };
   return split;
+}
+
+/** A customer's or supplier's opening balance entered after the books started (a new party with an old balance). The other side waits in clearing until confirmed. */
+export function partyOpeningAdded(input: { partyType: "customer" | "supplier"; partyId: string; debitPaise: number; creditPaise: number }): JournalDraft {
+  const { partyType, partyId, debitPaise, creditPaise } = input;
+  requirePaise("Debit", debitPaise);
+  requirePaise("Credit", creditPaise);
+  if ((debitPaise > 0) === (creditPaise > 0)) throw new AccountingRuleError("An opening balance is either owed to the shop or owed by it.");
+  const party: PartyRef = { type: partyType, id: partyId };
+  const control: AccountKey = partyType === "customer" ? "receivables" : "payables";
+  return { event: EVENTS.partyOpening, lines: [...dr(control, debitPaise, party), ...cr(control, creditPaise, party), ...cr("opening_clearing", debitPaise), ...dr("opening_clearing", creditPaise)], gaps: [] };
+}
+
+/** Opening stock entered after the books started. Valued at the cost given; lines with no cost become gaps. */
+export function stockOpeningAdded(input: { lines: readonly CostedLine[] }): JournalDraft {
+  const { known, gaps } = costLines(input.lines, "unvalued_opening_stock");
+  return { event: EVENTS.stockOpening, lines: [...dr("inventory", known), ...cr("opening_clearing", known)], gaps };
+}
+
+/** Opening stock given a confirmed value later: stock goes up, the other side waits in clearing until the owner confirms. Touches no profit account. */
+export function openingStockValued(valuePaise: number): JournalDraft {
+  requirePaise("Value", valuePaise);
+  if (valuePaise === 0) throw new AccountingRuleError("A value must be more than zero.");
+  return { event: EVENTS.openingStockValued, lines: [...dr("inventory", valuePaise), ...cr("opening_clearing", valuePaise)], gaps: [] };
 }

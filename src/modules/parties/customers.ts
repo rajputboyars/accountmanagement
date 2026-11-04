@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { postPartyOpening } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { requirePermission, type SessionContext } from "@/modules/identity";
 import { appendLedgerEntry, lockPartyBalance } from "@/modules/ledger";
@@ -52,6 +53,7 @@ export async function createCustomer(session: SessionContext, input: unknown): P
       const opening = data.openingOwed || data.openingAdvance;
       if (opening) {
         await lockPartyBalance(tx, session.shopId, "customer", id);
+        const openingSourceId = randomUUID();
         await appendLedgerEntry(tx, {
           shopId: session.shopId,
           partyType: "customer",
@@ -59,9 +61,10 @@ export async function createCustomer(session: SessionContext, input: unknown): P
           entryDate: data.oldestBillDate ?? indiaDate(),
           kind: "opening",
           sourceType: "opening_balance",
-          sourceId: randomUUID(),
+          sourceId: openingSourceId,
           ...(data.openingOwed ? { debitPaise: data.openingOwed } : { creditPaise: data.openingAdvance }),
         });
+        await postPartyOpening(tx, { shopId: session.shopId, userId: session.userId }, { sourceId: openingSourceId, partyType: "customer", partyId: id, effectiveDate: data.oldestBillDate ?? indiaDate(), debitPaise: data.openingOwed || 0, creditPaise: data.openingOwed ? 0 : data.openingAdvance || 0 });
       }
       await recordAudit(tx, actorOf(session), {
         action: "parties.customer_added",

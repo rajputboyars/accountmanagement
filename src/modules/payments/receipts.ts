@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { postPayment } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { requirePermission, type SessionContext } from "@/modules/identity";
 import { appendLedgerEntry, lockPartyBalance, partyBalance } from "@/modules/ledger";
@@ -30,6 +31,7 @@ export const PAYMENTS_RECORD = "payments.record" as const;
 export const PAYMENTS_REVERSE = "payments.reverse" as const;
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
+const booksOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId });
 
 export type RecordedReceipt = { id: string; receiptNumber: string; balanceBeforePaise: number; balanceAfterPaise: number; advancePaise: number; replayed: boolean };
 
@@ -63,6 +65,7 @@ export async function recordCustomerReceipt(session: SessionContext, input: unkn
           recordedBy: session.userId,
         });
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: customer.id, entryDate: today, kind: "payment", sourceType: "payment", sourceId: id, creditPaise: data.amount });
+        await postPayment(tx, booksOf(session), { paymentId: id, date: today, direction: "in", partyType: "customer", partyId: customer.id, method: data.method, amountPaise: data.amount });
         const after = before - data.amount;
         await recordAudit(tx, actorOf(session), {
           action: "payments.receipt_recorded",
@@ -107,6 +110,7 @@ export async function reverseCustomerReceipt(session: SessionContext, paymentId:
     await tx.insert(payments).values({ id: reversalId, shopId: session.shopId, fy: financialYearLabel(), direction: "out", partyType: "customer", partyId: original.partyId, method: original.method, amountPaise: original.amountPaise, businessDate: today, recordedBy: session.userId });
     await tx.update(payments).set({ status: "reversed", reversedByPaymentId: reversalId }).where(eq(payments.id, original.id));
     await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: original.partyId!, entryDate: today, kind: "payment", sourceType: "payment", sourceId: reversalId, debitPaise: original.amountPaise });
+    await postPayment(tx, booksOf(session), { paymentId: reversalId, date: today, direction: "out", partyType: "customer", partyId: original.partyId!, method: original.method, amountPaise: original.amountPaise });
     await recordAudit(tx, actorOf(session), { action: "payments.receipt_reversed", entityType: "payment", entityId: original.id, before: { status: "recorded" }, after: { status: "reversed", reversalId, receiptNumber: original.receiptNumber, amountPaise: original.amountPaise }, reason });
   });
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { postStockOpening } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
 import { requirePermission, type SessionContext } from "@/modules/identity";
@@ -94,6 +95,7 @@ export async function recordOpeningStock(session: SessionContext, input: unknown
             createdBy: session.userId,
           });
         }
+        await postStockOpening(tx, { shopId: session.shopId, userId: session.userId }, { batchId, effectiveDate: body.movementDate, lines: planned.map((line) => ({ productId: line.product.id, qtyBase: formatQuantity(line.base), unitCostPaise: line.unitCost })) });
         const lines = planned.map((line) => ({ productId: line.product.id, name: line.product.name, qty: formatQuantity(line.base), baseUnit: line.product.baseUnit }));
         await recordAudit(tx, { shopId: session.shopId, userId: session.userId, role: session.role }, {
           action: "inventory.opening_recorded",
