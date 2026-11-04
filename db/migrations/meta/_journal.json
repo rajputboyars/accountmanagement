@@ -183,6 +183,13 @@
       "when": 1793773055616,
       "tag": "0025_plain_nova",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793795480771,
+      "tag": "0026_accounting_foundation",
+      "breakpoints": true
     }
   ]
 }
