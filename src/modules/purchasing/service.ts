@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { recordAudit } from "@/modules/audit";
-import { applyReceivedCost, listShopProductsForStock, loadProductNames, loadProductsForStock, lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
+import { applyReceivedCost, createProductWithin, listShopProductsForStock, loadProductNames, loadProductsForStock, lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
 import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
 import { appendStockMovement, lockStockRows, stockOnHand } from "@/modules/inventory";
 import { appendLedgerEntry, lockPartyBalance, partyBalance, partyBalancesFor, partyStatement } from "@/modules/ledger";
@@ -17,7 +17,7 @@ import { formatPaise } from "@/shared/money";
 import { computePurchaseTotals, costPerBaseUnit, weightedAverageCost } from "@/shared/purchase";
 import { formatQuantity, isWholeQuantity, ONE_UNIT, parseQuantity, toBaseQuantity, toDbQuantity, type Milli } from "@/shared/quantity";
 import { PURCHASES_CANCEL, PURCHASES_EDIT, PURCHASES_VIEW, STOCK_RECEIVE, SUPPLIERS_PAY } from "./permissions";
-import { goodsReceiptLines, goodsReceipts, purchaseOrderLines, purchaseOrders } from "./schema";
+import { goodsReceiptLines, goodsReceipts, purchaseOrderLines, purchaseOrders, supplierProducts } from "./schema";
 import { purchaseOrderInputSchema, reasonSchema, receiptInputSchema, supplierInputSchema, supplierPaymentInputSchema } from "./validation";
 
 /**
@@ -147,11 +147,12 @@ export async function createPurchaseOrder(session: SessionContext, input: unknow
         if (!product) throw new ValidationError("Product not found.", { fieldErrors: { [`lines.${index}.productId`]: "Product not found." } });
         if (!product.isActive) throw new ValidationError(`${product.name} is switched off.`, { fieldErrors: { [`lines.${index}.productId`]: "Switched off." } });
         const { factor } = baseQuantity(product, line.unit, line.quantity, `lines.${index}.quantity`);
-        return { productId: product.id, unit: line.unit, factor: toDbQuantity(factor), qtyOrdered: toDbQuantity(line.quantity), costPaisePerUnit: line.cost };
+        return { index, name: product.name, productId: product.id, unit: line.unit, factor: toDbQuantity(factor), qtyOrdered: toDbQuantity(line.quantity), costPaisePerUnit: line.cost };
       });
+      await requireSupplierProducts(tx, session.shopId, supplier, lines);
       const { fy, number } = await takeDocumentNumber(tx, session.shopId, "PO");
       const [order] = await tx.insert(purchaseOrders).values({ shopId: session.shopId, fy, number, supplierId: supplier.id, orderDate: indiaDate(), status: "ordered", createdBy: session.userId }).returning({ id: purchaseOrders.id });
-      await tx.insert(purchaseOrderLines).values(lines.map((line) => ({ ...line, purchaseOrderId: order!.id })));
+      await tx.insert(purchaseOrderLines).values(lines.map((line) => ({ productId: line.productId, unit: line.unit, factor: line.factor, qtyOrdered: line.qtyOrdered, costPaisePerUnit: line.costPaisePerUnit, purchaseOrderId: order!.id })));
       await recordAudit(tx, actorOf(session), { action: "purchasing.order_created", entityType: "purchase_order", entityId: order!.id, after: { number, supplierId: supplier.id, lines: lines.length } });
       return { status: 201, body: { id: order!.id, number } };
     });
@@ -262,6 +263,8 @@ export async function receiveGoods(session: SessionContext, input: unknown): Pro
           return { ...line, product, factor, base };
         });
 
+        // Against an order the products were checked when it was placed; a direct receipt is checked here.
+        if (!order) await requireSupplierProducts(tx, session.shopId, supplier, planned.map((line) => ({ index: line.index, productId: line.product.id, name: line.product.name })));
         const totals = computePurchaseTotals(planned.map((line) => ({ quantity: line.quantity, costPaisePerUnit: line.cost, gstRateBp: line.gstRateBp })));
         const stock = await stockOnHand(session.shopId, planned.map((line) => line.product.id), tx);
 
@@ -541,4 +544,67 @@ export async function purchasableProducts(session: SessionContext) {
       gstRateBp: product.gstRateBp,
       units: [{ code: product.baseUnit, name: product.baseUnitName, factor: null as string | null }, ...product.saleUnits.map((unit) => ({ code: unit.code, name: unit.name, factor: formatQuantity(unit.factor) as string | null }))],
     }));
+}
+
+// ── Supplier ↔ product links ─────────────────────────────────────────────────
+
+/** Product ids each supplier supplies, so the purchase screens offer only that supplier's products. */
+export async function supplierProductLinks(session: SessionContext): Promise<Record<string, string[]>> {
+  await requirePermission(session, PURCHASES_VIEW);
+  const rows = await getDb().select({ supplierId: supplierProducts.supplierId, productId: supplierProducts.productId }).from(supplierProducts).where(eq(supplierProducts.shopId, session.shopId));
+  const links: Record<string, string[]> = {};
+  for (const row of rows) (links[row.supplierId] ??= []).push(row.productId);
+  return links;
+}
+
+/** Links products to a supplier. Products already linked are skipped, so this never makes duplicates. */
+async function linkProducts(tx: Transaction, session: SessionContext, supplierId: string, productIds: string[]): Promise<string[]> {
+  const found = await loadProductsForStock(session.shopId, productIds, tx);
+  if (found.length !== new Set(productIds).size) throw new NotFoundError("Product not found.");
+  const inserted = await tx
+    .insert(supplierProducts)
+    .values(found.map((product) => ({ shopId: session.shopId, supplierId, productId: product.id, createdBy: session.userId })))
+    .onConflictDoNothing({ target: [supplierProducts.supplierId, supplierProducts.productId] })
+    .returning({ productId: supplierProducts.productId });
+  if (inserted.length > 0) {
+    await recordAudit(tx, actorOf(session), { action: "purchasing.supplier_products_linked", entityType: "supplier", entityId: supplierId, after: { productIds: inserted.map((row) => row.productId) } });
+  }
+  return inserted.map((row) => row.productId);
+}
+
+export async function linkSupplierProducts(session: SessionContext, supplierId: string, productIds: string[]): Promise<{ linked: number }> {
+  await requirePermission(session, PURCHASES_EDIT);
+  const ids = [...new Set(productIds)];
+  if (ids.length === 0) return { linked: 0 };
+  return withTransaction(async (tx) => {
+    const supplier = await findSupplier(session.shopId, supplierId, tx);
+    return { linked: (await linkProducts(tx, session, supplier.id, ids)).length };
+  });
+}
+
+/** Quick-add from a purchase screen: the normal product rules and permission, then linked to the supplier. */
+export async function createProductForSupplier(session: SessionContext, supplierId: string, input: unknown): Promise<{ id: string }> {
+  await requirePermission(session, PURCHASES_EDIT);
+  await findSupplier(session.shopId, supplierId);
+  // One transaction: if the link fails the product is rolled back too, and the other way round.
+  return withTransaction(async (tx) => {
+    const supplier = await findSupplier(session.shopId, supplierId, tx);
+    const { id } = await createProductWithin(tx, session, input);
+    await linkProducts(tx, session, supplier.id, [id]);
+    return { id };
+  });
+}
+
+/** Every product on a new order or direct receipt must be one this supplier supplies (link it from the purchase screen first). */
+async function requireSupplierProducts(tx: Transaction, shopId: string, supplier: { id: string; name: string }, lines: { index: number; productId: string; name: string }[]) {
+  if (lines.length === 0) return;
+  const rows = await tx
+    .select({ productId: supplierProducts.productId })
+    .from(supplierProducts)
+    .where(and(eq(supplierProducts.shopId, shopId), eq(supplierProducts.supplierId, supplier.id), inArray(supplierProducts.productId, lines.map((line) => line.productId))));
+  const linked = new Set(rows.map((row) => row.productId));
+  const missing = lines.find((line) => !linked.has(line.productId));
+  if (missing) {
+    throw new ConflictError("PRODUCT_NOT_FOR_SUPPLIER", `${missing.name} isn't linked to ${supplier.name}. Link it to this supplier first.`, { fieldErrors: { [`lines.${missing.index}.productId`]: "Not linked to this supplier." } });
+  }
 }

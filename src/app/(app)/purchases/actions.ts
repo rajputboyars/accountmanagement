@@ -9,7 +9,9 @@ import {
   cancelPurchaseOrder,
   closePurchaseOrder,
   createPurchaseOrder,
+  createProductForSupplier,
   createSupplier,
+  linkSupplierProducts,
   paySupplier,
   receiveGoods,
   reverseSupplierPayment,
@@ -49,17 +51,18 @@ function refresh(...paths: string[]) {
 export async function saveSupplierAction(_previous: FormResult, formData: FormData): Promise<FormResult> {
   const supplierId = text(formData, "supplierId");
   const values = { name: text(formData, "name"), phone: text(formData, "phone"), gstin: text(formData, "gstin"), paymentTermsDays: text(formData, "paymentTermsDays") || "30" };
+  let createdId: string | undefined;
   try {
     const session = await requireSession();
     if (supplierId) await updateSupplier(session, supplierId, values);
-    else await createSupplier(session, values);
+    else createdId = (await createSupplier(session, values)).id;
   } catch (error) {
     unstable_rethrow(error);
     return failure(error, values);
   }
   refresh(supplierId ? `/suppliers/${supplierId}` : "/suppliers");
   const t = await getT();
-  return { ok: true, message: supplierId ? t("suppliers.saved") : t("customers.added", { name: values.name }) };
+  return { ok: true, id: createdId, message: supplierId ? t("suppliers.saved") : t("customers.added", { name: values.name }) };
 }
 
 export async function setSupplierActiveAction(_previous: FormResult, formData: FormData): Promise<FormResult> {
@@ -123,6 +126,39 @@ export async function receiveGoodsAction(input: unknown): Promise<FormResult> {
     const result = await receiveGoods(await requireSession(), input);
     refresh();
     return { ok: true, id: result.id, number: result.number };
+  } catch (error) {
+    unstable_rethrow(error);
+    return failure(error);
+  }
+}
+
+const PRODUCT_FIELD_ALIASES: Record<string, string> = { retailPaise: "retailPrice", wholesalePaise: "wholesalePrice", costPaise: "costPrice" };
+
+export type QuickProductResult = FormResult & { product?: { id: string; name: string; sku: string; baseUnit: string; gstRateBp: number } };
+
+/** Quick-add a product from a purchase screen: the catalog's own rules, then linked to the supplier. */
+export async function quickCreateProductAction(supplierId: string, values: Record<string, string>): Promise<QuickProductResult> {
+  const field = (name: string) => String(values[name] ?? "");
+  try {
+    const session = await requireSession();
+    const input = { name: field("name"), sku: field("sku"), barcode: "", categoryName: "", description: "", baseUnit: field("baseUnit"), hsn: field("hsn"), gstRateBp: field("gstRateBp"), retailPaise: field("retailPrice"), wholesalePaise: field("wholesalePrice"), costPaise: field("costPrice"), reorderLevel: "" };
+    const { id } = await createProductForSupplier(session, supplierId, input);
+    refresh("/inventory");
+    return { ok: true, id, product: { id, name: input.name.trim(), sku: input.sku.trim().toUpperCase(), baseUnit: input.baseUnit, gstRateBp: Number(input.gstRateBp) } };
+  } catch (error) {
+    unstable_rethrow(error);
+    const result = await failure(error, values);
+    const fieldErrors = result.fieldErrors ? Object.fromEntries(Object.entries(result.fieldErrors).map(([key, message]) => [PRODUCT_FIELD_ALIASES[key] ?? key, message])) : result.code === "SKU_IN_USE" ? { sku: result.error ?? "" } : undefined;
+    return { ...result, fieldErrors };
+  }
+}
+
+/** Links products the shop already has to a supplier. Products already linked are left alone. */
+export async function linkSupplierProductsAction(supplierId: string, productIds: string[]): Promise<FormResult & { linked?: number }> {
+  try {
+    const { linked } = await linkSupplierProducts(await requireSession(), supplierId, productIds);
+    refresh();
+    return { ok: true, linked };
   } catch (error) {
     unstable_rethrow(error);
     return failure(error);

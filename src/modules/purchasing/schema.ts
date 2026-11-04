@@ -111,3 +111,25 @@ export const goodsReceiptLines = pgTable(
     index("goods_receipt_lines_po_line_idx").on(t.purchaseOrderLineId),
   ],
 );
+
+/**
+ * Which products a supplier supplies (many to many). It only narrows what the purchase screens
+ * offer; stock, cost and ledger never read it. Filled by quick-add, "link existing product" and,
+ * for existing shops, a backfill from past orders and receipts.
+ */
+export const supplierProducts = pgTable(
+  "supplier_products",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    supplierId: uuid("supplier_id").notNull().references(() => suppliers.id),
+    productId: uuid("product_id").notNull().references(() => products.id),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("supplier_products_supplier_product_key").on(t.supplierId, t.productId),
+    index("supplier_products_shop_supplier_idx").on(t.shopId, t.supplierId),
+    index("supplier_products_product_idx").on(t.productId),
+  ],
+);

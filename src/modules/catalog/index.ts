@@ -2,6 +2,7 @@
 export { CATALOG_MANAGE, CATALOG_VIEW, COST_VIEW } from "./permissions";
 export {
   createProduct,
+  createProductWithin,
   exportProducts,
   getProduct,
   listCategories,

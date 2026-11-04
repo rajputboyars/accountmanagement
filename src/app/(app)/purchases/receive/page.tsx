@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { PurchaseLinesForm } from "@/components/purchases/purchase-lines-form";
+import { quickOptions } from "../quick-options";
 import { PageContainer } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
-import { getPurchaseOrder, listSuppliers, purchasableProducts } from "@/modules/purchasing";
+import { getPurchaseOrder, listSuppliers, purchasableProducts, supplierProductLinks } from "@/modules/purchasing";
 import { requireSession } from "@/server/auth";
 import { NotFoundError } from "@/server/errors";
 import { getT } from "@/server/i18n";
@@ -35,7 +36,7 @@ async function Receive({ searchParams }: { searchParams: PageProps<"/purchases/r
         throw error;
       })
     : null;
-  const [suppliers, products] = await Promise.all([listSuppliers(session), order ? Promise.resolve([]) : purchasableProducts(session).catch(() => [])]);
+  const [suppliers, products, links, quick] = await Promise.all([listSuppliers(session), order ? Promise.resolve([]) : purchasableProducts(session).catch(() => []), order ? Promise.resolve({}) : supplierProductLinks(session).catch(() => ({})), order ? Promise.resolve(undefined) : quickOptions(session, t).catch(() => undefined)]);
 
   return (
     <PageContainer className="max-w-5xl">
@@ -60,6 +61,8 @@ async function Receive({ searchParams }: { searchParams: PageProps<"/purchases/r
             defaultSupplierId={suppliers.some((supplier) => supplier.id === params.supplier) ? String(params.supplier) : ""}
             suppliers={suppliers.map((supplier) => ({ id: supplier.id, name: supplier.name }))}
             products={products.map((product) => ({ ...product, units: product.units.map((unit) => ({ code: unit.code, label: unit.factor ? packLabel(t, unit.code, unit.name, unit.factor) : unitName(t, unit.code, unit.name) })) }))}
+            links={links}
+            quick={quick}
             order={order ? { id: order.id, supplierName: order.supplier.name, lines: order.lines.filter((line) => line.leftBase !== "0").map((line) => ({ ...line, unitLabel: unitShort(t, line.unit), baseUnitLabel: unitShort(t, line.baseUnit) })) } : undefined}
           />
         </SectionCard>

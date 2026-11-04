@@ -176,6 +176,13 @@
       "when": 1793609139342,
       "tag": "0024_user_guidance_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793773055616,
+      "tag": "0025_plain_nova",
+      "breakpoints": true
     }
   ]
 }

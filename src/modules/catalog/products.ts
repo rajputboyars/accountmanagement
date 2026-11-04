@@ -240,40 +240,48 @@ async function requireShopGstRate(tx: Transaction, shopId: string, rate: number)
 export async function createProduct(session: SessionContext, input: unknown): Promise<{ id: string }> {
   await requirePermission(session, CATALOG_MANAGE);
   const data = productInputSchema.parse(input);
-  return withTransaction(async (tx) => {
-    await requireShopGstRate(tx, session.shopId, data.gstRateBp);
-    await requireActiveUnit(tx, session.shopId, data.baseUnit, "base unit");
-    const categoryId = await resolveCategory(tx, session.shopId, data.categoryName);
-    let row: { id: string } | undefined;
-    try {
-      [row] = await tx
-        .insert(products)
-        .values({
-          shopId: session.shopId,
-          name: data.name,
-          sku: data.sku,
-          barcode: data.barcode ?? null,
-          description: data.description ?? null,
-          categoryId,
-          baseUnit: data.baseUnit,
-          hsn: data.hsn,
-          gstRateBp: data.gstRateBp,
-          retailPaise: data.retailPaise,
-          wholesalePaise: data.wholesalePaise,
-          costPaise: data.costPaise,
-          ...(data.reorderLevel !== null ? { reorderLevel: toDbQuantity(data.reorderLevel) } : {}),
-        })
-        .returning({ id: products.id });
-    } catch (error) {
-      throw duplicateError(error) ?? error;
-    }
-    const productId = row!.id;
-    if (data.costPaise !== null) {
-      await tx.insert(productCostHistory).values({ productId, costPaise: data.costPaise, sourceType: "manual", effectiveAt: sql`now()` });
-    }
-    await recordAudit(tx, actorOf(session), { action: "catalog.product_created", entityType: "product", entityId: productId, after: auditFields({ ...data, categoryId, reorderLevel: data.reorderLevel !== null ? toDbQuantity(data.reorderLevel) : null }) });
-    return { id: productId };
-  });
+  return withTransaction((tx) => insertProduct(tx, session, data));
+}
+
+/** Same rules and permission as createProduct, inside the caller's transaction, so it can commit or roll back with other writes. */
+export async function createProductWithin(tx: Transaction, session: SessionContext, input: unknown): Promise<{ id: string }> {
+  await requirePermission(session, CATALOG_MANAGE);
+  return insertProduct(tx, session, productInputSchema.parse(input));
+}
+
+async function insertProduct(tx: Transaction, session: SessionContext, data: ProductInput): Promise<{ id: string }> {
+  await requireShopGstRate(tx, session.shopId, data.gstRateBp);
+  await requireActiveUnit(tx, session.shopId, data.baseUnit, "base unit");
+  const categoryId = await resolveCategory(tx, session.shopId, data.categoryName);
+  let row: { id: string } | undefined;
+  try {
+    [row] = await tx
+      .insert(products)
+      .values({
+        shopId: session.shopId,
+        name: data.name,
+        sku: data.sku,
+        barcode: data.barcode ?? null,
+        description: data.description ?? null,
+        categoryId,
+        baseUnit: data.baseUnit,
+        hsn: data.hsn,
+        gstRateBp: data.gstRateBp,
+        retailPaise: data.retailPaise,
+        wholesalePaise: data.wholesalePaise,
+        costPaise: data.costPaise,
+        ...(data.reorderLevel !== null ? { reorderLevel: toDbQuantity(data.reorderLevel) } : {}),
+      })
+      .returning({ id: products.id });
+  } catch (error) {
+    throw duplicateError(error) ?? error;
+  }
+  const productId = row!.id;
+  if (data.costPaise !== null) {
+    await tx.insert(productCostHistory).values({ productId, costPaise: data.costPaise, sourceType: "manual", effectiveAt: sql`now()` });
+  }
+  await recordAudit(tx, actorOf(session), { action: "catalog.product_created", entityType: "product", entityId: productId, after: auditFields({ ...data, categoryId, reorderLevel: data.reorderLevel !== null ? toDbQuantity(data.reorderLevel) : null }) });
+  return { id: productId };
 }
 
 /**

@@ -4,7 +4,7 @@
  * Safe to run repeatedly: every row has a stable ID (UUID v5 from a fixed namespace) and is
  * inserted with ON CONFLICT DO NOTHING, so a second run adds nothing.
  *
- * It writes no sales, payments or purchases. Opening stock and opening balances are recorded the
+ * It writes no sales, payments or purchases (supplier-product links only say what each supplier supplies). Opening stock and opening balances are recorded the
  * way the architecture requires — as `opening` stock movements and ledger entries — and the
  * stock_levels / party_balances caches are rebuilt from those journals, never typed in.
  *
@@ -85,6 +85,17 @@ const SUPPLIERS = [
   { key: "supreme", name: "Supreme Pipes Jaipur (sample)", phone: "9000002002", paymentTermsDays: 30, openingPaise: 2_280_000 },
   { key: "jaquar", name: "Jaquar Dealer – Raja Park (sample)", phone: "9000002003", paymentTermsDays: 45, openingPaise: 4_650_000 },
 ] as const;
+
+/**
+ * Which products each sample supplier supplies (supplier key -> product SKUs). A product may have several suppliers.
+ * This only decides what the purchase screens offer for a supplier; it is not a purchase and moves no stock or money.
+ * UltraTech cement has no sample supplier, so it stays unlinked.
+ */
+const SUPPLIER_PRODUCTS: Record<(typeof SUPPLIERS)[number]["key"], string[]> = {
+  astral: ["AST-CP-1", "FIN-SC-237", "TEF-12"],
+  supreme: ["SUP-EL-1", "AST-CP-1", "ASH-BV-075", "TEF-12"],
+  jaquar: ["JAQ-PC-CON", "HIN-WB-22"],
+};
 
 function assertSafeToSeed(url: string) {
   // The public demo deployment (DEMO_MODE=true and DEMO_SEED=true, set together on purpose) holds
@@ -213,6 +224,22 @@ async function main() {
         .values(SUPPLIERS.map((supplier) => ({ id: sid(`supplier:${supplier.key}`), shopId: SHOP_ID, name: supplier.name, phone: supplier.phone, paymentTermsDays: supplier.paymentTermsDays })))
         .onConflictDoNothing();
 
+      // Supplier-wise products: stable ids and ON CONFLICT DO NOTHING, so repeat runs add nothing.
+      await tx
+        .insert(schema.supplierProducts)
+        .values(
+          SUPPLIERS.flatMap((supplier) =>
+            SUPPLIER_PRODUCTS[supplier.key].map((sku) => ({
+              id: sid(`supplier-product:${supplier.key}:${sku}`),
+              shopId: SHOP_ID,
+              supplierId: sid(`supplier:${supplier.key}`),
+              productId: sid(`product:${sku}`),
+              createdBy: OWNER_ID,
+            })),
+          ),
+        )
+        .onConflictDoNothing();
+
       // Opening stock: one `opening` movement per product (journal), never a direct stock edit.
       await tx
         .insert(schema.stockMovements)
@@ -301,6 +328,7 @@ async function main() {
       select 'products' as table, count(*)::int as rows from products where shop_id = ${SHOP_ID}
       union all select 'customers', count(*)::int from customers where shop_id = ${SHOP_ID}
       union all select 'suppliers', count(*)::int from suppliers where shop_id = ${SHOP_ID}
+      union all select 'supplier_products', count(*)::int from supplier_products where shop_id = ${SHOP_ID}
       union all select 'stock_movements', count(*)::int from stock_movements where shop_id = ${SHOP_ID}
       union all select 'ledger_entries', count(*)::int from ledger_entries where shop_id = ${SHOP_ID}`);
     console.log("Seeded sample shop (repeat runs add nothing):");
