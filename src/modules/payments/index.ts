@@ -113,7 +113,7 @@ export type SupplierPaymentRow = { id: string; method: PaymentMethod; amountPais
 /** Money paid to a supplier ("out", party supplier). */
 export async function recordSupplierPayment(
   tx: Transaction,
-  payment: { shopId: string; fy: string; supplierId: string; method: PaymentMethod; amountPaise: number; reference: string | null; businessDate: string; recordedBy: string },
+  payment: { shopId: string; fy: string; supplierId: string; method: PaymentMethod; amountPaise: number; reference: string | null; businessDate: string; recordedBy: string; bankAccountId?: string | null },
 ): Promise<string> {
   const id = randomUUID();
   await tx.insert(payments).values({
@@ -126,6 +126,7 @@ export async function recordSupplierPayment(
     method: payment.method,
     amountPaise: payment.amountPaise,
     reference: payment.reference,
+    bankAccountId: payment.method === "bank" ? (payment.bankAccountId ?? null) : null,
     businessDate: payment.businessDate,
     recordedBy: payment.recordedBy,
   });
@@ -155,6 +156,7 @@ export async function reverseSupplierPaymentRow(tx: Transaction, shopId: string,
     partyType: "supplier",
     partyId: original.partyId,
     method: original.method,
+    bankAccountId: original.bankAccountId,
     amountPaise: original.amountPaise,
     businessDate: info.businessDate,
     recordedBy: info.recordedBy,
@@ -212,7 +214,7 @@ export async function paymentsOnDay(db: Database | Transaction, shopId: string, 
   return rows.map((row) => ({ ...row, category: row.category as PaymentCategory }));
 }
 
-export { PAYMENTS_RECORD, PAYMENTS_REVERSE, recordCustomerReceipt, reverseCustomerReceipt, type RecordedReceipt } from "./receipts";
+export { insertBankReceiptRow, PAYMENTS_RECORD, PAYMENTS_REVERSE, recordCustomerReceipt, reverseCustomerReceipt, type RecordedReceipt } from "./receipts";
 
 /** Payment details for labelling ledger lines (receipt number, method, links). Ids of other shops are ignored. */
 export async function paymentDetails(db: Database | Transaction, shopId: string, ids: string[]) {

@@ -218,6 +218,13 @@
       "when": 1793808495266,
       "tag": "0030_sales_purchase_operations",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1793850233652,
+      "tag": "0031_bank_reconciliation_stock_intelligence",
+      "breakpoints": true
     }
   ]
 }

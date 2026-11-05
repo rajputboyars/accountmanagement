@@ -52,7 +52,7 @@ export async function saveCustomerAction(_previous: FormState, formData: FormDat
 
 export async function recordReceiptAction(_previous: FormState, formData: FormData): Promise<FormState> {
   const customerId = text(formData, "customerId");
-  const values = { amount: text(formData, "amount"), method: text(formData, "method"), reference: text(formData, "reference") };
+  const values = { amount: text(formData, "amount"), method: text(formData, "method"), reference: text(formData, "reference"), bankAccountId: text(formData, "bankAccountId") };
   try {
     const result = await recordCustomerReceipt(await requireSession(), { ...values, customerId, idempotencyKey: text(formData, "idempotencyKey") });
     revalidatePath(`/customers/${customerId}`);

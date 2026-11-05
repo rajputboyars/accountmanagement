@@ -2,6 +2,11 @@ import { and, eq, like } from "drizzle-orm";
 import type { Transaction } from "@/server/db";
 import { accounts, journalLines, journals } from "./schema";
 import {
+  bankEntry,
+  bankOpening,
+  bankSettlement,
+  type AnyAccountKey,
+  type BankEntryKind,
   cashMoved,
   creditNoteIssued,
   creditNoteRestock,
@@ -52,8 +57,23 @@ export async function postCreditNote(tx: Transaction, ctx: PostingContext, a: { 
 }
 
 /** One payment row (money in or out). Counter payments with no named customer pass the bill's walk-in customer. */
-export async function postPayment(tx: Transaction, ctx: PostingContext, a: { paymentId: string; date: string; direction: "in" | "out"; partyType: "customer" | "supplier"; partyId: string; method: string; amountPaise: number }) {
-  await postJournal(tx, ctx, { entryDate: a.date, sourceType: "payment", sourceId: a.paymentId, draft: paymentRecorded({ direction: a.direction, partyType: a.partyType, partyId: a.partyId, method: a.method, amountPaise: a.amountPaise }) });
+export async function postPayment(tx: Transaction, ctx: PostingContext, a: { paymentId: string; date: string; direction: "in" | "out"; partyType: "customer" | "supplier"; partyId: string; method: string; amountPaise: number; /** The chart account of the bank account a bank payment went through (default: the original bank account). */ bankAccountKey?: string | null }) {
+  await postJournal(tx, ctx, { entryDate: a.date, sourceType: "payment", sourceId: a.paymentId, draft: paymentRecorded({ direction: a.direction, partyType: a.partyType, partyId: a.partyId, method: a.method, amountPaise: a.amountPaise, bankAccount: a.bankAccountKey }) });
+}
+
+/** UPI, card or cheque receipts reaching the bank (or leaving it), with whatever fee the bank kept back. Moves money between accounts; never counts a sale twice. */
+export async function postBankSettlement(tx: Transaction, ctx: PostingContext, a: { groupId: string; date: string; bankAccount: AnyAccountKey; bankNetPaise: number; clearing: { account: "upi" | "card" | "cheques"; paise: number }[] }) {
+  return postJournal(tx, ctx, { entryDate: a.date, sourceType: "bank_match_group", sourceId: a.groupId, memo: "Bank settlement", draft: bankSettlement({ bankAccount: a.bankAccount, bankNetPaise: a.bankNetPaise, clearing: a.clearing }) });
+}
+
+/** A bank charge, interest, or the owner moving money, posted from a statement line after the owner confirmed it. */
+export async function postBankEntry(tx: Transaction, ctx: PostingContext, a: { groupId: string; date: string; kind: BankEntryKind; bankAccount: AnyAccountKey; amountPaise: number }) {
+  return postJournal(tx, ctx, { entryDate: a.date, sourceType: "bank_match_group", sourceId: a.groupId, memo: "From bank statement", draft: bankEntry({ kind: a.kind, bankAccount: a.bankAccount, amountPaise: a.amountPaise }) });
+}
+
+/** Opening difference of a newly added bank account, added to the books only when the owner chose to. Waits in the unverified clearing account. */
+export async function postBankOpening(tx: Transaction, ctx: PostingContext, a: { bankAccountId: string; date: string; bankAccount: AnyAccountKey; differencePaise: number }) {
+  return postJournal(tx, ctx, { entryDate: a.date, kind: "adjustment", sourceType: "bank_opening", sourceId: a.bankAccountId, memo: "Bank account opening balance", draft: bankOpening({ bankAccount: a.bankAccount, differencePaise: a.differencePaise }) });
 }
 
 export async function postGoodsReceived(tx: Transaction, ctx: PostingContext, a: { receiptId: string; date: string; supplierId: string; taxablePaise: number; gstPaise: number; totalPaise: number }) {

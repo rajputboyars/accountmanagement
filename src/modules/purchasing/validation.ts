@@ -136,6 +136,8 @@ export const supplierPaymentInputSchema = z.object({
     .max(40, "At most 40 characters.")
     .optional()
     .transform((value) => value || null),
+  /** Which bank account a bank payment went through; asked only when the shop has more than one. */
+  bankAccountId: z.string().uuid().optional().or(z.literal("").transform(() => undefined)),
 });
 
 export const reasonSchema = z.object({ reason: z.string().trim().min(3, "Write a short reason (at least 3 characters).").max(200, "Keep the reason under 200 characters.") });

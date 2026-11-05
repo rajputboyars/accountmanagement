@@ -24,4 +24,6 @@ export const receiptInputSchema = z.object({
     .max(40)
     .optional()
     .transform((value) => value || null),
+  /** Which bank account a bank payment went through; asked only when the shop has more than one. */
+  bankAccountId: z.string().uuid().optional().or(z.literal("").transform(() => undefined)),
 });

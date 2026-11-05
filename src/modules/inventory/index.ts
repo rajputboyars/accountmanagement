@@ -52,3 +52,4 @@ export {
   type Availability,
 } from "./reservations";
 export { signedQuantity } from "./ledger";
+export { DEFAULT_NOT_SELLING_DAYS, NOT_SELLING_CHOICES, stockNotSelling, type GodownStockAge, type NotSellingItem, type StockNotSelling } from "./intelligence";

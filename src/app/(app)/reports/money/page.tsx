@@ -72,6 +72,9 @@ async function MoneyView({ searchParams }: Pick<Props, "searchParams">) {
                 {t("money.setupLink")}
               </Link>
             ) : null}
+            <Link href="/reports/money/bank" className={buttonVariants({ variant: "outline", size: "touch" })}>
+              {t("bank.link")}
+            </Link>
             <Link href="/reports/money/accountant/pl" className={buttonVariants({ variant: "outline", size: "touch" })}>
               {t("money.accountantLink")}
             </Link>

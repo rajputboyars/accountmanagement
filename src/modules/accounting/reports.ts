@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { requirePermission, type SessionContext } from "@/modules/identity";
 import { getDb, type Database, type Transaction } from "@/server/db";
 import { ValidationError } from "@/server/errors";
+import { isCashLikeKey } from "@/shared/accounting";
 import { indiaDate } from "@/shared/financial-year";
 import { reconcileParties, stockValueComparison } from "./reconcile";
 import { ACCOUNTING_VIEW, getAccountingStatus, type AccountingStatus } from "./service";
@@ -202,7 +203,7 @@ export async function cashFlow(session: SessionContext, range: { from: string; t
   const bucket = (cls: string) => details.filter((row) => row.cashFlow === cls).reduce((sum, row) => sum + row.amountPaise, 0);
   const cashBefore = await balancesWithin(db, session.shopId, null, new Date(new Date(`${from}T00:00:00Z`).getTime() - 86_400_000).toISOString().slice(0, 10));
   const cashAtEnd = await balancesWithin(db, session.shopId, null, to);
-  const cashAccounts = (balances: Balance[]) => balances.filter((b) => ["cash", "bank", "upi", "card", "cheques"].includes(b.key));
+  const cashAccounts = (balances: Balance[]) => balances.filter((b) => isCashLikeKey(b.key));
   const openingCashPaise = cashAccounts(cashBefore).reduce((sum, b) => sum + debitNet(b), 0);
   const closingCashPaise = cashAccounts(cashAtEnd).reduce((sum, b) => sum + debitNet(b), 0);
   const operatingPaise = bucket("operating");
@@ -236,6 +237,9 @@ export function sourceHref(sourceType: string, sourceId: string, party: { type: 
       return "/inventory/stock";
     case "opening_balance":
       return "/reports/money/setup";
+    case "bank_match_group":
+    case "bank_opening":
+      return "/reports/money/bank";
     default:
       return null;
   }
@@ -338,7 +342,8 @@ export async function moneyOverview(session: SessionContext, range: { from: stri
   const pnl = await profitAndLoss(session, range);
   const balances = await balancesWithin(db, session.shopId, null, to);
   const byKey = (key: string) => balances.find((b) => b.key === key);
-  const cashAndBank = ["cash", "bank", "upi", "card", "cheques"].map((key) => ({ key, name: byKey(key)?.name ?? key, amountPaise: byKey(key) ? debitNet(byKey(key)!) : 0 })).filter((row) => row.amountPaise !== 0);
+  const cashKeys = [...new Set([...["cash", "bank", "upi", "card", "cheques"], ...balances.filter((b) => isCashLikeKey(b.key)).map((b) => b.key)])];
+  const cashAndBank = cashKeys.map((key) => ({ key, name: byKey(key)?.name ?? key, amountPaise: byKey(key) ? debitNet(byKey(key)!) : 0 })).filter((row) => row.amountPaise !== 0);
   const tie = await reconcileParties(db, session.shopId, status.openingRecorded);
   return {
     active: true,

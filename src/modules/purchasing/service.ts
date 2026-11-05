@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
-import { postGoodsReceiptCancelled, postGoodsReceived, postPayment } from "@/modules/accounting";
+import { bankAccountKeyOf, postGoodsReceiptCancelled, postGoodsReceived, postPayment } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { applyReceivedCost, convertQuantity, createProductWithin, listShopProductsForStock, loadProductNames, loadProductsForStock, lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
 import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
@@ -385,9 +385,10 @@ export async function paySupplier(session: SessionContext, input: unknown): Prom
           throw new ConflictError("OVERPAYMENT", owed > 0 ? `You owe ${supplier.name} ${formatPaise(owed, { withPaise: true })}; you can't pay more than that.` : `You don't owe ${supplier.name} anything right now.`, { fieldErrors: { amount: `At most ${formatPaise(Math.max(owed, 0), { withPaise: true })}.` } });
         }
         const today = indiaDate();
-        const paymentId = await recordSupplierPayment(tx, { shopId: session.shopId, fy: financialYearLabel(), supplierId: supplier.id, method: data.method, amountPaise: data.amount, reference: data.method === "cash" ? null : data.reference, businessDate: today, recordedBy: session.userId });
+        const bankKey = data.method === "bank" && data.bankAccountId ? await bankAccountKeyOf(tx, session.shopId, data.bankAccountId, { requireActive: true }) : null;
+        const paymentId = await recordSupplierPayment(tx, { shopId: session.shopId, fy: financialYearLabel(), supplierId: supplier.id, method: data.method, amountPaise: data.amount, reference: data.method === "cash" ? null : data.reference, businessDate: today, recordedBy: session.userId, bankAccountId: bankKey ? data.bankAccountId : null });
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: supplier.id, entryDate: today, kind: "payment", sourceType: "payment", sourceId: paymentId, debitPaise: data.amount });
-        await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "out", partyType: "supplier", partyId: supplier.id, method: data.method, amountPaise: data.amount });
+        await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "out", partyType: "supplier", partyId: supplier.id, method: data.method, amountPaise: data.amount, bankAccountKey: bankKey });
         await recordAudit(tx, actorOf(session), { action: "purchasing.supplier_paid", entityType: "payment", entityId: paymentId, after: { supplierId: supplier.id, amountPaise: data.amount, method: data.method, reference: data.reference, owedBeforePaise: owed } });
         return { status: 201, body: { id: paymentId, owedAfterPaise: owed - data.amount } };
       });
@@ -412,7 +413,7 @@ export async function reverseSupplierPayment(session: SessionContext, paymentId:
     const supplierId = result.original.partyId!;
     await lockPartyBalance(tx, session.shopId, "supplier", supplierId);
     await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: supplierId, entryDate: today, kind: "payment", sourceType: "payment", sourceId: result.reversalId, creditPaise: result.original.amountPaise });
-    await postPayment(tx, booksOf(session), { paymentId: result.reversalId, date: today, direction: "in", partyType: "supplier", partyId: supplierId, method: result.original.method, amountPaise: result.original.amountPaise });
+    await postPayment(tx, booksOf(session), { paymentId: result.reversalId, date: today, direction: "in", partyType: "supplier", partyId: supplierId, method: result.original.method, amountPaise: result.original.amountPaise, bankAccountKey: result.original.bankAccountId ? await bankAccountKeyOf(tx, session.shopId, result.original.bankAccountId) : null });
     await recordAudit(tx, actorOf(session), { action: "purchasing.supplier_payment_reversed", entityType: "payment", entityId: result.original.id, before: { status: "recorded" }, after: { status: "reversed", reversalId: result.reversalId, amountPaise: result.original.amountPaise }, reason });
   });
 }

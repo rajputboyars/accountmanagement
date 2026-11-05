@@ -43,6 +43,7 @@ export const CHART = [
   { key: "sales", code: "4100", name: "Sales", type: "income", category: "sales", cashFlow: "operating" },
   { key: "sales_returns", code: "4110", name: "Sales returns", type: "income", category: "sales", cashFlow: "operating" },
   { key: "stock_gain", code: "4300", name: "Stock gain", type: "income", category: "stock", cashFlow: "operating" },
+  { key: "bank_interest", code: "4400", name: "Bank interest received", type: "income", category: "other_income", cashFlow: "operating" },
   { key: "round_off", code: "4900", name: "Round off", type: "income", category: "other_income", cashFlow: "operating" },
   { key: "cogs", code: "5100", name: "Cost of goods sold", type: "expense", category: "cost_of_goods", cashFlow: "operating" },
   { key: "stock_loss", code: "5200", name: "Stock loss", type: "expense", category: "stock", cashFlow: "operating" },
@@ -53,9 +54,17 @@ export const CHART = [
   { key: "expense_electricity", code: "6400", name: "Electricity", type: "expense", category: "expenses", cashFlow: "operating" },
   { key: "expense_tea", code: "6500", name: "Tea and snacks", type: "expense", category: "expenses", cashFlow: "operating" },
   { key: "expense_other", code: "6900", name: "Other expenses", type: "expense", category: "expenses", cashFlow: "operating" },
+  { key: "bank_charges", code: "6700", name: "Bank charges and card/UPI fees", type: "expense", category: "expenses", cashFlow: "operating" },
 ] as const satisfies readonly AccountDef[];
 
 export type AccountKey = (typeof CHART)[number]["key"];
+/** Each extra bank account gets its own account, keyed "bank:<id>". The first bank account keeps the original "bank" key, so earlier history is untouched. */
+export type BankAccountKey = `bank:${string}`;
+export type AnyAccountKey = AccountKey | BankAccountKey;
+export const bankAccountKey = (id: string): BankAccountKey => `bank:${id}`;
+export const isBankAccountKey = (key: string): key is BankAccountKey => /^bank:[0-9a-f-]{36}$/i.test(key);
+/** Cash and the money accounts that stand for it: cash, every bank account, and the not-yet-in-bank accounts. */
+export const isCashLikeKey = (key: string) => ["cash", "bank", "upi", "card", "cheques"].includes(key) || isBankAccountKey(key);
 const BY_KEY = new Map<string, AccountDef>(CHART.map((account) => [account.key, account]));
 export const accountDef = (key: string): AccountDef | undefined => BY_KEY.get(key);
 
@@ -66,7 +75,7 @@ export const GAP_KINDS = ["cost_missing_for_sale", "cost_missing_for_return", "u
 export type GapKind = (typeof GAP_KINDS)[number];
 
 export type PartyRef = { type: "customer" | "supplier"; id: string };
-export type LineSpec = { account: AccountKey; debitPaise: number; creditPaise: number; party?: PartyRef };
+export type LineSpec = { account: AnyAccountKey; debitPaise: number; creditPaise: number; party?: PartyRef };
 export type GapSpec = { kind: GapKind; ref: string; note: string };
 /** What one business event posts. `lines` may be empty when only gaps were found (nothing to post). */
 export type JournalDraft = { event: string; lines: LineSpec[]; gaps: GapSpec[] };
@@ -88,6 +97,9 @@ export const EVENTS = {
   openingStockValued: "opening_stock_valued",
   purchaseReturn: "purchase_return",
   delivery: "delivery",
+  bankSettlement: "bank_settlement",
+  bankEntry: "bank_entry",
+  bankOpening: "bank_opening",
 } as const;
 
 export const reversalEvent = (event: string) => `reversal:${event}`;
@@ -100,8 +112,8 @@ export class AccountingRuleError extends Error {
 }
 
 const isPaise = (value: number) => Number.isSafeInteger(value) && value >= 0;
-const dr = (account: AccountKey, amount: number, party?: PartyRef): LineSpec[] => (amount > 0 ? [{ account, debitPaise: amount, creditPaise: 0, ...(party ? { party } : {}) }] : []);
-const cr = (account: AccountKey, amount: number, party?: PartyRef): LineSpec[] => (amount > 0 ? [{ account, debitPaise: 0, creditPaise: amount, ...(party ? { party } : {}) }] : []);
+const dr = (account: AnyAccountKey, amount: number, party?: PartyRef): LineSpec[] => (amount > 0 ? [{ account, debitPaise: amount, creditPaise: 0, ...(party ? { party } : {}) }] : []);
+const cr = (account: AnyAccountKey, amount: number, party?: PartyRef): LineSpec[] => (amount > 0 ? [{ account, debitPaise: 0, creditPaise: amount, ...(party ? { party } : {}) }] : []);
 
 function requirePaise(label: string, value: number) {
   if (!isPaise(value)) throw new AccountingRuleError(`${label} must be a whole number of paise, zero or more.`);
@@ -115,7 +127,7 @@ export function assertBalanced(lines: readonly LineSpec[]) {
   for (const line of lines) {
     if (!isPaise(line.debitPaise) || !isPaise(line.creditPaise)) throw new AccountingRuleError("Journal amounts must be whole paise, zero or more.");
     if ((line.debitPaise > 0) === (line.creditPaise > 0)) throw new AccountingRuleError("Each journal line is a debit or a credit, not both and not neither.");
-    if (!accountDef(line.account)) throw new AccountingRuleError(`Unknown account ${line.account}.`);
+    if (!accountDef(line.account) && !isBankAccountKey(line.account)) throw new AccountingRuleError(`Unknown account ${line.account}.`);
     debit += line.debitPaise;
     credit += line.creditPaise;
   }
@@ -133,6 +145,16 @@ export type PaymentMethod = keyof typeof PAYMENT_ACCOUNTS;
 export function paymentAccount(method: string): AccountKey {
   const account = (PAYMENT_ACCOUNTS as Record<string, AccountKey>)[method];
   if (!account) throw new AccountingRuleError(`No account for payment method "${method}".`);
+  return account;
+}
+
+/** The account money moves through, honouring the bank account chosen for a bank payment (the original bank account when none was chosen). */
+export function moneyAccount(method: string, bankAccount?: string | null): AnyAccountKey {
+  const account = paymentAccount(method);
+  if (method === "bank" && bankAccount) {
+    if (!isBankAccountKey(bankAccount) && bankAccount !== "bank") throw new AccountingRuleError("That is not a bank account.");
+    return bankAccount as AnyAccountKey;
+  }
   return account;
 }
 
@@ -207,11 +229,11 @@ export function creditNoteRestock(input: { lines: readonly CostedLine[] }): Jour
 }
 
 /** Customer receipts and refunds, supplier payments and refunds. Each moves the party's control account and the exact payment account. */
-export function paymentRecorded(input: { direction: "in" | "out"; partyType: "customer" | "supplier" | "none"; partyId: string | null; method: string; amountPaise: number }): JournalDraft {
+export function paymentRecorded(input: { direction: "in" | "out"; partyType: "customer" | "supplier" | "none"; partyId: string | null; method: string; amountPaise: number; bankAccount?: string | null }): JournalDraft {
   const { direction, partyType, partyId, method, amountPaise } = input;
   requirePaise("Amount", amountPaise);
   if (partyType === "none" || !partyId) throw new AccountingRuleError("A payment with no customer or supplier has no account to post to yet.");
-  const money = paymentAccount(method);
+  const money = moneyAccount(method, input.bankAccount);
   const party: PartyRef = { type: partyType, id: partyId };
   const control: AccountKey = partyType === "customer" ? "receivables" : "payables";
   const lines = direction === "in" ? [...dr(money, amountPaise), ...cr(control, amountPaise, party)] : [...dr(control, amountPaise, party), ...cr(money, amountPaise)];
@@ -268,6 +290,53 @@ export function stockAdjusted(input: { lines: readonly CostedLine[] }): JournalD
     else gain += value;
   }
   return { event: EVENTS.stockAdjustment, lines: [...dr("stock_loss", loss), ...cr("inventory", loss), ...dr("inventory", gain), ...cr("stock_gain", gain)], gaps };
+}
+
+/**
+ * A bank statement line that settles money sitting in the not-yet-in-bank accounts (UPI, card or cheques).
+ * Those receipts were already counted when they were taken, so the bank is only paid out of that account, never out of sales again.
+ * `bankNetPaise` is what the bank actually moved (+ in, - out). `clearing` is what each account releases, signed the same way as its
+ * own balance (+ = receipts waiting to reach the bank). Whatever the bank kept back is the fee, and it must not be negative.
+ */
+export function bankSettlement(input: { bankAccount: AnyAccountKey; bankNetPaise: number; clearing: readonly { account: "upi" | "card" | "cheques"; paise: number }[] }): JournalDraft {
+  const { bankAccount, bankNetPaise, clearing } = input;
+  if (!Number.isSafeInteger(bankNetPaise) || bankNetPaise === 0) throw new AccountingRuleError("The bank amount must be a whole number of paise, not zero.");
+  let gross = 0;
+  const lines: LineSpec[] = [];
+  for (const item of clearing) {
+    if (!Number.isSafeInteger(item.paise) || item.paise === 0) throw new AccountingRuleError("Each settled amount must be a whole number of paise, not zero.");
+    gross += item.paise;
+    lines.push(...(item.paise > 0 ? cr(item.account, item.paise) : dr(item.account, -item.paise)));
+  }
+  const fee = gross - bankNetPaise;
+  if (fee < 0) throw new AccountingRuleError("The bank paid more than the receipts it settles. Match fewer or different items.");
+  lines.push(...(bankNetPaise > 0 ? dr(bankAccount, bankNetPaise) : cr(bankAccount, -bankNetPaise)), ...dr("bank_charges", fee));
+  return { event: EVENTS.bankSettlement, lines, gaps: [] };
+}
+
+export const BANK_ENTRY_KINDS = ["bank_charge", "bank_interest", "owner_in", "owner_out"] as const;
+export type BankEntryKind = (typeof BANK_ENTRY_KINDS)[number];
+
+/** A bank statement line with no other record: a charge, interest, or the owner moving money in or out. Posted only after the owner confirms. */
+export function bankEntry(input: { kind: BankEntryKind; bankAccount: AnyAccountKey; amountPaise: number }): JournalDraft {
+  requirePaise("Amount", input.amountPaise);
+  const { kind, bankAccount, amountPaise } = input;
+  const lines =
+    kind === "bank_charge"
+      ? [...dr("bank_charges", amountPaise), ...cr(bankAccount, amountPaise)]
+      : kind === "bank_interest"
+        ? [...dr(bankAccount, amountPaise), ...cr("bank_interest", amountPaise)]
+        : kind === "owner_in"
+          ? [...dr(bankAccount, amountPaise), ...cr("owner_funds_in", amountPaise)]
+          : [...dr("owner_drawings", amountPaise), ...cr(bankAccount, amountPaise)];
+  return { event: EVENTS.bankEntry, lines, gaps: [] };
+}
+
+/** An opening difference the owner confirmed when adding a bank account: the bank holds money the books do not show (or the other way round). */
+export function bankOpening(input: { bankAccount: AnyAccountKey; differencePaise: number }): JournalDraft {
+  const { bankAccount, differencePaise } = input;
+  if (!Number.isSafeInteger(differencePaise) || differencePaise === 0) throw new AccountingRuleError("There is no difference to add.");
+  return { event: EVENTS.bankOpening, lines: differencePaise > 0 ? [...dr(bankAccount, differencePaise), ...cr("opening_clearing", differencePaise)] : [...dr("opening_clearing", -differencePaise), ...cr(bankAccount, -differencePaise)], gaps: [] };
 }
 
 export type OpeningInput = {

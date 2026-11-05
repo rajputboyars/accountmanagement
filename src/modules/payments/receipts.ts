@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { postPayment } from "@/modules/accounting";
+import { bankAccountKeyOf, postPayment } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { requirePermission, type SessionContext } from "@/modules/identity";
 import { appendLedgerEntry, lockPartyBalance, partyBalance } from "@/modules/ledger";
@@ -50,6 +50,7 @@ export async function recordCustomerReceipt(session: SessionContext, input: unkn
         const before = await partyBalance(session.shopId, "customer", customer.id, tx);
         const { fy, number } = await takeDocumentNumber(tx, session.shopId, "RCPT");
         const id = randomUUID();
+        const bankKey = data.method === "bank" && data.bankAccountId ? await bankAccountKeyOf(tx, session.shopId, data.bankAccountId, { requireActive: true }) : null;
         await tx.insert(payments).values({
           id,
           shopId: session.shopId,
@@ -61,11 +62,12 @@ export async function recordCustomerReceipt(session: SessionContext, input: unkn
           method: data.method,
           amountPaise: data.amount,
           reference: data.method === "cash" ? null : data.reference,
+          bankAccountId: bankKey ? data.bankAccountId : null,
           businessDate: today,
           recordedBy: session.userId,
         });
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: customer.id, entryDate: today, kind: "payment", sourceType: "payment", sourceId: id, creditPaise: data.amount });
-        await postPayment(tx, booksOf(session), { paymentId: id, date: today, direction: "in", partyType: "customer", partyId: customer.id, method: data.method, amountPaise: data.amount });
+        await postPayment(tx, booksOf(session), { paymentId: id, date: today, direction: "in", partyType: "customer", partyId: customer.id, method: data.method, amountPaise: data.amount, bankAccountKey: bankKey });
         const after = before - data.amount;
         await recordAudit(tx, actorOf(session), {
           action: "payments.receipt_recorded",
@@ -107,10 +109,17 @@ export async function reverseCustomerReceipt(session: SessionContext, paymentId:
     if (original.status === "reversed") throw new ConflictError("ALREADY_REVERSED", "This receipt is already reversed.");
     await lockPartyBalance(tx, session.shopId, "customer", original.partyId!);
     const reversalId = randomUUID();
-    await tx.insert(payments).values({ id: reversalId, shopId: session.shopId, fy: financialYearLabel(), direction: "out", partyType: "customer", partyId: original.partyId, method: original.method, amountPaise: original.amountPaise, businessDate: today, recordedBy: session.userId });
+    await tx.insert(payments).values({ id: reversalId, shopId: session.shopId, fy: financialYearLabel(), direction: "out", partyType: "customer", partyId: original.partyId, method: original.method, amountPaise: original.amountPaise, bankAccountId: original.bankAccountId, businessDate: today, recordedBy: session.userId });
     await tx.update(payments).set({ status: "reversed", reversedByPaymentId: reversalId }).where(eq(payments.id, original.id));
     await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: original.partyId!, entryDate: today, kind: "payment", sourceType: "payment", sourceId: reversalId, debitPaise: original.amountPaise });
-    await postPayment(tx, booksOf(session), { paymentId: reversalId, date: today, direction: "out", partyType: "customer", partyId: original.partyId!, method: original.method, amountPaise: original.amountPaise });
+    await postPayment(tx, booksOf(session), { paymentId: reversalId, date: today, direction: "out", partyType: "customer", partyId: original.partyId!, method: original.method, amountPaise: original.amountPaise, bankAccountKey: original.bankAccountId ? await bankAccountKeyOf(tx, session.shopId, original.bankAccountId) : null });
     await recordAudit(tx, actorOf(session), { action: "payments.receipt_reversed", entityType: "payment", entityId: original.id, before: { status: "recorded" }, after: { status: "reversed", reversalId, receiptNumber: original.receiptNumber, amountPaise: original.amountPaise }, reason });
   });
+}
+
+/** A customer receipt that came from a bank statement line: the row only. The caller adds the ledger entry and the journal in the same transaction. */
+export async function insertBankReceiptRow(tx: Parameters<typeof postPayment>[0], p: { shopId: string; fy: string; receiptNumber: string; customerId: string; amountPaise: number; reference: string | null; bankAccountId: string; businessDate: string; recordedBy: string }): Promise<string> {
+  const id = randomUUID();
+  await tx.insert(payments).values({ id, shopId: p.shopId, fy: p.fy, receiptNumber: p.receiptNumber, direction: "in", partyType: "customer", partyId: p.customerId, method: "bank", amountPaise: p.amountPaise, reference: p.reference, bankAccountId: p.bankAccountId, businessDate: p.businessDate, recordedBy: p.recordedBy });
+  return id;
 }

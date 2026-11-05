@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, boolean, check, date, index, pgTable, text, timestamp, unique, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { bigint, boolean, check, date, index, jsonb, pgTable, text, timestamp, unique, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { users } from "../identity/schema";
 import { shops } from "../settings/schema";
 import { ACCOUNT_TYPES, CASH_FLOW_CLASSES, GAP_KINDS, INPUT_GST_POLICIES } from "../../shared/accounting";
@@ -162,5 +162,35 @@ export const accountingGapResolutions = pgTable(
     unique("accounting_gap_resolutions_key").on(t.gapId, t.idempotencyKey),
     index("accounting_gap_resolutions_gap_idx").on(t.gapId),
     check("accounting_gap_resolutions_value_check", sql`${t.valuePaise} > 0 and ${t.quantity} > 0`),
+  ],
+);
+
+/**
+ * A bank account the shop holds. Each one owns a chart account: the first keeps the original "bank" account (code 1020) so
+ * every earlier payment stays exactly where it was, later ones get their own "bank:<id>" account. Never deleted, only switched off.
+ * The opening figures fix where reconciliation starts: what the bank statement said on that date and what the books said.
+ */
+export const bankAccounts = pgTable(
+  "bank_accounts",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    accountId: uuid("account_id").notNull().references(() => accounts.id),
+    name: text("name").notNull(),
+    last4: text("last4"),
+    isDefault: boolean("is_default").notNull().default(false),
+    isActive: boolean("is_active").notNull().default(true),
+    openingAsOf: date("opening_as_of", { mode: "string" }).notNull(),
+    openingStatementPaise: paise("opening_statement_paise").notNull(),
+    openingBookPaise: paise("opening_book_paise").notNull(),
+    /** Which CSV column holds what, remembered per account so the next statement imports in one step. */
+    csvMapping: jsonb("csv_mapping").$type<Record<string, unknown>>(),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("bank_accounts_shop_account_key").on(t.shopId, t.accountId),
+    uniqueIndex("bank_accounts_shop_name_key").on(t.shopId, sql`lower(${t.name})`),
+    uniqueIndex("bank_accounts_one_default_key").on(t.shopId).where(sql`${t.isDefault}`),
   ],
 );

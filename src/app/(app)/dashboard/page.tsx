@@ -14,6 +14,7 @@ import { RangeFilter } from "@/components/reports/range-filter";
 import { TrendChart } from "@/components/reports/trend-chart";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { stockNotSelling } from "@/modules/inventory";
 import { countPendingApprovals } from "@/modules/identity";
 import { getDashboard, getOnboarding, raiseBusinessAlerts, type Dashboard } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
@@ -73,6 +74,8 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
   // figures just loaded (and their date, even if midnight passes), so they never delay it or query twice.
   after(() => raiseBusinessAlerts(session, data.alerts, data.today).catch((error: unknown) => console.error(JSON.stringify({ level: "error", event: "business_alerts_failed", message: error instanceof Error ? error.message : String(error) }))));
   const { range, sales, money, expenses, cash, receivables, payables, stock, profit } = data;
+  // A simple "what is not selling" answer. Left out for anyone who cannot see stock, and never allowed to break the page.
+  const notSelling = await stockNotSelling(session).catch(() => null);
   const rangeLabel = labelForRange(t, range);
   const rangeText = rangeInSentence(t, range);
   const isToday = range.from === data.today && range.to === data.today;
@@ -290,6 +293,43 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
                   </li>
                 ))}
               </ul>
+            )}
+          </SectionCard>
+        ) : null}
+        {notSelling ? (
+          <SectionCard title={t("stockAge.cardTitle")} description={t("stockAge.cardHelp", { days: notSelling.days })} action={<Link href="/inventory/not-selling" className="inline-flex items-center gap-1 text-sm font-semibold text-teal-strong hover:underline">{t("common.viewAll")}<ArrowUpRight className="size-3.5" aria-hidden="true" /></Link>} flush>
+            {notSelling.itemCount === 0 ? (
+              <p className="px-5 pb-5 text-sm text-muted-foreground">{t("stockAge.none", { days: notSelling.days })}</p>
+            ) : (
+              <>
+                <p className="px-5 pb-2 text-sm text-foreground">
+                  {t("stockAge.summary", { count: notSelling.itemCount, days: notSelling.days })}
+                  {notSelling.valuePaise !== null ? (
+                    <span className="font-semibold">
+                      {" "}
+                      {notSelling.valuePartial ? "≥ " : ""}
+                      <Money paise={notSelling.valuePaise} />
+                    </span>
+                  ) : null}
+                </p>
+                <ul className="flex flex-col divide-y divide-border pb-2">
+                  {notSelling.items.slice(0, 3).map((row) => (
+                    <li key={row.productId}>
+                      <Link href="/inventory/not-selling" className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm hover:bg-muted/50">
+                        <span className="min-w-0">
+                          <span className="font-medium text-foreground">{row.name}</span>
+                          <span className="block text-xs text-muted-foreground tabular-nums">{row.lastSaleDate ? t("stockAge.daysAgo", { days: row.daysSinceLastSale ?? 0 }) : t("stockAge.neverSold")}</span>
+                        </span>
+                        {row.valuePaise !== null ? (
+                          <span className="text-sm font-semibold tabular-nums">
+                            <Money paise={row.valuePaise} />
+                          </span>
+                        ) : null}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
           </SectionCard>
         ) : null}

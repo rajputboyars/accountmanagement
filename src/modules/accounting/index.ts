@@ -23,6 +23,9 @@ export {
   type PostResult,
 } from "./service";
 export {
+  postBankEntry,
+  postBankOpening,
+  postBankSettlement,
   postCashMovement,
   postCreditNote,
   postDelivery,
@@ -63,4 +66,5 @@ export {
   type ReportReason,
   type TrialBalance,
 } from "./reports";
+export { BANK_MANAGE, bankAccountKeyOf, bookBalanceOn, createBankAccount, getBankAccount, listBankAccounts, listBankChoices, saveCsvMapping, setBankAccountActive, type BankAccountView } from "./banks";
 export { listOpeningGaps, valueOpeningStock, type OpeningGap, type ValuedStock } from "./gaps";

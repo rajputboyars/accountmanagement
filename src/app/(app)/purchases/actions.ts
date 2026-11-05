@@ -80,7 +80,7 @@ export async function setSupplierActiveAction(_previous: FormResult, formData: F
 
 export async function paySupplierAction(_previous: FormResult, formData: FormData): Promise<FormResult> {
   const supplierId = text(formData, "supplierId");
-  const values = { amount: text(formData, "amount"), method: text(formData, "method"), reference: text(formData, "reference") };
+  const values = { amount: text(formData, "amount"), method: text(formData, "method"), reference: text(formData, "reference"), bankAccountId: text(formData, "bankAccountId") };
   try {
     await paySupplier(await requireSession(), { ...values, supplierId, idempotencyKey: text(formData, "idempotencyKey") });
   } catch (error) {
