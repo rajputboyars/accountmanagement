@@ -3,7 +3,7 @@ import { postGoodsReceiptCancelled, postGoodsReceived, postPayment } from "@/mod
 import { recordAudit } from "@/modules/audit";
 import { applyReceivedCost, convertQuantity, createProductWithin, listShopProductsForStock, loadProductNames, loadProductsForStock, lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
 import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
-import { appendStockMovement, lockStockRows, originalGodowns, resolveGodown, stockOnHand } from "@/modules/inventory";
+import { appendStockMovement, availableStock, lockStockRows, originalGodowns, resolveGodown, stockOnHand } from "@/modules/inventory";
 import { appendLedgerEntry, lockPartyBalance, partyBalance, partyBalancesFor, partyStatement } from "@/modules/ledger";
 import { findSupplier, insertSupplier, listShopSuppliers, supplierNameTaken, updateSupplierRow } from "@/modules/parties";
 import { recordSupplierPayment, reverseSupplierPaymentRow, supplierPayments } from "@/modules/payments";
@@ -17,6 +17,7 @@ import { financialYearLabel, indiaDate } from "@/shared/financial-year";
 import { formatPaise } from "@/shared/money";
 import { computePurchaseTotals, costPerBaseUnit, weightedAverageCost } from "@/shared/purchase";
 import { formatQuantity, ONE_UNIT, parseQuantity, toBaseQuantity, toDbQuantity, type Milli } from "@/shared/quantity";
+import { receiptHasReturns } from "./returns";
 import { PURCHASES_CANCEL, PURCHASES_EDIT, PURCHASES_VIEW, STOCK_RECEIVE, SUPPLIERS_PAY } from "./permissions";
 import { goodsReceiptLines, goodsReceipts, purchaseOrderLines, purchaseOrders, supplierProducts } from "./schema";
 import { purchaseOrderInputSchema, reasonSchema, receiptInputSchema, supplierInputSchema, supplierPaymentInputSchema } from "./validation";
@@ -337,6 +338,7 @@ export async function cancelGoodsReceipt(session: SessionContext, receiptId: str
     if (!receipt) throw new NotFoundError("Receipt not found.");
     if (receipt.status === "cancelled") throw new ConflictError("ALREADY_CANCELLED", "This receipt is already cancelled.");
     if (receipt.purchaseOrderId) await lockOrder(tx, session.shopId, receipt.purchaseOrderId);
+    if (await receiptHasReturns(tx, session.shopId, receipt.id)) throw new ConflictError("HAS_RETURNS", "Goods were already returned from this receipt, so it can't be cancelled. Return the rest instead.");
     const lines = await tx.select().from(goodsReceiptLines).where(eq(goodsReceiptLines.goodsReceiptId, receipt.id));
     const productIds = lines.map((line) => line.productId);
     const products = new Map((await lockProductsForStock(tx, session.shopId, productIds)).map((product) => [product.id, product]));
@@ -345,7 +347,7 @@ export async function cancelGoodsReceipt(session: SessionContext, receiptId: str
     const receivedInto = await originalGodowns(tx, session.shopId, "goods_receipt", receipt.id);
     for (const line of lines) {
       const need = parseQuantity(line.qtyBase);
-      const have = (await stockOnHand(session.shopId, [line.productId], tx, receivedInto.get(line.productId) ? { godownId: receivedInto.get(line.productId)! } : {})).get(line.productId)?.qty ?? BigInt(0);
+      const have = (await availableStock(tx, session.shopId, [line.productId], receivedInto.get(line.productId) ? { godownId: receivedInto.get(line.productId)! } : {})).get(line.productId)?.available ?? BigInt(0);
       if (have < need) {
         const product = products.get(line.productId);
         throw new ConflictError("STOCK_ALREADY_USED", `Only ${formatQuantity(have)} ${product?.baseUnit ?? ""} of ${product?.name ?? "a product"} are left, less than this receipt brought in. Record a stock adjustment instead.`);

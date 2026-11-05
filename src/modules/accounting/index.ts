@@ -25,6 +25,8 @@ export {
 export {
   postCashMovement,
   postCreditNote,
+  postDelivery,
+  postDeliveryCancelled,
   postExpense,
   postExpenseVoided,
   postGoodsReceiptCancelled,
@@ -33,6 +35,7 @@ export {
   postInvoiceIssued,
   postPartyOpening,
   postPayment,
+  postPurchaseReturn,
   postStockAdjustment,
   postStockOpening,
 } from "./events";

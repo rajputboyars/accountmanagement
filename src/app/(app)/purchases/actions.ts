@@ -9,6 +9,7 @@ import {
   cancelPurchaseOrder,
   closePurchaseOrder,
   createPurchaseOrder,
+  createPurchaseReturn,
   createProductForSupplier,
   createSupplier,
   linkSupplierProducts,
@@ -159,6 +160,18 @@ export async function linkSupplierProductsAction(supplierId: string, productIds:
     const { linked } = await linkSupplierProducts(await requireSession(), supplierId, productIds);
     refresh();
     return { ok: true, linked };
+  } catch (error) {
+    unstable_rethrow(error);
+    return failure(error);
+  }
+}
+
+/** Returns goods from a receipt and makes the supplier's debit note. The purchasing service checks quantities, stock, permissions and posts everything together. */
+export async function createPurchaseReturnAction(input: unknown): Promise<FormResult> {
+  try {
+    const result = await createPurchaseReturn(await requireSession(), input);
+    refresh("/purchases/returns");
+    return { ok: true, id: result.id, number: result.number };
   } catch (error) {
     unstable_rethrow(error);
     return failure(error);

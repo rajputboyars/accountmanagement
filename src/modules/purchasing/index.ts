@@ -25,3 +25,4 @@ export {
 } from "./service";
 export { purchasesDaySummary, purchasesRangeSummary, receiptNumbersFor } from "./day-summary";
 export { supplierInputSchema } from "./validation";
+export { createPurchaseReturn, getPurchaseReturn, listPurchaseReturns, listReturnableLines, purchaseReturnInputSchema, type CreatedPurchaseReturn, type ReturnableLine } from "./returns";

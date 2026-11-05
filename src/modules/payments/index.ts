@@ -254,3 +254,27 @@ export async function reversedPaymentIds(db: Database | Transaction, shopId: str
     .where(and(eq(payments.shopId, shopId), eq(payments.partyType, partyType), eq(payments.status, "reversed"), partyId ? eq(payments.partyId, partyId) : undefined));
   return new Set(rows.flatMap((row) => (row.reversalId ? [row.id, row.reversalId] : [row.id])));
 }
+
+/**
+ * Money received back from a supplier ("in", party supplier), for example the refund of goods returned. This is a genuine incoming
+ * payment, not a reversal of anything the shop paid out.
+ */
+export async function recordSupplierRefund(
+  tx: Transaction,
+  refund: { shopId: string; fy: string; supplierId: string; method: PaymentMethod; amountPaise: number; businessDate: string; recordedBy: string },
+): Promise<string> {
+  const id = randomUUID();
+  await tx.insert(payments).values({
+    id,
+    shopId: refund.shopId,
+    fy: refund.fy,
+    direction: "in",
+    partyType: "supplier",
+    partyId: refund.supplierId,
+    method: refund.method,
+    amountPaise: refund.amountPaise,
+    businessDate: refund.businessDate,
+    recordedBy: refund.recordedBy,
+  });
+  return id;
+}

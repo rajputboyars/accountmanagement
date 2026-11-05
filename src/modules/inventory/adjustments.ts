@@ -13,6 +13,7 @@ import { multiplyQuantity } from "@/shared/pricing-engine";
 import { formatQuantity, toDbQuantity, type Milli } from "@/shared/quantity";
 import { resolveGodown } from "./godowns";
 import { appendMovement, ledgerTotals, lockCacheRows, signedQuantity } from "./ledger";
+import { reservedQuantities } from "./reservations";
 import { OWNER_APPROVAL_THRESHOLD_PAISE, STOCK_ADJUST, STOCK_VIEW } from "./permissions";
 import { stockAdjustments, stockMovements } from "./schema";
 import { adjustmentInputSchema } from "./validation";
@@ -60,6 +61,12 @@ export async function recordAdjustment(session: SessionContext, input: unknown):
       const newQty = ledger.qty + change;
       if (newQty < BigInt(0)) {
         throw new ConflictError("NEGATIVE_STOCK", `Stock can't go below zero: only ${formatQuantity(ledger.qty)} ${product.baseUnit} in stock.`, { available: formatQuantity(ledger.qty) });
+      }
+
+      // Stock set aside for confirmed orders can't be written off or counted away from under them.
+      const setAside = (await reservedQuantities(tx, session.shopId, [product.id], { godownId })).get(product.id) ?? BigInt(0);
+      if (change < BigInt(0) && newQty < setAside) {
+        throw new ConflictError("RESERVED_STOCK", `${formatQuantity(setAside)} ${product.baseUnit} of ${product.name} is set aside for orders here, so only ${formatQuantity(ledger.qty - setAside > BigInt(0) ? ledger.qty - setAside : BigInt(0))} can be taken out.`);
       }
 
       const valuePaise = product.costPaise === null ? null : multiplyQuantity(base, product.costPaise);

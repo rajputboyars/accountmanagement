@@ -10,7 +10,7 @@ import { ConflictError, ForbiddenError, NotFoundError } from "@/server/errors";
 import { financialYearLabel } from "@/shared/financial-year";
 import { numberSeries, shops } from "./schema";
 
-export const DOCUMENT_SERIES = ["INV", "CN", "RCPT", "PO", "GRN", "ADJ", "TRF"] as const;
+export const DOCUMENT_SERIES = ["INV", "CN", "RCPT", "PO", "GRN", "ADJ", "TRF", "DN", "SO", "DC"] as const;
 
 export const setupSchema = z.object({
   setupToken: z.string().min(1, "Enter the setup token."),

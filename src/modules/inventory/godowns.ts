@@ -11,7 +11,8 @@ import { isUniqueViolation } from "@/server/db-errors";
 import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { indiaDate } from "@/shared/financial-year";
 import { formatQuantity, parseQuantity, toDbQuantity } from "@/shared/quantity";
-import { appendMovement, defaultGodownId, ledgerTotals, lockCacheRows } from "./ledger";
+import { appendMovement, defaultGodownId, lockCacheRows } from "./ledger";
+import { availableStock } from "./reservations";
 import { STOCK_ADJUST, STOCK_VIEW } from "./permissions";
 import { godowns, stockTransferLines, stockTransfers } from "./schema";
 
@@ -182,7 +183,8 @@ export async function transferStock(session: SessionContext, input: unknown): Pr
       const productIds = data.lines.map((line) => line.productId);
       const products = new Map((await lockProductsForStock(tx, session.shopId, productIds)).map((product) => [product.id, product]));
       await lockCacheRows(tx, session.shopId, productIds, [from.id, to.id]);
-      const onHand = await ledgerTotals(session.shopId, productIds, tx, { godownId: from.id });
+      // What can move is what is physically there less what is set aside for confirmed orders.
+      const onHand = new Map([...(await availableStock(tx, session.shopId, productIds, { godownId: from.id }))].map(([id, stock]) => [id, { qty: stock.available }]));
 
       const planned = data.lines.map((line, index) => {
         const product = products.get(line.productId);

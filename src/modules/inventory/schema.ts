@@ -22,6 +22,8 @@ export const STOCK_MOVEMENT_KINDS = [
   "count",
   "transfer_in",
   "transfer_out",
+  "delivery",
+  "delivery_cancel",
 ] as const;
 
 /**
@@ -155,4 +157,30 @@ export const stockTransferLines = pgTable(
     unitCostPaise: paise("unit_cost_paise"),
   },
   (t) => [unique("stock_transfer_lines_product_key").on(t.transferId, t.productId), check("stock_transfer_lines_qty_check", sql`${t.baseQty} > 0 and ${t.qty} > 0`)],
+);
+
+/**
+ * Stock set aside for a confirmed sales order. It is not a stock movement: physical stock is unchanged until goods are delivered.
+ * Available stock = physical stock in the godown - the reservations on it. One row per order line; the quantity shrinks as
+ * deliveries consume it and the row is removed when the order is cancelled or closed.
+ */
+export const stockReservations = pgTable(
+  "stock_reservations",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    orderId: uuid("order_id").notNull(),
+    orderLineId: uuid("order_line_id").notNull(),
+    productId: uuid("product_id").notNull().references(() => products.id),
+    godownId: uuid("godown_id").notNull().references(() => godowns.id),
+    qtyBase: quantity("qty_base").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("stock_reservations_order_line_key").on(t.orderLineId),
+    index("stock_reservations_stock_idx").on(t.shopId, t.productId, t.godownId),
+    index("stock_reservations_order_idx").on(t.orderId),
+    check("stock_reservations_qty_check", sql`${t.qtyBase} > 0`),
+  ],
 );

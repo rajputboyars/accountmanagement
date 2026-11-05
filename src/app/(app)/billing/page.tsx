@@ -49,6 +49,9 @@ async function NewBill() {
               <Undo2 aria-hidden="true" />
               {t("billing.returns")}
             </Link>
+            <Link href="/billing/orders" className={buttonVariants({ variant: "outline", size: "touch" })}>
+              {t("orders.link")}
+            </Link>
             <Link href="/billing/invoices" className={buttonVariants({ variant: "outline", size: "touch" })}>
               <History aria-hidden="true" />
               {t("billing.bills")}

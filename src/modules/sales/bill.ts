@@ -1,6 +1,6 @@
 import { findCustomer, type CustomerSummary } from "@/modules/parties";
 import { defaultPriceList, priceBillLine, type BillLinePrice } from "@/modules/pricing";
-import { godownList, stockOnHand } from "@/modules/inventory";
+import { godownList, reservedQuantities, stockOnHand } from "@/modules/inventory";
 import { partyBalance } from "@/modules/ledger";
 import { loadTaxSettings } from "@/modules/settings";
 import type { SessionContext } from "@/modules/identity";
@@ -67,7 +67,9 @@ export async function computeBill(
   }
 
   // One godown: the Main Store, never asked. Several: the person must choose; stock is never taken from a place they did not pick.
-  const places = await godownList(tx, session.shopId);
+  // Goods already delivered on a challan left stock then: billing them moves no stock, asks for no godown and checks no availability.
+  const fromDelivery = Boolean(input.challanLines?.length);
+  const places = fromDelivery ? [] : await godownList(tx, session.shopId);
   let godownId: string | null = null;
   let godownName: string | null = null;
   if (places.length <= 1) {
@@ -81,18 +83,22 @@ export async function computeBill(
       problems.push({ code: "GODOWN_REQUIRED", field: "godownId", message: input.godownId ? "Choose one of your godowns." : "Choose which godown the goods are taken from." });
     }
   }
-  const stock = await stockOnHand(session.shopId, priced.map((line) => line.product.id), tx, godownId ? { godownId } : {});
+  const stockOptions = godownId ? { godownId } : {};
+  const stock = fromDelivery ? new Map() : await stockOnHand(session.shopId, priced.map((line) => line.product.id), tx, stockOptions);
+  // Direct sales can only take stock that is not set aside for confirmed orders.
+  const reserved = fromDelivery ? new Map<string, bigint>() : await reservedQuantities(tx, session.shopId, priced.map((line) => line.product.id), stockOptions);
   const lines = priced.map((line, index) => {
-    const onHand = stock.get(line.product.id)?.qty ?? null;
+    const raw = stock.get(line.product.id)?.qty;
+    const onHand = fromDelivery ? null : raw === undefined ? null : raw - (reserved.get(line.product.id) ?? BigInt(0));
     const needed = line.quote.baseQuantity;
-    if (onHand === null || onHand < needed) {
+    if (!fromDelivery && (onHand === null || onHand < needed)) {
       problems.push({
         code: "INSUFFICIENT_STOCK",
         field: `lines.${index}.quantity`,
         message: onHand === null ? `${line.product.name} has no stock entered yet.` : `Only ${formatQuantity(onHand > BigInt(0) ? onHand : BigInt(0))} ${line.product.baseUnit} of ${line.product.name} in ${godownName ?? "stock"}.`,
       });
     }
-    return { ...line, baseQtyNeeded: needed, stockQty: onHand };
+    return { ...line, baseQtyNeeded: needed, stockQty: fromDelivery ? null : onHand };
   });
 
   const limit = Math.max(DISCOUNT_LIMIT_BP[session.role] ?? 0, options.discountLimitBp ?? 0);

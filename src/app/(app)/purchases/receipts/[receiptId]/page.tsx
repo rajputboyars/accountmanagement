@@ -8,7 +8,9 @@ import { PageContainer } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
-import { getGoodsReceipt } from "@/modules/purchasing";
+import { hasPermission } from "@/modules/identity";
+import { getGoodsReceipt, listPurchaseReturns } from "@/modules/purchasing";
+import { buttonVariants } from "@/components/ui/button";
 import { requireSession } from "@/server/auth";
 import { NotFoundError } from "@/server/errors";
 import { getLanguage, getT } from "@/server/i18n";
@@ -36,6 +38,7 @@ async function ReceiptView({ params, searchParams }: Pick<Props, "params" | "sea
   const session = await requireSession();
   const [t, language] = await Promise.all([getT(), getLanguage()]);
   const dateText = (value: string) => billDate(value, language);
+  const [canReturn, returns] = await Promise.all([hasPermission(session, "purchases.edit"), listPurchaseReturns(session, { receiptId })]);
   const receipt = await getGoodsReceipt(session, receiptId).catch((error: unknown) => {
     if (error instanceof NotFoundError) return null;
     throw error;
@@ -173,6 +176,28 @@ async function ReceiptView({ params, searchParams }: Pick<Props, "params" | "sea
         </dl>
         <footer className="text-xs text-muted-foreground">{t("purchases.receivedBy", { name: systemName(receipt.createdByName, language) })}</footer>
       </article>
+
+      {!cancelled && canReturn ? (
+        <div className="flex flex-col gap-2 print:hidden">
+          <Link href={`/purchases/receipts/${receipt.id}/return`} className={buttonVariants({ variant: "outline", size: "touch", className: "self-start" })}>
+            {t("purchases.return.button")}
+          </Link>
+        </div>
+      ) : null}
+      {returns.length > 0 ? (
+        <SectionCard title={t("purchases.return.list")}>
+          <ul className="flex flex-col divide-y divide-border text-sm">
+            {returns.map((row) => (
+              <li key={row.id} className="flex items-baseline justify-between gap-3 py-2">
+                <Link href={`/purchases/returns/${row.id}`} className="font-medium text-teal-strong hover:underline">
+                  {row.number} · {dateText(row.returnDate)}
+                </Link>
+                <Money paise={row.totalPaise} withPaise />
+              </li>
+            ))}
+          </ul>
+        </SectionCard>
+      ) : null}
 
       {receipt.canCancel ? (
         <div className="print:hidden">

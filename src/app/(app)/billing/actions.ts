@@ -28,6 +28,8 @@ export type BillInputPayload = {
   placeOfSupply?: string;
   /** Where the goods are taken from; sent only when the shop has several godowns. */
   godownId?: string;
+  /** Billing delivered goods: which delivered lines and how much. The server builds the bill's lines from these. */
+  challanLines?: { challanLineId: string; quantity: string }[];
 };
 
 type Failure = { error: string; code?: string; fieldErrors?: Record<string, string> };

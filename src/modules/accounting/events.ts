@@ -1,9 +1,15 @@
+import { and, eq, like } from "drizzle-orm";
 import type { Transaction } from "@/server/db";
+import { accounts, journalLines, journals } from "./schema";
 import {
   cashMoved,
   creditNoteIssued,
   creditNoteRestock,
+  deliveredGoodsBilled,
   EVENTS,
+  goodsDelivered,
+  purchaseReturned,
+  inputGstAccount,
   expenseRecorded,
   goodsReceived,
   invoiceCost,
@@ -25,9 +31,9 @@ import { loadAccountingSettings, openingRecorded, postJournal, resolveGapsFor, r
 
 type Money = { taxablePaise: number; gstPaise: number; roundOffPaise: number; totalPaise: number };
 
-export async function postInvoiceIssued(tx: Transaction, ctx: PostingContext, a: { invoiceId: string; date: string; customerId: string; lines: CostedLine[] } & Money) {
+export async function postInvoiceIssued(tx: Transaction, ctx: PostingContext, a: { invoiceId: string; date: string; customerId: string; lines: CostedLine[]; /** Goods already left on a delivery challan: their cost moves out of "delivered, not yet billed". */ fromDelivery?: boolean } & Money) {
   await postJournal(tx, ctx, { entryDate: a.date, sourceType: "invoice", sourceId: a.invoiceId, draft: invoiceIssued({ customerId: a.customerId, taxablePaise: a.taxablePaise, gstPaise: a.gstPaise, roundOffPaise: a.roundOffPaise, totalPaise: a.totalPaise }) });
-  await postJournal(tx, ctx, { entryDate: a.date, sourceType: "invoice", sourceId: a.invoiceId, draft: invoiceCost({ lines: a.lines }) });
+  await postJournal(tx, ctx, { entryDate: a.date, sourceType: "invoice", sourceId: a.invoiceId, draft: a.fromDelivery ? deliveredGoodsBilled({ lines: a.lines }) : invoiceCost({ lines: a.lines }) });
 }
 
 export async function postInvoiceCancelled(tx: Transaction, ctx: PostingContext, a: { invoiceId: string; date: string }) {
@@ -96,4 +102,34 @@ export async function postPartyOpening(tx: Transaction, ctx: PostingContext, a: 
 export async function postStockOpening(tx: Transaction, ctx: PostingContext, a: { batchId: string; effectiveDate: string; lines: CostedLine[] }) {
   if (!(await lateOpeningApplies(tx, ctx, a.effectiveDate))) return;
   await postJournal(tx, ctx, { entryDate: indiaDate(), kind: "adjustment", sourceType: "opening_stock", sourceId: a.batchId, memo: "Opening stock added after books started", draft: stockOpeningAdded({ lines: a.lines }) });
+}
+
+/** The GST account the receipt's own journal used, so a return reverses exactly that treatment. Falls back to the shop's current choice only if the receipt was never posted. */
+async function receiptGstAccount(tx: Transaction, ctx: PostingContext, receiptId: string) {
+  const [row] = await tx
+    .select({ key: accounts.systemKey })
+    .from(journalLines)
+    .innerJoin(journals, eq(journals.id, journalLines.journalId))
+    .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
+    .where(and(eq(journals.shopId, ctx.shopId), eq(journals.sourceType, "goods_receipt"), eq(journals.sourceId, receiptId), eq(journals.event, EVENTS.goodsReceipt), like(accounts.systemKey, "gst_input%")))
+    .limit(1);
+  if (row) return row.key as "gst_input_recoverable" | "gst_input_review" | "gst_input_nonrecoverable";
+  const settings = await loadAccountingSettings(tx, ctx.shopId);
+  return inputGstAccount(settings?.inputGstPolicy ?? "review");
+}
+
+export async function postPurchaseReturn(tx: Transaction, ctx: PostingContext, a: { returnId: string; receiptId: string; date: string; supplierId: string; taxablePaise: number; gstPaise: number; totalPaise: number }) {
+  const settings = await loadAccountingSettings(tx, ctx.shopId);
+  if (!settings) return;
+  await postJournal(tx, ctx, { entryDate: a.date, sourceType: "purchase_return", sourceId: a.returnId, draft: purchaseReturned({ supplierId: a.supplierId, taxablePaise: a.taxablePaise, gstPaise: a.gstPaise, totalPaise: a.totalPaise, gstAccount: await receiptGstAccount(tx, ctx, a.receiptId) }) });
+}
+
+/** Goods leaving on a delivery challan, and the same undone when an unbilled challan is cancelled. */
+export async function postDelivery(tx: Transaction, ctx: PostingContext, a: { challanId: string; date: string; lines: CostedLine[] }) {
+  await postJournal(tx, ctx, { entryDate: a.date, sourceType: "delivery_challan", sourceId: a.challanId, draft: goodsDelivered({ lines: a.lines }) });
+}
+
+export async function postDeliveryCancelled(tx: Transaction, ctx: PostingContext, a: { challanId: string; date: string }) {
+  await reverseBySource(tx, ctx, { sourceType: "delivery_challan", sourceId: a.challanId, event: EVENTS.delivery, entryDate: a.date, memo: "Delivery cancelled" });
+  await resolveGapsFor(tx, ctx, "delivery_challan", a.challanId);
 }

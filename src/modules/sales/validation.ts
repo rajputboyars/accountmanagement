@@ -49,6 +49,8 @@ export const billInputSchema = z
       .pipe(id("Choose a customer.").nullable()),
     /** Where the goods are dispatched from. Only asked (and required) once the shop has more than one godown. */
     godownId: z.string().trim().optional(),
+    /** Billing goods already delivered on challans: which delivered lines and how much of each (in the line's own unit). The server builds the bill's lines from these. */
+    challanLines: z.array(z.object({ challanLineId: z.string().regex(/^[0-9a-f-]{36}$/i, "Choose a delivered line."), quantity: z.string().trim().min(1, "Enter a quantity.") })).max(100).optional(),
     /** Empty means from the customer type. */
     priceList: z
       .enum(["", "retail", "wholesale"])

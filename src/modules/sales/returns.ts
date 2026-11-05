@@ -6,6 +6,7 @@ import { recordAudit } from "@/modules/audit";
 import { loadProductNames, loadProductsForStock } from "@/modules/catalog";
 import { loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
 import { appendStockMovement, lockStockRows, originalGodowns } from "@/modules/inventory";
+import { challanGodowns } from "./challan-billing";
 import { appendLedgerEntry, lockPartyBalance, partyBalance } from "@/modules/ledger";
 import { findCustomer, loadCustomerNames } from "@/modules/parties";
 import { recordCreditNoteRefund } from "@/modules/payments";
@@ -232,7 +233,8 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
       const registered = plan.customer.type !== "walkin";
       await lockStockRows(tx, session.shopId, plan.lines.map((line) => line.productId));
       // Returned goods go back to the godown the bill took them from.
-      const soldFrom = await originalGodowns(tx, session.shopId, "invoice", plan.invoice.id);
+      // A bill made from delivered goods has no sale movement of its own: its goods left from the godown named on the challan.
+      const soldFrom = plan.invoice.fromChallans ? await challanGodowns(tx, session.shopId, plan.invoice.id) : await originalGodowns(tx, session.shopId, "invoice", plan.invoice.id);
       if (registered) await lockPartyBalance(tx, session.shopId, "customer", plan.customer.id);
       const { fy, number } = await takeDocumentNumber(tx, session.shopId, "CN");
       const today = indiaDate();

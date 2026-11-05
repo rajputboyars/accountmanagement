@@ -115,7 +115,12 @@ export async function postJournal(tx: Transaction, ctx: PostingContext, input: P
     if (error instanceof AccountingRuleError) throw new ValidationError(error.message);
     throw error;
   }
-  const ids = await accountIds(tx, ctx.shopId, input.draft.lines.map((line) => line.account));
+  let ids = await accountIds(tx, ctx.shopId, input.draft.lines.map((line) => line.account));
+  // Accounts added to the chart after a shop turned the books on are created the first time they are needed.
+  if (input.draft.lines.some((line) => !ids.has(line.account))) {
+    await ensureChart(tx, ctx.shopId);
+    ids = await accountIds(tx, ctx.shopId, input.draft.lines.map((line) => line.account));
+  }
   const missing = input.draft.lines.find((line) => !ids.has(line.account));
   if (missing) throw new ConflictError("CHART_MISSING", `The account "${missing.account}" is not set up for this shop.`);
 

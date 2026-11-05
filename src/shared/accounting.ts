@@ -31,6 +31,7 @@ export const CHART = [
   { key: "cheques", code: "1050", name: "Cheques received (not yet cleared)", type: "asset", category: "cash_and_bank", cashFlow: "cash" },
   { key: "receivables", code: "1100", name: "Customers owe you", type: "asset", category: "receivables", cashFlow: "operating" },
   { key: "inventory", code: "1200", name: "Stock (valued)", type: "asset", category: "inventory", cashFlow: "operating" },
+  { key: "delivered_not_billed", code: "1250", name: "Goods delivered, not yet billed", type: "asset", category: "inventory", cashFlow: "operating" },
   { key: "gst_input_recoverable", code: "1310", name: "GST on purchases you can claim", type: "asset", category: "gst", cashFlow: "operating" },
   { key: "gst_input_review", code: "1320", name: "GST on purchases (to be reviewed)", type: "asset", category: "gst", cashFlow: "operating" },
   { key: "payables", code: "2100", name: "You owe suppliers", type: "liability", category: "payables", cashFlow: "operating" },
@@ -85,6 +86,8 @@ export const EVENTS = {
   partyOpening: "party_opening",
   stockOpening: "stock_opening",
   openingStockValued: "opening_stock_valued",
+  purchaseReturn: "purchase_return",
+  delivery: "delivery",
 } as const;
 
 export const reversalEvent = (event: string) => `reversal:${event}`;
@@ -369,4 +372,28 @@ export function openingStockValued(valuePaise: number): JournalDraft {
   requirePaise("Value", valuePaise);
   if (valuePaise === 0) throw new AccountingRuleError("A value must be more than zero.");
   return { event: EVENTS.openingStockValued, lines: [...dr("inventory", valuePaise), ...cr("opening_clearing", valuePaise)], gaps: [] };
+}
+
+/** Goods sent back to a supplier: the payable shrinks, stock leaves at its original cost, and the GST goes back to the account the receipt used. */
+export function purchaseReturned(input: { supplierId: string; taxablePaise: number; gstPaise: number; totalPaise: number; gstAccount: AccountKey }): JournalDraft {
+  const { supplierId, taxablePaise, gstPaise, totalPaise, gstAccount } = input;
+  requirePaise("Taxable amount", taxablePaise);
+  requirePaise("GST", gstPaise);
+  requirePaise("Total", totalPaise);
+  if (taxablePaise + gstPaise !== totalPaise) throw new AccountingRuleError("Return total must equal taxable + GST.");
+  if (!["gst_input_recoverable", "gst_input_review", "gst_input_nonrecoverable"].includes(gstAccount)) throw new AccountingRuleError("A return's GST goes back to an input GST account.");
+  const party: PartyRef = { type: "supplier", id: supplierId };
+  return { event: EVENTS.purchaseReturn, lines: [...dr("payables", totalPaise, party), ...cr("inventory", taxablePaise), ...cr(gstAccount, gstPaise)], gaps: [] };
+}
+
+/** Goods leave on a delivery challan: stock value moves to "delivered, not yet billed" at the cost saved on the challan. Nothing is guessed. */
+export function goodsDelivered(input: { lines: readonly CostedLine[] }): JournalDraft {
+  const { known, gaps } = costLines(input.lines, "cost_missing_for_sale");
+  return { event: EVENTS.delivery, lines: [...dr("delivered_not_billed", known), ...cr("inventory", known)], gaps };
+}
+
+/** A bill for delivered goods: the cost leaves "delivered, not yet billed" and becomes cost of goods sold, using the challan's cost. */
+export function deliveredGoodsBilled(input: { lines: readonly CostedLine[] }): JournalDraft {
+  const { known, gaps } = costLines(input.lines, "cost_missing_for_sale");
+  return { event: EVENTS.invoiceCost, lines: [...dr("cogs", known), ...cr("delivered_not_billed", known)], gaps };
 }
