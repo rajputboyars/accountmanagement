@@ -140,8 +140,9 @@ export async function stockNotSelling(session: SessionContext, options: { days?:
       });
     }
   }
-  // Most money tied up first when costs can be seen; otherwise the longest quiet first.
-  items.sort((a, b) => (b.valuePaise ?? 0) - (a.valuePaise ?? 0) || (b.daysSinceLastSale ?? 1e9) - (a.daysSinceLastSale ?? 1e9) || a.name.localeCompare(b.name));
+  // The longest without a sale first. Items that never sold have no sale date to count from, so they come first as their own group; money
+  // (when costs can be seen) only settles ties. Estimated stock age never decides the order.
+  items.sort((a, b) => Number(b.status === "never_sold") - Number(a.status === "never_sold") || (b.daysSinceLastSale ?? 0) - (a.daysSinceLastSale ?? 0) || (b.valuePaise ?? 0) - (a.valuePaise ?? 0) || a.name.localeCompare(b.name));
   return {
     days,
     asOf,

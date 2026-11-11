@@ -72,12 +72,13 @@ async function NotSellingView({ searchParams }: Props) {
                       {item.name}
                     </Link>
                     <span className="block text-xs text-muted-foreground">
-                      {item.lastSaleDate ? t("stockAge.lastSold", { date: billDate(item.lastSaleDate, language), days: item.daysSinceLastSale ?? 0 }) : t("stockAge.neverSold")}
-                      {" · "}
+                      {item.lastSaleDate ? `${t("stockAge.lastSold", { date: billDate(item.lastSaleDate, language), days: item.daysSinceLastSale ?? 0 })} · ` : null}
                       {item.onHand} {unitShort(t, item.baseUnit)}
                     </span>
                   </span>
                   <span className="flex flex-wrap items-center gap-2">
+                    {item.status === "never_sold" ? <Badge variant="neutral">{t("stockAge.neverSold")}</Badge> : null}
+                    {!item.ageReliable || item.unknownAgeQty !== "0" ? <Badge variant="outline">{t("stockAge.unknownAge")}</Badge> : null}
                     {item.nonMoving ? <Badge variant="danger">{t("stockAge.notMoving")}</Badge> : <Badge variant="warning">{t("stockAge.slow")}</Badge>}
                     {item.valuePaise !== null ? (
                       <span className="text-sm font-semibold tabular-nums">

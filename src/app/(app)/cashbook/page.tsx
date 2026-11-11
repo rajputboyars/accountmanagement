@@ -11,7 +11,9 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { listBankChoices } from "@/modules/accounting";
+import { unmatchedBankSummary } from "@/modules/banking";
 import { getCashbook, listClosings } from "@/modules/cashbook";
+import { BankReminder } from "@/components/bank/bank-reminder";
 import { requireSession } from "@/server/auth";
 import { getLanguage, getT } from "@/server/i18n";
 import { formatPaise } from "@/shared/money";
@@ -47,6 +49,8 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
   const book = await getCashbook(session, String(params.date ?? ""));
   const closings = await listClosings(session, 10);
   const bankAccounts = await listBankChoices(session).catch(() => []);
+  // Only a reminder: closing the day never waits for the bank.
+  const bankReminder = book.canClose ? await unmatchedBankSummary(session).catch(() => null) : null;
   const [t, language] = await Promise.all([getT(), getLanguage()]);
   const method = (code: string) => paymentMethodLabel(t, code);
   const c = book.cash;
@@ -308,6 +312,11 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
         ) : null}
         {book.canClose ? (
           <SectionCard title={t("cashbook.closeDay")} description={t("cashbook.closeDayDescription")}>
+            {bankReminder && bankReminder.total > 0 ? (
+              <div className="mb-4">
+                <BankReminder summary={bankReminder} closing />
+              </div>
+            ) : null}
             <CloseDayForm date={book.date} expectedPaise={book.expectedPaise} />
           </SectionCard>
         ) : book.canReopen ? (

@@ -250,7 +250,7 @@ function ruleConflict(error: unknown, kind: "fixed" | "pct"): unknown {
     return new ConflictError("RULE_EXISTS", "This customer already has a special price for this product at that minimum quantity. Change it instead.");
   }
   if (isUniqueViolation(error, "customer_price_rules_active_pct_product_key") || isUniqueViolation(error, "customer_price_rules_active_pct_all_key")) {
-    return new ConflictError("RULE_EXISTS", `This customer already has a ${kind === "pct" ? "%" : ""} discount for the same products. Change it instead of adding another.`);
+    return new ConflictError("RULE_EXISTS", kind === "pct" ? "This customer already has a % discount for the same products. Change it instead of adding another." : "This customer already has a discount for the same products. Change it instead of adding another.");
   }
   return error;
 }

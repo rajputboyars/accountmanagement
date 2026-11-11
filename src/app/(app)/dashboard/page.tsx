@@ -14,6 +14,8 @@ import { RangeFilter } from "@/components/reports/range-filter";
 import { TrendChart } from "@/components/reports/trend-chart";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { unmatchedBankSummary } from "@/modules/banking";
+import { BankReminder } from "@/components/bank/bank-reminder";
 import { stockNotSelling } from "@/modules/inventory";
 import { countPendingApprovals } from "@/modules/identity";
 import { getDashboard, getOnboarding, raiseBusinessAlerts, type Dashboard } from "@/modules/reporting";
@@ -76,6 +78,8 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
   const { range, sales, money, expenses, cash, receivables, payables, stock, profit } = data;
   // A simple "what is not selling" answer. Left out for anyone who cannot see stock, and never allowed to break the page.
   const notSelling = await stockNotSelling(session).catch(() => null);
+  // Bank lines still to match: a note for the owner, with a link to the matching screen. Nothing else depends on it.
+  const bankReminder = await unmatchedBankSummary(session).catch(() => null);
   const rangeLabel = labelForRange(t, range);
   const rangeText = rangeInSentence(t, range);
   const isToday = range.from === data.today && range.to === data.today;
@@ -91,6 +95,8 @@ async function DashboardContent({ searchParams }: Pick<Props, "searchParams">) {
       <QuickActions actions={data.actions} t={t} />
 
       {pendingApprovalsCount > 0 ? <ApprovalNotice count={pendingApprovalsCount} t={t} /> : null}
+
+      {bankReminder && bankReminder.total > 0 ? <BankReminder summary={bankReminder} /> : null}
 
       <SetupChecklist
         shopId={session.shopId}

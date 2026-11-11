@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { createProduct } from "@/modules/catalog";
-import { recordOpeningStock, stockNotSelling } from "@/modules/inventory";
+import { appendStockMovement, recordOpeningStock, stockNotSelling } from "@/modules/inventory";
 import { stockMovements } from "@/modules/inventory/schema";
 import { createSupplier } from "@/modules/purchasing";
+import { withTransaction } from "@/server/db";
 import { cancelInvoice, createInvoice, previewBill, type BillInput } from "@/modules/sales";
 import { indiaDate } from "@/shared/financial-year";
 import { addDays } from "@/shared/report-range";
@@ -60,6 +61,33 @@ describe("Stock Not Selling", () => {
     expect(byName["Sold then quiet"]).toMatchObject({ valuePaise: 36000, valuePartial: false });
     expect(result.valuePaise).toBe(36000 + 60000 + opening!.unitCostPaise! * 7);
     void fresh;
+  });
+
+  it("ranks by days since the last sale, with never-sold first, and never invents a date or a cost", async () => {
+    const shop = await createTestShop(db, "Intel Rank");
+    const owner = (await signInAs(shop.users.owner)).session;
+    const { id: supplier } = await createSupplier(owner, { name: "Rank Supplies", phone: "", gstin: "", paymentTermsDays: "30" });
+    const { id: quiet } = await product(owner, "K-1", "Quiet long, small money");
+    const { id: recent } = await product(owner, "K-2", "Sold lately, big money");
+    const { id: fresh } = await product(owner, "K-3", "Bought, never sold");
+    const { id: legacy } = await product(owner, "K-4", "Opening stock, never sold");
+    await receiveGoods(owner, { idempotencyKey: key(), supplierId: supplier, supplierBillNo: "K-1", supplierBillDate: today, lines: [{ productId: quiet, unit: "pc", quantity: "10", cost: "60", gstRateBp: "0" }, { productId: recent, unit: "pc", quantity: "10", cost: "600", gstRateBp: "0" }, { productId: fresh, unit: "pc", quantity: "10", cost: "60", gstRateBp: "0" }] });
+    await recordOpeningStock(owner, { idempotencyKey: key(), movementDate: addDays(today, -400), lines: [{ productId: legacy, unit: "pc", quantity: "7" }] });
+    await sell(owner, { lines: [{ productId: quiet, unit: "pc", quantity: "1" }], payments: { cash: "100" } });
+    await sell(owner, { lines: [{ productId: recent, unit: "pc", quantity: "1" }], payments: { cash: "100" } });
+    // The second product's last sale is 30 days later than the first one's.
+    await withTransaction((tx) => appendStockMovement(tx, { shopId: shop.shopId, productId: recent, movementDate: addDays(today, 30), kind: "sale", qtyBase: BigInt(-1000), unitCostPaise: 60000, sourceType: "invoice", sourceId: randomUUID(), reason: "later sale", createdBy: shop.users.owner.id }));
+    const result = await stockNotSelling(owner, { days: 30, asOf: addDays(today, 130) });
+    // Never sold first (the one with more money tied up first), then the longest without a sale. Money never overtakes days.
+    expect(result.items.map((item) => item.name)).toEqual(["Opening stock, never sold", "Bought, never sold", "Quiet long, small money", "Sold lately, big money"]);
+    const byName = Object.fromEntries(result.items.map((item) => [item.name, item]));
+    expect(byName["Quiet long, small money"]).toMatchObject({ status: "not_selling", daysSinceLastSale: 130 });
+    expect(byName["Sold lately, big money"]).toMatchObject({ status: "not_selling", daysSinceLastSale: 100 });
+    expect(byName["Sold lately, big money"]!.valuePaise).toBeGreaterThan(byName["Quiet long, small money"]!.valuePaise!);
+    // Opening stock keeps its age unknown: no arrival date, no sale date, and only the cost saved on the opening entry.
+    expect(byName["Opening stock, never sold"]).toMatchObject({ status: "never_sold", lastSaleDate: null, daysSinceLastSale: null, lastReceivedDate: null, unknownAgeQty: "7" });
+    expect(byName["Bought, never sold"]).toMatchObject({ status: "never_sold", lastSaleDate: null, daysSinceLastSale: null, unknownAgeQty: "0" });
+    void fresh; void legacy;
   });
 
   it("puts a cancelled sale's stock back and does not count the cancelled sale as the last sale", async () => {

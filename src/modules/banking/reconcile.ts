@@ -2,7 +2,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { bookBalanceOn, listBankAccounts } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
-import { requirePermission, type SessionContext } from "@/modules/identity";
+import { hasPermission, requirePermission, type SessionContext } from "@/modules/identity";
 import { withIdempotency } from "@/modules/sync";
 import { getDb, withTransaction } from "@/server/db";
 import { ConflictError, ValidationError } from "@/server/errors";
@@ -181,6 +181,23 @@ export async function listReconciliations(session: SessionContext, bankAccountId
   const bank = await loadBank(db, session.shopId, bankAccountId);
   const rows = await db.select().from(bankReconciliations).where(and(eq(bankReconciliations.shopId, session.shopId), eq(bankReconciliations.bankAccountId, bank.id))).orderBy(desc(bankReconciliations.statementDate)).limit(60);
   return rows.map((row) => ({ id: row.id, statementDate: row.statementDate, statementBalancePaise: row.statementBalancePaise, bookBalancePaise: row.bookBalancePaise, bookNotInBankPaise: row.bookNotInBankPaise, bankNotInBooksPaise: row.bankNotInBooksPaise, openingGapPaise: row.openingGapPaise, differencePaise: row.differencePaise, matchedCount: row.matchedCount, note: row.note, outstanding: row.outstanding as OutstandingItem[], createdAt: row.createdAt }));
+}
+
+export type UnmatchedBankSummary = { total: number; accounts: { id: string; name: string; count: number }[] };
+
+/**
+ * Statement lines still waiting to be matched, for a gentle reminder on the dashboard and when closing the day. Only people who manage the
+ * bank see it (null for everyone else); it never blocks anything. Lines the owner chose to ignore are not counted.
+ */
+export async function unmatchedBankSummary(session: SessionContext): Promise<UnmatchedBankSummary | null> {
+  if (!(await hasPermission(session, BANK_MANAGE))) return null;
+  const rows = await getDb().execute<{ id: string; name: string; n: string }>(sql`
+    select b.id, b.name, count(l.id)::text as n
+    from bank_accounts b join bank_statement_lines l on l.bank_account_id = b.id and l.status = 'unmatched'
+    where b.shop_id = ${session.shopId}::uuid and b.is_active
+    group by b.id, b.name, b.created_at order by b.created_at`);
+  const accounts = rows.rows.map((row) => ({ id: row.id, name: row.name, count: num(row.n) }));
+  return { total: accounts.reduce((sum, account) => sum + account.count, 0), accounts };
 }
 
 export type BankOverviewRow = { id: string; name: string; last4: string | null; isDefault: boolean; isActive: boolean; bookBalancePaise: number; lastStatementBalancePaise: number | null; lastStatementDate: string | null; unmatchedLines: number; reconciledThrough: string | null };
