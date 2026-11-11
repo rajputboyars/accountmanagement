@@ -143,6 +143,22 @@ async function MoneyView({ searchParams }: Pick<Props, "searchParams">) {
           </div>
         </SectionCard>
       </div>
+      {overview.awaitingSettlement.length > 0 ? (
+        <SectionCard title={t("money.awaiting")} description={t("money.awaitingHint")}>
+          <ul className="flex flex-col gap-2 text-sm">
+            {overview.awaitingSettlement.map((row) => (
+              <li key={row.key} className="flex items-baseline justify-between gap-3">
+                <span className="text-muted-foreground">{accountLabel(t, row.key, row.name)}</span>
+                <Money paise={row.amountPaise} withPaise />
+              </li>
+            ))}
+            <li className="flex items-baseline justify-between gap-3 border-t border-border pt-2 font-semibold">
+              <span>{t("money.awaitingTotal")}</span>
+              <Money paise={overview.awaitingSettlementPaise} withPaise />
+            </li>
+          </ul>
+        </SectionCard>
+      ) : null}
       {overview.partyMismatches > 0 ? <CompletenessNote completeness={{ complete: false, reasons: ["party_mismatch"], coverageStartDate: overview.status.coverageStartDate }} t={t} /> : null}
     </PageContainer>
   );

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { LoaderCircle } from "lucide-react";
 import { createPurchaseReturnAction } from "@/app/(app)/purchases/actions";
+import { BankAccountPicker, chosenBank, type BankChoice } from "@/components/bank/bank-choice";
 import { Field, FormAlert, selectClass } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Button } from "@/components/ui/button";
@@ -13,13 +14,15 @@ import { Money } from "@/components/nexora/money";
 type Line = { receiptLineId: string; productName: string; unit: string; receivedQty: string; returnedQty: string; remainingQty: string; unitCostPaise: number };
 
 /** Goods go back at the price and GST of the receipt line, in the unit they came in: the person only says how many and why. */
-export function PurchaseReturnForm({ receiptId, lines, godowns, homeGodownId, canRefund }: { receiptId: string; lines: Line[]; godowns?: { id: string; name: string }[]; homeGodownId: string | null; canRefund: boolean }) {
+export function PurchaseReturnForm({ receiptId, lines, godowns, homeGodownId, canRefund, bankAccounts = [] }: { receiptId: string; bankAccounts?: BankChoice[]; lines: Line[]; godowns?: { id: string; name: string }[]; homeGodownId: string | null; canRefund: boolean }) {
   const t = useT();
   const router = useRouter();
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
   const [settlement, setSettlement] = useState<"credit" | "refund">("credit");
   const [refundMethod, setRefundMethod] = useState("cash");
+  const [bankPick, setBankPick] = useState("");
+  const bankAccountId = settlement === "refund" && refundMethod === "bank" ? chosenBank(bankAccounts, bankPick) : "";
   const [godownId, setGodownId] = useState(homeGodownId ?? "");
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   const [error, setError] = useState<string>();
@@ -34,6 +37,7 @@ export function PurchaseReturnForm({ receiptId, lines, godowns, homeGodownId, ca
         reason,
         settlement,
         ...(settlement === "refund" ? { refundMethod } : {}),
+        ...(bankAccountId ? { bankAccountId } : {}),
         ...(godowns && godownId ? { godownId } : {}),
         lines: picked.map((line) => ({ receiptLineId: line.receiptLineId, quantity: quantities[line.receiptLineId]!.trim() })),
       });
@@ -95,6 +99,7 @@ export function PurchaseReturnForm({ receiptId, lines, godowns, homeGodownId, ca
             </select>
           </Field>
         ) : null}
+        {bankAccountId ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={setBankPick} error={fieldErrors.bankAccountId} /> : null}
       </div>
       <FormAlert error={error} />
       <Button type="button" size="touch" className="self-start" disabled={pending || picked.length === 0} onClick={submit}>

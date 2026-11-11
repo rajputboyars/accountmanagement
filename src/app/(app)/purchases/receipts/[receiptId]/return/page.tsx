@@ -5,6 +5,7 @@ import { PurchaseReturnForm } from "@/components/purchases/purchase-return-form"
 import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
+import { listBankChoices } from "@/modules/accounting";
 import { listGodowns } from "@/modules/inventory";
 import { getGoodsReceipt, listReturnableLines } from "@/modules/purchasing";
 import { requireSession } from "@/server/auth";
@@ -50,6 +51,7 @@ async function ReturnView({ params }: Props) {
           <p className="text-sm text-muted-foreground">{t("purchases.return.noneLeft")}</p>
         ) : (
           <PurchaseReturnForm
+            bankAccounts={await listBankChoices(session).catch(() => [])}
             receiptId={receiptId}
             homeGodownId={returnable.godownId}
             canRefund={returnable.canRefund}

@@ -18,6 +18,8 @@ export type ReturnPayload = {
   lines: { invoiceLineId: string; baseQty: string; restock: boolean }[];
   reason: string;
   settlement: string;
+  /** Which bank account a bank refund goes out of; sent only when the shop has several. */
+  bankAccountId?: string;
 };
 
 type Failure = { error: string; code?: string; fieldErrors?: Record<string, string> };

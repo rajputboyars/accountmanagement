@@ -322,8 +322,12 @@ export type MoneyOverview = {
   profit: { salesPaise: number; costOfGoodsPaise: number; grossProfitPaise: number; expensesPaise: number; netProfitPaise: number } | null;
   profitComplete: boolean;
   profitReasons: ReportReason[];
+  /** Cash in hand and the bank accounts: money that is actually there. */
   cashAndBank: { key: string; name: string; amountPaise: number }[];
   cashAndBankPaise: number;
+  /** UPI, card and cheque receipts not yet in the bank. Real money owed by the bank, but not available yet, so never part of the total above. */
+  awaitingSettlement: { key: string; name: string; amountPaise: number }[];
+  awaitingSettlementPaise: number;
   owedToYouPaise: number;
   youOwePaise: number;
   stockValuePaise: number;
@@ -335,7 +339,7 @@ export type MoneyOverview = {
 /** The owner's simple summary. Accounting terms stay out of it: profit, money in hand, who owes whom, stock. */
 export async function moneyOverview(session: SessionContext, range: { from: string; to: string }): Promise<MoneyOverview> {
   const status = await getAccountingStatus(session);
-  const empty = { cashAndBank: [], cashAndBankPaise: 0, owedToYouPaise: 0, youOwePaise: 0, stockValuePaise: 0, unvaluedProducts: 0, partyMismatches: 0 };
+  const empty = { cashAndBank: [], cashAndBankPaise: 0, awaitingSettlement: [], awaitingSettlementPaise: 0, owedToYouPaise: 0, youOwePaise: 0, stockValuePaise: 0, unvaluedProducts: 0, partyMismatches: 0 };
   if (!status.active) return { active: false, status, range, profit: null, profitComplete: false, profitReasons: ["not_active"], ...empty };
   const db = getDb();
   const to = checkDate(range.to, "end");
@@ -343,7 +347,10 @@ export async function moneyOverview(session: SessionContext, range: { from: stri
   const balances = await balancesWithin(db, session.shopId, null, to);
   const byKey = (key: string) => balances.find((b) => b.key === key);
   const cashKeys = [...new Set([...["cash", "bank", "upi", "card", "cheques"], ...balances.filter((b) => isCashLikeKey(b.key)).map((b) => b.key)])];
-  const cashAndBank = cashKeys.map((key) => ({ key, name: byKey(key)?.name ?? key, amountPaise: byKey(key) ? debitNet(byKey(key)!) : 0 })).filter((row) => row.amountPaise !== 0);
+  const moneyRows = cashKeys.map((key) => ({ key, name: byKey(key)?.name ?? key, amountPaise: byKey(key) ? debitNet(byKey(key)!) : 0 })).filter((row) => row.amountPaise !== 0);
+  const awaiting = new Set(AWAITING_SETTLEMENT_KEYS);
+  const cashAndBank = moneyRows.filter((row) => !awaiting.has(row.key));
+  const awaitingSettlement = moneyRows.filter((row) => awaiting.has(row.key));
   const tie = await reconcileParties(db, session.shopId, status.openingRecorded);
   return {
     active: true,
@@ -354,6 +361,8 @@ export async function moneyOverview(session: SessionContext, range: { from: stri
     profitReasons: pnl.completeness.reasons,
     cashAndBank,
     cashAndBankPaise: cashAndBank.reduce((sum, row) => sum + row.amountPaise, 0),
+    awaitingSettlement,
+    awaitingSettlementPaise: awaitingSettlement.reduce((sum, row) => sum + row.amountPaise, 0),
     owedToYouPaise: byKey("receivables") ? debitNet(byKey("receivables")!) : 0,
     youOwePaise: byKey("payables") ? creditNet(byKey("payables")!) : 0,
     stockValuePaise: byKey("inventory") ? debitNet(byKey("inventory")!) : 0,
@@ -362,6 +371,9 @@ export async function moneyOverview(session: SessionContext, range: { from: stri
     partyMismatches: tie.ready ? tie.mismatches.length : 0,
   };
 }
+
+/** Receipts taken but not yet in the bank: they stay in their own accounts until a settlement moves them. */
+const AWAITING_SETTLEMENT_KEYS = ["upi", "card", "cheques"];
 
 /** Month start and end for a date, used for the default range. */
 export function monthRange(date = indiaDate()): { from: string; to: string } {

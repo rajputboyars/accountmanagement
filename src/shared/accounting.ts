@@ -260,18 +260,18 @@ const EXPENSE_ACCOUNTS: Record<string, AccountKey> = {
   other: "expense_other",
 };
 
-export function expenseRecorded(input: { category: string; method: string; amountPaise: number }): JournalDraft {
+export function expenseRecorded(input: { category: string; method: string; amountPaise: number; bankAccount?: string | null }): JournalDraft {
   requirePaise("Amount", input.amountPaise);
   const expense = EXPENSE_ACCOUNTS[input.category];
   if (!expense) throw new AccountingRuleError(`No account for expense category "${input.category}".`);
-  return { event: EVENTS.expense, lines: [...dr(expense, input.amountPaise), ...cr(paymentAccount(input.method), input.amountPaise)], gaps: [] };
+  return { event: EVENTS.expense, lines: [...dr(expense, input.amountPaise), ...cr(moneyAccount(input.method, input.bankAccount), input.amountPaise)], gaps: [] };
 }
 
-export function cashMoved(input: { kind: "withdrawal" | "bank_deposit" | "float_added"; amountPaise: number }): JournalDraft {
+export function cashMoved(input: { kind: "withdrawal" | "bank_deposit" | "float_added"; amountPaise: number; bankAccount?: string | null }): JournalDraft {
   requirePaise("Amount", input.amountPaise);
   const { kind, amountPaise } = input;
   const lines =
-    kind === "withdrawal" ? [...dr("owner_drawings", amountPaise), ...cr("cash", amountPaise)] : kind === "bank_deposit" ? [...dr("bank", amountPaise), ...cr("cash", amountPaise)] : [...dr("cash", amountPaise), ...cr("owner_funds_in", amountPaise)];
+    kind === "withdrawal" ? [...dr("owner_drawings", amountPaise), ...cr("cash", amountPaise)] : kind === "bank_deposit" ? [...dr(moneyAccount("bank", input.bankAccount), amountPaise), ...cr("cash", amountPaise)] : [...dr("cash", amountPaise), ...cr("owner_funds_in", amountPaise)];
   return { event: EVENTS.cashMovement, lines, gaps: [] };
 }
 

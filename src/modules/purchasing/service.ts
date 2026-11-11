@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
-import { bankAccountKeyOf, postGoodsReceiptCancelled, postGoodsReceived, postPayment } from "@/modules/accounting";
+import { bankAccountKeyOf, postGoodsReceiptCancelled, postGoodsReceived, postPayment, resolveBankRoute } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { applyReceivedCost, convertQuantity, createProductWithin, listShopProductsForStock, loadProductNames, loadProductsForStock, lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
 import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
@@ -385,8 +385,9 @@ export async function paySupplier(session: SessionContext, input: unknown): Prom
           throw new ConflictError("OVERPAYMENT", owed > 0 ? `You owe ${supplier.name} ${formatPaise(owed, { withPaise: true })}; you can't pay more than that.` : `You don't owe ${supplier.name} anything right now.`, { fieldErrors: { amount: `At most ${formatPaise(Math.max(owed, 0), { withPaise: true })}.` } });
         }
         const today = indiaDate();
-        const bankKey = data.method === "bank" && data.bankAccountId ? await bankAccountKeyOf(tx, session.shopId, data.bankAccountId, { requireActive: true }) : null;
-        const paymentId = await recordSupplierPayment(tx, { shopId: session.shopId, fy: financialYearLabel(), supplierId: supplier.id, method: data.method, amountPaise: data.amount, reference: data.method === "cash" ? null : data.reference, businessDate: today, recordedBy: session.userId, bankAccountId: bankKey ? data.bankAccountId : null });
+        const route = await resolveBankRoute(tx, session.shopId, data.method, data.bankAccountId);
+        const bankKey = route.key;
+        const paymentId = await recordSupplierPayment(tx, { shopId: session.shopId, fy: financialYearLabel(), supplierId: supplier.id, method: data.method, amountPaise: data.amount, reference: data.method === "cash" ? null : data.reference, businessDate: today, recordedBy: session.userId, bankAccountId: route.bankAccountId });
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: supplier.id, entryDate: today, kind: "payment", sourceType: "payment", sourceId: paymentId, debitPaise: data.amount });
         await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "out", partyType: "supplier", partyId: supplier.id, method: data.method, amountPaise: data.amount, bankAccountKey: bankKey });
         await recordAudit(tx, actorOf(session), { action: "purchasing.supplier_paid", entityType: "payment", entityId: paymentId, after: { supplierId: supplier.id, amountPaise: data.amount, method: data.method, reference: data.reference, owedBeforePaise: owed } });

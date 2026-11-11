@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, lt, sql } from "drizzle-orm";
 import { z } from "zod";
-import { postCashMovement, postExpense, postExpenseVoided } from "@/modules/accounting";
+import { postCashMovement, postExpense, postExpenseVoided, resolveBankRoute } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
 import { paymentsOnDay, paymentTotals } from "@/modules/payments";
@@ -59,6 +59,7 @@ export const expenseInputSchema = z
     category: z.enum(EXPENSE_CATEGORIES.map((category) => category.key) as [string, ...string[]], { message: "Choose a category." }),
     amount: rupees("amount"),
     method: z.enum(["cash", "upi", "bank"], { message: "Choose how it was paid." }),
+    bankAccountId: z.string().uuid().optional().or(z.literal("").transform(() => undefined)),
     note: z
       .string()
       .trim()
@@ -81,6 +82,7 @@ export const cashMovementInputSchema = z.object({
   businessDate,
   kind: z.enum(["withdrawal", "bank_deposit", "float_added"], { message: "Choose what happened." }),
   amount: rupees("amount"),
+  bankAccountId: z.string().uuid().optional().or(z.literal("").transform(() => undefined)),
   note: z
     .string()
     .trim()
@@ -289,12 +291,13 @@ export async function recordExpense(session: SessionContext, input: unknown): Pr
   return withTransaction(async (tx) => {
     const outcome = await withIdempotency<{ id: string }>(tx, { shopId: session.shopId, userId: session.userId, key: idempotencyKey }, { action: "cashbook.expense", ...data }, async () => {
       await lockDayForWrite(tx, session.shopId, data.businessDate);
+      const route = await resolveBankRoute(tx, session.shopId, data.method, data.bankAccountId);
       const [row] = await tx
         .insert(expenses)
         .values({ shopId: session.shopId, businessDate: data.businessDate, category: data.category, amountPaise: data.amount, method: data.method, note: data.note, reference: data.reference, createdBy: session.userId })
         .returning({ id: expenses.id });
-      await postExpense(tx, booksOf(session), { expenseId: row!.id, date: data.businessDate, category: data.category, method: data.method, amountPaise: data.amount });
-      await recordAudit(tx, actorOf(session), { action: "cashbook.expense_recorded", entityType: "expense", entityId: row!.id, after: { ...data, amountPaise: data.amount, amount: undefined } });
+      await postExpense(tx, booksOf(session), { expenseId: row!.id, date: data.businessDate, category: data.category, method: data.method, amountPaise: data.amount, bankAccountKey: route.key });
+      await recordAudit(tx, actorOf(session), { action: "cashbook.expense_recorded", entityType: "expense", entityId: row!.id, after: { ...data, bankAccountId: route.bankAccountId, amountPaise: data.amount, amount: undefined } });
       return { status: 201, body: { id: row!.id } };
     });
     return { ...outcome.body, replayed: outcome.replayed };
@@ -328,9 +331,10 @@ export async function recordCashMovement(session: SessionContext, input: unknown
   return withTransaction(async (tx) => {
     const outcome = await withIdempotency<{ id: string }>(tx, { shopId: session.shopId, userId: session.userId, key: idempotencyKey }, { action: "cashbook.cash_movement", ...data }, async () => {
       await lockDayForWrite(tx, session.shopId, data.businessDate);
+      const route = await resolveBankRoute(tx, session.shopId, data.kind === "bank_deposit" ? "bank" : "cash", data.bankAccountId);
       const [row] = await tx.insert(cashMovements).values({ shopId: session.shopId, businessDate: data.businessDate, kind: data.kind, amountPaise: data.amount, note: data.note, createdBy: session.userId }).returning({ id: cashMovements.id });
-      await postCashMovement(tx, booksOf(session), { movementId: row!.id, date: data.businessDate, kind: data.kind, amountPaise: data.amount });
-      await recordAudit(tx, actorOf(session), { action: "cashbook.cash_movement_recorded", entityType: "cash_movement", entityId: row!.id, after: { businessDate: data.businessDate, kind: data.kind, amountPaise: data.amount, note: data.note } });
+      await postCashMovement(tx, booksOf(session), { movementId: row!.id, date: data.businessDate, kind: data.kind, amountPaise: data.amount, bankAccountKey: route.key });
+      await recordAudit(tx, actorOf(session), { action: "cashbook.cash_movement_recorded", entityType: "cash_movement", entityId: row!.id, after: { businessDate: data.businessDate, kind: data.kind, amountPaise: data.amount, bankAccountId: route.bankAccountId, note: data.note } });
       return { status: 201, body: { id: row!.id } };
     });
     return { ...outcome.body, replayed: outcome.replayed };

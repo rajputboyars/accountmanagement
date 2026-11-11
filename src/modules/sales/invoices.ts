@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { documentParties, printedSeller } from "./document-parties";
 import { and, asc, desc, eq, ilike, is, sql, TransactionRollbackError, type SQL, isNull } from "drizzle-orm";
 import { deriveChallanBill } from "./challan-billing";
-import { postInvoiceCancelled, postInvoiceIssued, postPayment } from "@/modules/accounting";
+import { bankAccountKeyOf, postInvoiceCancelled, postInvoiceIssued, postPayment, resolveBankRoute } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, searchShopProducts } from "@/modules/catalog";
 import { ANY_TARGET, consumeApproval, consumeMatchingApproval, hasPermission, loadUserNames, requirePermission, verifyOwnerPin, type SessionContext } from "@/modules/identity";
@@ -219,8 +219,9 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
       for (const method of ["cash", "upi", "card", "bank"] as const) {
         const amount = bill.payments[method];
         if (amount <= 0) continue;
-        const paymentId = await recordCounterPayment(tx, { shopId: session.shopId, fy, customerId: registered?.id ?? null, invoiceId, method, amountPaise: amount, businessDate, recordedBy: session.userId });
-        await postPayment(tx, booksOf(session), { paymentId, date: businessDate, direction: "in", partyType: "customer", partyId: customer.id, method, amountPaise: amount });
+        const route = await resolveBankRoute(tx, session.shopId, method, bill.bankAccountId);
+        const paymentId = await recordCounterPayment(tx, { shopId: session.shopId, fy, customerId: registered?.id ?? null, invoiceId, method, amountPaise: amount, businessDate, recordedBy: session.userId, bankAccountId: route.bankAccountId });
+        await postPayment(tx, booksOf(session), { paymentId, date: businessDate, direction: "in", partyType: "customer", partyId: customer.id, method, amountPaise: amount, bankAccountKey: route.key });
         if (registered) {
           await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: registered.id, entryDate: businessDate, kind: "payment", sourceType: "payment", sourceId: paymentId, creditPaise: amount });
         }
@@ -308,7 +309,7 @@ export async function cancelInvoice(session: SessionContext, invoiceId: string, 
     }
     if (invoice.fromChallans) await tx.update(invoiceChallanLinks).set({ releasedAt: new Date() }).where(and(eq(invoiceChallanLinks.invoiceId, invoice.id), isNull(invoiceChallanLinks.releasedAt)));
     await postInvoiceCancelled(tx, booksOf(session), { invoiceId: invoice.id, date: today });
-    for (const refund of refunds) await postPayment(tx, booksOf(session), { paymentId: refund.id, date: today, direction: "out", partyType: "customer", partyId: customer.id, method: refund.method, amountPaise: refund.amountPaise });
+    for (const refund of refunds) await postPayment(tx, booksOf(session), { paymentId: refund.id, date: today, direction: "out", partyType: "customer", partyId: customer.id, method: refund.method, amountPaise: refund.amountPaise, bankAccountKey: refund.bankAccountId ? await bankAccountKeyOf(tx, session.shopId, refund.bankAccountId) : null });
     await recordAudit(tx, actorOf(session), {
       action: "sales.invoice_cancelled",
       entityType: "invoice",
@@ -484,7 +485,7 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
         });
 
         await postInvoiceCancelled(tx, booksOf(session), { invoiceId: original.id, date: today });
-        for (const refund of refunds) await postPayment(tx, booksOf(session), { paymentId: refund.id, date: today, direction: "out", partyType: "customer", partyId: origCustomer.id, method: refund.method, amountPaise: refund.amountPaise });
+        for (const refund of refunds) await postPayment(tx, booksOf(session), { paymentId: refund.id, date: today, direction: "out", partyType: "customer", partyId: origCustomer.id, method: refund.method, amountPaise: refund.amountPaise, bankAccountKey: refund.bankAccountId ? await bankAccountKeyOf(tx, session.shopId, refund.bankAccountId) : null });
 
         // 2. Issue the new corrected invoice
 
@@ -591,6 +592,7 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
         for (const method of ["cash", "upi", "card", "bank"] as const) {
           const amount = bill.payments[method];
           if (amount <= 0) continue;
+          const route = await resolveBankRoute(tx, session.shopId, method, bill.bankAccountId);
           const paymentId = await recordCounterPayment(tx, {
             shopId: session.shopId,
             fy,
@@ -600,8 +602,9 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
             amountPaise: amount,
             businessDate: today,
             recordedBy: session.userId,
+            bankAccountId: route.bankAccountId,
           });
-          await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "in", partyType: "customer", partyId: customer.id, method, amountPaise: amount });
+          await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "in", partyType: "customer", partyId: customer.id, method, amountPaise: amount, bankAccountKey: route.key });
           if (registered) {
             await appendLedgerEntry(tx, {
               shopId: session.shopId,

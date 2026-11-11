@@ -66,5 +66,5 @@ export {
   type ReportReason,
   type TrialBalance,
 } from "./reports";
-export { BANK_MANAGE, bankAccountKeyOf, bookBalanceOn, createBankAccount, getBankAccount, listBankAccounts, listBankChoices, saveCsvMapping, setBankAccountActive, type BankAccountView } from "./banks";
+export { BANK_MANAGE, bankAccountKeyOf, bookBalanceOn, createBankAccount, getBankAccount, listBankAccounts, listBankChoices, resolveBankRoute, saveCsvMapping, setBankAccountActive, type BankAccountView } from "./banks";
 export { listOpeningGaps, valueOpeningStock, type OpeningGap, type ValuedStock } from "./gaps";

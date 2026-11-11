@@ -73,6 +73,8 @@ export const billInputSchema = z
     payments: z
       .object({ cash: rupees("cash amount"), upi: rupees("UPI amount"), card: rupees("card amount"), bank: rupees("bank amount") })
       .default({ cash: 0, upi: 0, card: 0, bank: 0 }),
+    /** Which bank account a bank payment went through; required only when the shop has more than one. */
+    bankAccountId: z.string().uuid().optional().or(z.literal("").transform(() => undefined)),
     /** Cash handed over by the customer, only to work out change. Never saved. */
     cashReceived: rupees("cash received"),
     /** GST state code where the goods are supplied. Empty = the shop's own state (counter sale). */
@@ -144,6 +146,8 @@ export const returnInputSchema = z
     reason: z.string().trim().min(3, "Write why the goods came back (at least 3 characters).").max(200, "Keep the reason under 200 characters."),
     /** ledger = reduce the customer's dues (registered customers only); cash/upi/bank = pay the money back. */
     settlement: z.enum(["ledger", "cash", "upi", "bank"], { message: "Choose how to settle the return." }),
+    /** Which bank account a bank refund goes out of; required only when the shop has more than one. */
+    bankAccountId: z.string().uuid().optional().or(z.literal("").transform(() => undefined)),
   })
   .superRefine((data, ctx) => {
     const seen = new Set<string>();

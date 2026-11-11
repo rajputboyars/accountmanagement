@@ -99,6 +99,20 @@ export async function bankAccountKeyOf(db: Db, shopId: string, bankAccountId: st
   return row.key;
 }
 
+/**
+ * Where a bank payment goes. Cash, UPI, card and cheque never use a bank account choice. For "bank": the chosen account (it must be active);
+ * with no choice, the shop's only active account; with several active accounts a choice is required, so money never lands in the wrong one.
+ * A shop with no bank account keeps the original "bank" account (key null).
+ */
+export async function resolveBankRoute(db: Db, shopId: string, method: string, bankAccountId?: string | null): Promise<{ bankAccountId: string | null; key: string | null }> {
+  if (method !== "bank") return { bankAccountId: null, key: null };
+  if (bankAccountId) return { bankAccountId, key: await bankAccountKeyOf(db, shopId, bankAccountId, { requireActive: true }) };
+  const active = await db.select({ id: bankAccounts.id }).from(bankAccounts).where(and(eq(bankAccounts.shopId, shopId), eq(bankAccounts.isActive, true))).orderBy(asc(bankAccounts.createdAt)).limit(2);
+  if (active.length > 1) throw new ConflictError("BANK_CHOICE_REQUIRED", "Choose which bank account this went through.", { fieldErrors: { bankAccountId: "Choose which bank account this went through." } });
+  if (active.length === 1) return { bankAccountId: active[0]!.id, key: await bankAccountKeyOf(db, shopId, active[0]!.id, { requireActive: true }) };
+  return { bankAccountId: null, key: null };
+}
+
 /** The active bank accounts, for choosing one on a payment form. Anyone who can record a payment may see the names; nothing else about them. */
 export async function listBankChoices(session: SessionContext): Promise<{ id: string; name: string; last4: string | null; isDefault: boolean }[]> {
   return getDb()

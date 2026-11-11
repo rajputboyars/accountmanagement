@@ -5,6 +5,7 @@ import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { ChallanBillForm } from "@/components/sales/challan-bill-form";
+import { listBankChoices } from "@/modules/accounting";
 import { listBillableDeliveries } from "@/modules/sales";
 import { requireSession } from "@/server/auth";
 import { NotFoundError } from "@/server/errors";
@@ -46,7 +47,7 @@ async function BillDelivered({ params }: Props) {
         {delivered.lines.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("orders.bill.nothing")}</p>
         ) : (
-          <ChallanBillForm customerId={delivered.customerId} lines={delivered.lines.map((line) => ({ ...line, unit: line.unit, deliveredQty: line.deliveredQty, billedQty: line.billedQty, remainingQty: line.remainingQty, productName: `${line.productName} (${unitShort(t, line.unit)})` }))} />
+          <ChallanBillForm bankAccounts={await listBankChoices(session).catch(() => [])} customerId={delivered.customerId} lines={delivered.lines.map((line) => ({ ...line, unit: line.unit, deliveredQty: line.deliveredQty, billedQty: line.billedQty, remainingQty: line.remainingQty, productName: `${line.productName} (${unitShort(t, line.unit)})` }))} />
         )}
       </SectionCard>
     </PageContainer>

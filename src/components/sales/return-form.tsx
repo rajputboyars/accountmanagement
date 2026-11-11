@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useActionState, useState, useTransition } from "react";
 import { LoaderCircle, Search } from "lucide-react";
 import { findInvoiceAction, previewReturnAction, saveReturnAction, type ReturnPayload } from "@/app/(app)/billing/returns/actions";
+import { BankAccountPicker, chosenBank, type BankChoice } from "@/components/bank/bank-choice";
 import { Field, FormAlert, SubmitButton, selectClass } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Money } from "@/components/nexora/money";
@@ -31,7 +32,7 @@ export function FindInvoiceForm() {
 
 type Line = { id: string; lineNo: number; productName: string; baseUnit: string; sold: string; soldBaseQty: string; returnedBaseQty: string; remainingBaseQty: string };
 
-export function ReturnForm({ invoice }: { invoice: { id: string; number: string; customer: { name: string; type: string }; lines: Line[] } }) {
+export function ReturnForm({ invoice, bankAccounts = [] }: { invoice: { id: string; number: string; customer: { name: string; type: string }; lines: Line[] }; bankAccounts?: BankChoice[] }) {
   const router = useRouter();
   const t = useT();
   const walkIn = invoice.customer.type === "walkin";
@@ -39,6 +40,8 @@ export function ReturnForm({ invoice }: { invoice: { id: string; number: string;
   const [restock, setRestock] = useState<Record<string, boolean>>({});
   const [reason, setReason] = useState("");
   const [settlement, setSettlement] = useState(walkIn ? "cash" : "ledger");
+  const [bankPick, setBankPick] = useState("");
+  const bankAccountId = settlement === "bank" ? chosenBank(bankAccounts, bankPick) : "";
   const [preview, setPreview] = useState<ReturnPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -46,7 +49,7 @@ export function ReturnForm({ invoice }: { invoice: { id: string; number: string;
   const [pending, startTransition] = useTransition();
 
   const chosen = invoice.lines.filter((line) => (quantities[line.id] ?? "").trim() !== "");
-  const payload: ReturnPayload = { invoiceId: invoice.id, lines: chosen.map((line) => ({ invoiceLineId: line.id, baseQty: quantities[line.id]!.trim(), restock: restock[line.id] ?? true })), reason, settlement };
+  const payload: ReturnPayload = { invoiceId: invoice.id, lines: chosen.map((line) => ({ invoiceLineId: line.id, baseQty: quantities[line.id]!.trim(), restock: restock[line.id] ?? true })), reason, settlement, ...(bankAccountId ? { bankAccountId } : {}) };
   const lineError = (lineId: string) => {
     const index = chosen.findIndex((line) => line.id === lineId);
     return index >= 0 ? fieldErrors[`lines.${index}.baseQty`] : undefined;
@@ -125,6 +128,7 @@ export function ReturnForm({ invoice }: { invoice: { id: string; number: string;
           </select>
         </Field>
       </div>
+      {bankAccountId ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={setBankPick} error={fieldErrors.bankAccountId} /> : null}
 
       <FormAlert error={error ?? undefined} />
 

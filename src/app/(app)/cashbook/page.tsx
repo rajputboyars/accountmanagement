@@ -10,6 +10,7 @@ import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { listBankChoices } from "@/modules/accounting";
 import { getCashbook, listClosings } from "@/modules/cashbook";
 import { requireSession } from "@/server/auth";
 import { getLanguage, getT } from "@/server/i18n";
@@ -45,6 +46,7 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
   const session = await requireSession();
   const book = await getCashbook(session, String(params.date ?? ""));
   const closings = await listClosings(session, 10);
+  const bankAccounts = await listBankChoices(session).catch(() => []);
   const [t, language] = await Promise.all([getT(), getLanguage()]);
   const method = (code: string) => paymentMethodLabel(t, code);
   const c = book.cash;
@@ -296,11 +298,11 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
         {book.canRecord ? (
           <>
             <SectionCard help="expenses" title={t("cashbook.addExpense")} description={t("cashbook.addExpenseDescription")} anchorId="section-add-an-expense">
-              <ExpenseForm date={book.date} />
+              <ExpenseForm date={book.date} bankAccounts={bankAccounts} />
               <ScrollIntoViewOnHash anchorId="section-add-an-expense" />
             </SectionCard>
             <SectionCard help="cashInOut" title={t("cashbook.cashInOut")} description={t("cashbook.cashInOutDescription")}>
-              <CashMovementForm date={book.date} />
+              <CashMovementForm date={book.date} bankAccounts={bankAccounts} />
             </SectionCard>
           </>
         ) : null}

@@ -20,6 +20,8 @@ export type Draft<P> = {
   lines: DraftLine<P>[];
   payments: Record<Method, string>;
   cashReceived: string;
+  /** The bank account chosen for the bank amount; only used when the shop has more than one. */
+  bankAccountId: string;
   idempotencyKey: string;
 };
 
@@ -27,7 +29,7 @@ export const newIdempotencyKey = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID().replace(/-/g, "") : `${Date.now()}${Math.random().toString(36).slice(2)}`;
 
 export function emptyDraft<P>(): Draft<P> {
-  return { customerId: "", priceList: "", discountPercent: "", placeOfSupply: "", godownId: "", lines: [], payments: { cash: "", upi: "", card: "", bank: "" }, cashReceived: "", idempotencyKey: newIdempotencyKey() };
+  return { customerId: "", priceList: "", discountPercent: "", placeOfSupply: "", godownId: "", lines: [], payments: { cash: "", upi: "", card: "", bank: "" }, cashReceived: "", bankAccountId: "", idempotencyKey: newIdempotencyKey() };
 }
 
 /**

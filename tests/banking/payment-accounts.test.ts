@@ -110,10 +110,9 @@ describe("several bank accounts: the chosen one is used", () => {
     expect(await net(ctx.session, "bank")).toBe(-10000);
   });
 
-  it("falls back to the original account when none is chosen, and still ignores the choice for other methods", async () => {
-    await recordCustomerReceipt(ctx.session, { idempotencyKey: key(), customerId: ctx.customerId, amount: "250", method: "bank", reference: "NOSEL" });
-    expect((await paymentOf("NOSEL")).bankAccountId).toBeNull();
-    expect(await net(ctx.session, "bank")).toBe(-10000 + 25000);
+  it("asks which account when none is chosen, and still ignores the choice for other methods", async () => {
+    expect(await refusal(recordCustomerReceipt(ctx.session, { idempotencyKey: key(), customerId: ctx.customerId, amount: "250", method: "bank", reference: "NOSEL" }))).toMatch(/choose which bank account/i);
+    expect(await net(ctx.session, "bank")).toBe(-10000);
     await recordCustomerReceipt(ctx.session, { idempotencyKey: key(), customerId: ctx.customerId, amount: "50", method: "upi", reference: "UPI-X", bankAccountId: second });
     expect((await paymentOf("UPI-X")).bankAccountId).toBeNull();
     expect(await net(ctx.session, "upi")).toBe(5000);

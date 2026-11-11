@@ -5,6 +5,7 @@ import { FindInvoiceForm, ReturnForm } from "@/components/sales/return-form";
 import { PageContainer } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
+import { listBankChoices } from "@/modules/accounting";
 import { getReturnableInvoice } from "@/modules/sales";
 import { requireSession } from "@/server/auth";
 import { getLanguage, getT } from "@/server/i18n";
@@ -62,7 +63,7 @@ async function NewReturn({ searchParams }: { searchParams: PageProps<"/billing/r
             </p>
           </section>
           <SectionCard title={t("returns.whatCameBack")} description={t("returns.whatCameBackHelp")}>
-            <ReturnForm invoice={invoice} />
+            <ReturnForm invoice={invoice} bankAccounts={await listBankChoices(session).catch(() => [])} />
           </SectionCard>
         </>
       )}

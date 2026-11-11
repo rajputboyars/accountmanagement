@@ -2735,4 +2735,8 @@ export const hi: Messages = {
   "server.bankConfirmPost": "पक्का करें कि यह आपके हिसाब में जुड़ना चाहिए।",
   "bank.choose.label": "कौन सा बैंक खाता?",
   "bank.choose.hint": "पेमेंट इसी खाते के नाम दर्ज होगा।",
+  "server.bankChoiceRequired": "बताइए यह पैसा किस बैंक खाते से गया।",
+  "money.awaiting": "सेटलमेंट का इंतज़ार कर रहा पैसा",
+  "money.awaitingHint": "UPI, कार्ड या चेक से लिया, अभी बैंक में नहीं आया। कैश और बैंक के कुल में नहीं गिना गया।",
+  "money.awaitingTotal": "कुल इंतज़ार में",
 };

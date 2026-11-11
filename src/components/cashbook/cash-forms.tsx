@@ -2,7 +2,8 @@
 
 import { useActionState, useState } from "react";
 import { closeDayAction, recordCashMovementAction, recordExpenseAction, reopenDayAction, voidExpenseAction, type CashFormState } from "@/app/(app)/cashbook/actions";
-import { Field, FormAlert, FormSelect, SubmitButton } from "@/components/catalog/form-bits";
+import { BankAccountSelect, type BankChoice } from "@/components/bank/bank-choice";
+import { Field, FormAlert, FormSelect, selectClass, SubmitButton } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Money } from "@/components/nexora/money";
 import { Button } from "@/components/ui/button";
@@ -24,8 +25,9 @@ function useKeyedAction(action: (previous: CashFormState, formData: FormData) =>
   return { idempotencyKey, state, formAction };
 }
 
-export function ExpenseForm({ date }: { date: string }) {
+export function ExpenseForm({ date, bankAccounts = [] }: { date: string; bankAccounts?: BankChoice[] }) {
   const t = useT();
+  const [method, setMethod] = useState("cash");
   const { idempotencyKey, state, formAction } = useKeyedAction(recordExpenseAction);
   const values = state.ok ? {} : (state.values ?? {});
   const errors = state.fieldErrors ?? {};
@@ -47,16 +49,17 @@ export function ExpenseForm({ date }: { date: string }) {
           <Input name="amount" defaultValue={values.amount} inputMode="decimal" placeholder={t("cashbook.amountExample")} className="h-11 tabular-nums" />
         </Field>
         <Field label={t("cashbook.paidBy")} error={errors.method}>
-          <FormSelect name="method" defaultValue={values.method ?? "cash"}>
+          <select name="method" value={method} onChange={(event) => setMethod(event.target.value)} className={selectClass}>
             <option value="cash">{t("cashbook.cashFromDrawer")}</option>
             <option value="upi">{t("common.upi")}</option>
             <option value="bank">{t("common.bank")}</option>
-          </FormSelect>
+          </select>
         </Field>
         <Field label={<span>{t("cashbook.reference")} <span className="font-normal text-muted-foreground">{t("common.optional")}</span></span>} error={errors.reference}>
           <Input name="reference" defaultValue={values.reference} maxLength={40} className="h-11" />
         </Field>
       </div>
+      {method === "bank" && bankAccounts.length > 1 ? <BankAccountSelect accounts={bankAccounts} error={errors.bankAccountId} /> : null}
       <Field label={<span>{t("cashbook.note")} <span className="font-normal text-muted-foreground">{t("cashbook.neededForOther")}</span></span>} error={errors.note}>
         <Input name="note" defaultValue={values.note} maxLength={200} placeholder={t("cashbook.noteExample")} className="h-11" />
       </Field>
@@ -68,8 +71,9 @@ export function ExpenseForm({ date }: { date: string }) {
   );
 }
 
-export function CashMovementForm({ date }: { date: string }) {
+export function CashMovementForm({ date, bankAccounts = [] }: { date: string; bankAccounts?: BankChoice[] }) {
   const t = useT();
+  const [kind, setKind] = useState("bank_deposit");
   const { idempotencyKey, state, formAction } = useKeyedAction(recordCashMovementAction);
   const values = state.ok ? {} : (state.values ?? {});
   const errors = state.fieldErrors ?? {};
@@ -79,16 +83,17 @@ export function CashMovementForm({ date }: { date: string }) {
       <input type="hidden" name="businessDate" value={date} />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
         <Field label={t("cashbook.whatHappened")} error={errors.kind}>
-          <FormSelect name="kind" defaultValue={values.kind ?? "bank_deposit"}>
+          <select name="kind" value={kind} onChange={(event) => setKind(event.target.value)} className={selectClass}>
             <option value="bank_deposit">{t("cashbook.movement.bankDeposit")}</option>
             <option value="withdrawal">{t("cashbook.movement.withdrawal")}</option>
             <option value="float_added">{t("cashbook.line.added")}</option>
-          </FormSelect>
+          </select>
         </Field>
         <Field label={t("common.amountRupees")} error={errors.amount}>
           <Input name="amount" defaultValue={values.amount} inputMode="decimal" className="h-11 tabular-nums" />
         </Field>
       </div>
+      {kind === "bank_deposit" && bankAccounts.length > 1 ? <BankAccountSelect accounts={bankAccounts} error={errors.bankAccountId} /> : null}
       <Field label={<span>{t("cashbook.note")} <span className="font-normal text-muted-foreground">{t("common.optional")}</span></span>} error={errors.note}>
         <Input name="note" defaultValue={values.note} maxLength={200} className="h-11" />
       </Field>

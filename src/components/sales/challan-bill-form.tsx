@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { LoaderCircle } from "lucide-react";
 import { previewBillAction, saveBillAction, type BillInputPayload } from "@/app/(app)/billing/actions";
+import { BankAccountPicker, chosenBank, type BankChoice } from "@/components/bank/bank-choice";
 import { Field, FormAlert } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Money } from "@/components/nexora/money";
@@ -19,11 +20,13 @@ const METHODS = ["cash", "upi", "card", "bank"] as const;
  * Bill goods that were already delivered. Stock is not touched (it left on the challan); prices are worked out afresh by the server
  * and shown next to the order's price. Several partial bills can be made from the same delivery.
  */
-export function ChallanBillForm({ customerId, lines }: { customerId: string; lines: Billable[] }) {
+export function ChallanBillForm({ customerId, lines, bankAccounts = [] }: { customerId: string; lines: Billable[]; bankAccounts?: BankChoice[] }) {
   const t = useT();
   const router = useRouter();
   const [quantities, setQuantities] = useState<Record<string, string>>(() => Object.fromEntries(lines.map((line) => [line.challanLineId, line.remainingQty])));
   const [payments, setPayments] = useState({ cash: "", upi: "", card: "", bank: "" });
+  const [bankPick, setBankPick] = useState("");
+  const bankAccountId = payments.bank.trim() ? chosenBank(bankAccounts, bankPick) : "";
   const [bill, setBill] = useState<BillView | null>(null);
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   const [error, setError] = useState<string>();
@@ -36,6 +39,7 @@ export function ChallanBillForm({ customerId, lines }: { customerId: string; lin
     lines: picked.map((line) => ({ productId: line.productId, unit: line.unit, quantity: quantities[line.challanLineId]! })),
     payments,
     cashReceived: "",
+    ...(bankAccountId ? { bankAccountId } : {}),
     challanLines: picked.map((line) => ({ challanLineId: line.challanLineId, quantity: quantities[line.challanLineId]!.trim() })),
   };
   const key = JSON.stringify(payload);
@@ -105,6 +109,7 @@ export function ChallanBillForm({ customerId, lines }: { customerId: string; lin
             </Field>
           ))}
         </div>
+        {bankAccountId ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={setBankPick} /> : null}
       </div>
       {bill ? (
         <div className="flex flex-col gap-1 rounded-xl bg-muted/40 p-3 text-sm">

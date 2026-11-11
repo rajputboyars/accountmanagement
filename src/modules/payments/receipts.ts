@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { bankAccountKeyOf, postPayment } from "@/modules/accounting";
+import { bankAccountKeyOf, postPayment, resolveBankRoute } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { requirePermission, type SessionContext } from "@/modules/identity";
 import { appendLedgerEntry, lockPartyBalance, partyBalance } from "@/modules/ledger";
@@ -50,7 +50,8 @@ export async function recordCustomerReceipt(session: SessionContext, input: unkn
         const before = await partyBalance(session.shopId, "customer", customer.id, tx);
         const { fy, number } = await takeDocumentNumber(tx, session.shopId, "RCPT");
         const id = randomUUID();
-        const bankKey = data.method === "bank" && data.bankAccountId ? await bankAccountKeyOf(tx, session.shopId, data.bankAccountId, { requireActive: true }) : null;
+        const route = await resolveBankRoute(tx, session.shopId, data.method, data.bankAccountId);
+        const bankKey = route.key;
         await tx.insert(payments).values({
           id,
           shopId: session.shopId,
@@ -62,7 +63,7 @@ export async function recordCustomerReceipt(session: SessionContext, input: unkn
           method: data.method,
           amountPaise: data.amount,
           reference: data.method === "cash" ? null : data.reference,
-          bankAccountId: bankKey ? data.bankAccountId : null,
+          bankAccountId: route.bankAccountId,
           businessDate: today,
           recordedBy: session.userId,
         });

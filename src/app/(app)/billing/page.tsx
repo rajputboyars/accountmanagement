@@ -7,6 +7,7 @@ import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { buttonVariants } from "@/components/ui/button";
 import { getNavItem } from "@/config/navigation";
+import { listBankChoices } from "@/modules/accounting";
 import { CATALOG_MANAGE, shopHasProducts } from "@/modules/catalog";
 import { hasPermission } from "@/modules/identity";
 import { BILLING_CREATE, listBillingCustomers, listBillingGodowns } from "@/modules/sales";
@@ -38,7 +39,7 @@ async function NewBill() {
     );
   }
   const t = await getT();
-  const [customers, hasProducts, canAddProducts, godowns] = await Promise.all([listBillingCustomers(session), shopHasProducts(session.shopId), hasPermission(session, CATALOG_MANAGE), listBillingGodowns(session)]);
+  const [customers, hasProducts, canAddProducts, godowns, bankAccounts] = await Promise.all([listBillingCustomers(session), shopHasProducts(session.shopId), hasPermission(session, CATALOG_MANAGE), listBillingGodowns(session), listBankChoices(session).catch(() => [])]);
   return (
     <PageContainer>
       <PageIntro
@@ -59,7 +60,7 @@ async function NewBill() {
           </>
         }
       />
-      <BillingScreen customers={customers} godowns={godowns} firstRun={{ noProducts: !hasProducts, canAddProducts }} />
+      <BillingScreen customers={customers} godowns={godowns} bankAccounts={bankAccounts} firstRun={{ noProducts: !hasProducts, canAddProducts }} />
     </PageContainer>
   );
 }

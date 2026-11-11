@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { postPayment, postPurchaseReturn } from "@/modules/accounting";
+import { postPayment, postPurchaseReturn, resolveBankRoute } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, lockProductsForStock } from "@/modules/catalog";
 import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
@@ -42,6 +42,8 @@ export const purchaseReturnInputSchema = z
     reason: z.string().trim().min(3, "Write a short reason (at least 3 characters).").max(200, "Keep the reason under 200 characters."),
     settlement: z.enum(PURCHASE_RETURN_SETTLEMENTS, { message: "Choose how the supplier settles." }),
     refundMethod: z.enum(["", ...REFUND_METHODS]).optional(),
+    /** Which bank account a bank refund came into; required only when the shop has more than one. */
+    bankAccountId: z.string().uuid().optional().or(z.literal("").transform(() => undefined)),
     lines: z.array(z.object({ receiptLineId: z.string().regex(UUID, "Choose a line."), quantity: z.string().trim() })).min(1, "Choose what to return.").max(100),
   })
   .superRefine((data, ctx) => {
@@ -184,7 +186,8 @@ export async function createPurchaseReturn(session: SessionContext, input: unkno
       const { fy, number } = await takeDocumentNumber(tx, session.shopId, "DN");
       const returnId = randomUUID();
       let refundPaymentId: string | null = null;
-      if (data.settlement === "refund") refundPaymentId = await recordSupplierRefund(tx, { shopId: session.shopId, fy, supplierId: supplier.id, method: data.refundMethod as "cash" | "upi" | "bank" | "cheque", amountPaise: totalPaise, businessDate: today, recordedBy: session.userId });
+      const route = data.settlement === "refund" ? await resolveBankRoute(tx, session.shopId, data.refundMethod as string, data.bankAccountId) : { bankAccountId: null, key: null };
+      if (data.settlement === "refund") refundPaymentId = await recordSupplierRefund(tx, { shopId: session.shopId, fy, supplierId: supplier.id, method: data.refundMethod as "cash" | "upi" | "bank" | "cheque", amountPaise: totalPaise, businessDate: today, recordedBy: session.userId, bankAccountId: route.bankAccountId });
       await tx.insert(purchaseReturns).values({ id: returnId, shopId: session.shopId, fy, number, goodsReceiptId: receipt.id, supplierId: supplier.id, godownId, returnDate: today, reason: data.reason, settlement: data.settlement, refundMethod: data.settlement === "refund" ? (data.refundMethod as "cash" | "upi" | "bank" | "cheque") : null, refundPaymentId, taxablePaise, gstPaise, totalPaise, createdBy: session.userId });
       await tx.insert(purchaseReturnLines).values(
         planned.map((line) => ({ purchaseReturnId: returnId, receiptLineId: line.line.id, productId: line.line.productId, unit: line.unit, factor: toDbQuantity(line.factor), qty: toDbQuantity(line.quantity), qtyBase: toDbQuantity(line.base), unitCostPaise: line.line.unitCostPaise, taxablePaise: line.taxable, gstRateBp: line.line.gstRateBp, gstPaise: line.gst })),
@@ -197,7 +200,7 @@ export async function createPurchaseReturn(session: SessionContext, input: unkno
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: supplier.id, entryDate: today, kind: "payment", sourceType: "payment", sourceId: refundPaymentId, creditPaise: totalPaise });
       }
       await postPurchaseReturn(tx, booksOf(session), { returnId, receiptId: receipt.id, date: today, supplierId: supplier.id, taxablePaise, gstPaise, totalPaise });
-      if (refundPaymentId) await postPayment(tx, booksOf(session), { paymentId: refundPaymentId, date: today, direction: "in", partyType: "supplier", partyId: supplier.id, method: data.refundMethod!, amountPaise: totalPaise });
+      if (refundPaymentId) await postPayment(tx, booksOf(session), { paymentId: refundPaymentId, date: today, direction: "in", partyType: "supplier", partyId: supplier.id, method: data.refundMethod!, amountPaise: totalPaise, bankAccountKey: route.key });
       await recordAudit(tx, actorOf(session), {
         action: "purchasing.return_created",
         entityType: "purchase_return",

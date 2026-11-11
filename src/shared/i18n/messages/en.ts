@@ -2752,6 +2752,10 @@ export const en = {
   "server.bankConfirmPost": "Confirm that you want this added to your books.",
   "bank.choose.label": "Which bank account?",
   "bank.choose.hint": "The payment is kept against this account.",
+  "server.bankChoiceRequired": "Choose which bank account this went through.",
+  "money.awaiting": "Money awaiting settlement",
+  "money.awaitingHint": "Taken by UPI, card or cheque and not in your bank yet. It is not counted in Cash and bank.",
+  "money.awaitingTotal": "Total awaiting",
 } as const;
 
 export type MessageKey = keyof typeof en;

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { documentParties, printedSeller } from "./document-parties";
 import { and, asc, desc, eq, ilike, inArray, is, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
-import { postCreditNote, postPayment } from "@/modules/accounting";
+import { postCreditNote, postPayment, resolveBankRoute } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, loadProductsForStock } from "@/modules/catalog";
 import { loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
@@ -282,6 +282,7 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
       const costed = (line: (typeof plan.lines)[number]) => ({ productId: line.productId, qtyBase: formatQuantity(line.returnBaseQty), unitCostPaise: line.unitCostPaise });
       await postCreditNote(tx, booksOf(session), { creditNoteId, date: today, customerId: plan.customer.id, taxablePaise: plan.totals.taxablePaise, gstPaise: plan.totals.cgstPaise + plan.totals.sgstPaise + plan.totals.igstPaise, roundOffPaise: plan.totals.roundOffPaise, totalPaise: plan.totals.totalPaise, returned: plan.lines.map(costed), damaged: plan.lines.filter((line) => !line.restock).map(costed) });
       if (data.settlement !== "ledger" && plan.totals.totalPaise > 0) {
+        const route = await resolveBankRoute(tx, session.shopId, data.settlement, data.bankAccountId);
         const paymentId = await recordCreditNoteRefund(tx, {
           shopId: session.shopId,
           fy,
@@ -292,8 +293,9 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
           amountPaise: plan.totals.totalPaise,
           businessDate: today,
           recordedBy: session.userId,
+          bankAccountId: route.bankAccountId,
         });
-        await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "out", partyType: "customer", partyId: plan.customer.id, method: data.settlement, amountPaise: plan.totals.totalPaise });
+        await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "out", partyType: "customer", partyId: plan.customer.id, method: data.settlement, amountPaise: plan.totals.totalPaise, bankAccountKey: route.key });
         if (registered) {
           await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: plan.customer.id, entryDate: today, kind: "payment", sourceType: "payment", sourceId: paymentId, debitPaise: plan.totals.totalPaise });
         }

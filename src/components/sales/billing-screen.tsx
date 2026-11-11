@@ -8,6 +8,7 @@ import { GST_STATE_LIST, stateTaxLabel } from "@/shared/gst";
 import { stateName } from "@/shared/i18n/unit-labels";
 import { CircleAlert, FilePlus2, LoaderCircle, Minus, Plus, ReceiptText, Search, Trash2 } from "lucide-react";
 import { previewBillAction, saveBillAction, searchProductsAction, type BillInputPayload } from "@/app/(app)/billing/actions";
+import { BankAccountPicker, chosenBank, type BankChoice } from "@/components/bank/bank-choice";
 import { Field, selectClass } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Money } from "@/components/nexora/money";
@@ -50,12 +51,12 @@ type FirstRun = { noProducts: boolean; canAddProducts: boolean };
 
 type Godown = { id: string; name: string; isDefault: boolean };
 
-export function BillingScreen({ customers, godowns = [], firstRun = { noProducts: false, canAddProducts: false } }: { customers: Customer[]; godowns?: Godown[]; firstRun?: FirstRun }) {
+export function BillingScreen({ customers, godowns = [], bankAccounts = [], firstRun = { noProducts: false, canAddProducts: false } }: { customers: Customer[]; godowns?: Godown[]; bankAccounts?: BankChoice[]; firstRun?: FirstRun }) {
   const { bfcacheId } = useRouter();
-  return <BillDraft key={bfcacheId} customers={customers} godowns={godowns} firstRun={firstRun} />;
+  return <BillDraft key={bfcacheId} customers={customers} godowns={godowns} bankAccounts={bankAccounts} firstRun={firstRun} />;
 }
 
-function BillDraft({ customers, godowns, firstRun }: { customers: Customer[]; godowns: Godown[]; firstRun: FirstRun }) {
+function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: Customer[]; godowns: Godown[]; bankAccounts: BankChoice[]; firstRun: FirstRun }) {
   const router = useRouter();
   const t = useT();
   const [draft, setDraft] = useState<Draft<Product>>(emptyDraft);
@@ -63,6 +64,8 @@ function BillDraft({ customers, godowns, firstRun }: { customers: Customer[]; go
   // Asked only when the shop has more than one godown; the choice is never made for the cashier.
   const manyGodowns = godowns.length > 1;
   const godownId = manyGodowns && godowns.some((godown) => godown.id === draft.godownId) ? draft.godownId : "";
+  // Asked only when the shop has more than one bank account and part of the bill is paid through the bank.
+  const bankAccountId = payments.bank.trim() ? chosenBank(bankAccounts, draft.bankAccountId) : "";
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
   const [bill, setBill] = useState<BillView | null>(null);
@@ -90,8 +93,8 @@ function BillDraft({ customers, godowns, firstRun }: { customers: Customer[]; go
   };
 
   const payload: BillInputPayload = useMemo(
-    () => ({ customerId, priceList, discountPercent, lines: lines.map((line) => ({ productId: line.product.id, unit: line.unit, quantity: line.quantity })), payments, cashReceived, placeOfSupply, ...(godownId ? { godownId } : {}) }),
-    [customerId, priceList, discountPercent, lines, payments, cashReceived, placeOfSupply, godownId],
+    () => ({ customerId, priceList, discountPercent, lines: lines.map((line) => ({ productId: line.product.id, unit: line.unit, quantity: line.quantity })), payments, cashReceived, placeOfSupply, ...(godownId ? { godownId } : {}), ...(bankAccountId ? { bankAccountId } : {}) }),
+    [customerId, priceList, discountPercent, lines, payments, cashReceived, placeOfSupply, godownId, bankAccountId],
   );
   const payloadKey = JSON.stringify(payload);
   // Unreadable amounts stay as typed and are pointed out in place; nothing is asked of the server until they are corrected.
@@ -424,6 +427,7 @@ function BillDraft({ customers, godowns, firstRun }: { customers: Customer[]; go
               </Field>
             ))}
           </div>
+          {bankAccountId ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={(id) => update({ bankAccountId: id })} error={problems.find((problem) => problem.field === "bankAccountId")?.message} /> : null}
           {payments.cash ? (
             <Field
               label={t("billing.cashReceived")}

@@ -19,6 +19,7 @@ export type CounterPayment = {
   amountPaise: number;
   businessDate: string;
   recordedBy: string;
+  bankAccountId?: string | null;
 };
 
 /** Money received at the counter for a bill: one row per method (split payments stay separate). */
@@ -34,6 +35,7 @@ export async function recordCounterPayment(tx: Transaction, payment: CounterPaym
     invoiceId: payment.invoiceId,
     method: payment.method,
     amountPaise: payment.amountPaise,
+    bankAccountId: payment.method === "bank" ? (payment.bankAccountId ?? null) : null,
     businessDate: payment.businessDate,
     recordedBy: payment.recordedBy,
   });
@@ -57,13 +59,13 @@ export async function paymentsForInvoice(db: Database | Transaction, shopId: str
 export async function refundInvoicePayments(
   tx: Transaction,
   invoice: { shopId: string; fy: string; invoiceId: string; customerId: string | null; businessDate: string; recordedBy: string },
-): Promise<{ id: string; method: PaymentMethod; amountPaise: number }[]> {
+): Promise<{ id: string; method: PaymentMethod; amountPaise: number; bankAccountId: string | null }[]> {
   const originals = await tx
     .select()
     .from(payments)
     .where(and(eq(payments.shopId, invoice.shopId), eq(payments.invoiceId, invoice.invoiceId), eq(payments.direction, "in"), eq(payments.status, "recorded")))
     .for("update");
-  const refunds: { id: string; method: PaymentMethod; amountPaise: number }[] = [];
+  const refunds: { id: string; method: PaymentMethod; amountPaise: number; bankAccountId: string | null }[] = [];
   for (const original of originals) {
     const id = randomUUID();
     await tx.insert(payments).values({
@@ -76,11 +78,13 @@ export async function refundInvoicePayments(
       invoiceId: invoice.invoiceId,
       method: original.method,
       amountPaise: original.amountPaise,
+      // The money goes back out of the account it came into.
+      bankAccountId: original.bankAccountId,
       businessDate: invoice.businessDate,
       recordedBy: invoice.recordedBy,
     });
     await tx.update(payments).set({ status: "reversed", reversedByPaymentId: id }).where(eq(payments.id, original.id));
-    refunds.push({ id, method: original.method, amountPaise: original.amountPaise });
+    refunds.push({ id, method: original.method, amountPaise: original.amountPaise, bankAccountId: original.bankAccountId });
   }
   return refunds;
 }
@@ -88,7 +92,7 @@ export async function refundInvoicePayments(
 /** Money paid back to a customer for a credit note (an "out" row linked to the note and its invoice). */
 export async function recordCreditNoteRefund(
   tx: Transaction,
-  refund: { shopId: string; fy: string; customerId: string | null; invoiceId: string; creditNoteId: string; method: PaymentMethod; amountPaise: number; businessDate: string; recordedBy: string },
+  refund: { shopId: string; fy: string; customerId: string | null; invoiceId: string; creditNoteId: string; method: PaymentMethod; amountPaise: number; businessDate: string; recordedBy: string; bankAccountId?: string | null },
 ): Promise<string> {
   const id = randomUUID();
   await tx.insert(payments).values({
@@ -102,6 +106,7 @@ export async function recordCreditNoteRefund(
     creditNoteId: refund.creditNoteId,
     method: refund.method,
     amountPaise: refund.amountPaise,
+    bankAccountId: refund.method === "bank" ? (refund.bankAccountId ?? null) : null,
     businessDate: refund.businessDate,
     recordedBy: refund.recordedBy,
   });
@@ -263,7 +268,7 @@ export async function reversedPaymentIds(db: Database | Transaction, shopId: str
  */
 export async function recordSupplierRefund(
   tx: Transaction,
-  refund: { shopId: string; fy: string; supplierId: string; method: PaymentMethod; amountPaise: number; businessDate: string; recordedBy: string },
+  refund: { shopId: string; fy: string; supplierId: string; method: PaymentMethod; amountPaise: number; businessDate: string; recordedBy: string; bankAccountId?: string | null },
 ): Promise<string> {
   const id = randomUUID();
   await tx.insert(payments).values({
@@ -275,6 +280,7 @@ export async function recordSupplierRefund(
     partyId: refund.supplierId,
     method: refund.method,
     amountPaise: refund.amountPaise,
+    bankAccountId: refund.method === "bank" ? (refund.bankAccountId ?? null) : null,
     businessDate: refund.businessDate,
     recordedBy: refund.recordedBy,
   });

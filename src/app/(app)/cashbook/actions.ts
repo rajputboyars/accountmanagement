@@ -28,7 +28,7 @@ async function failure(error: unknown, values?: Record<string, string>): Promise
 }
 
 export async function recordExpenseAction(_previous: CashFormState, formData: FormData): Promise<CashFormState> {
-  const values = { idempotencyKey: text(formData, "idempotencyKey"), businessDate: text(formData, "businessDate"), category: text(formData, "category"), amount: text(formData, "amount"), method: text(formData, "method"), note: text(formData, "note"), reference: text(formData, "reference") };
+  const values = { idempotencyKey: text(formData, "idempotencyKey"), businessDate: text(formData, "businessDate"), category: text(formData, "category"), amount: text(formData, "amount"), method: text(formData, "method"), note: text(formData, "note"), reference: text(formData, "reference"), bankAccountId: text(formData, "bankAccountId") };
   try {
     await recordExpense(await requireSession(), values);
   } catch (error) {
@@ -40,7 +40,7 @@ export async function recordExpenseAction(_previous: CashFormState, formData: Fo
 }
 
 export async function recordCashMovementAction(_previous: CashFormState, formData: FormData): Promise<CashFormState> {
-  const values = { idempotencyKey: text(formData, "idempotencyKey"), businessDate: text(formData, "businessDate"), kind: text(formData, "kind"), amount: text(formData, "amount"), note: text(formData, "note") };
+  const values = { idempotencyKey: text(formData, "idempotencyKey"), businessDate: text(formData, "businessDate"), kind: text(formData, "kind"), amount: text(formData, "amount"), bankAccountId: text(formData, "bankAccountId"), note: text(formData, "note") };
   try {
     await recordCashMovement(await requireSession(), values);
   } catch (error) {

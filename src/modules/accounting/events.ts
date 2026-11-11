@@ -86,16 +86,16 @@ export async function postGoodsReceiptCancelled(tx: Transaction, ctx: PostingCon
   await reverseBySource(tx, ctx, { sourceType: "goods_receipt", sourceId: a.receiptId, event: EVENTS.goodsReceipt, entryDate: a.date, memo: "Receipt cancelled" });
 }
 
-export async function postExpense(tx: Transaction, ctx: PostingContext, a: { expenseId: string; date: string; category: string; method: string; amountPaise: number }) {
-  await postJournal(tx, ctx, { entryDate: a.date, sourceType: "expense", sourceId: a.expenseId, draft: expenseRecorded({ category: a.category, method: a.method, amountPaise: a.amountPaise }) });
+export async function postExpense(tx: Transaction, ctx: PostingContext, a: { expenseId: string; date: string; category: string; method: string; amountPaise: number; bankAccountKey?: string | null }) {
+  await postJournal(tx, ctx, { entryDate: a.date, sourceType: "expense", sourceId: a.expenseId, draft: expenseRecorded({ category: a.category, method: a.method, amountPaise: a.amountPaise, bankAccount: a.bankAccountKey }) });
 }
 
 export async function postExpenseVoided(tx: Transaction, ctx: PostingContext, a: { expenseId: string; date: string }) {
   await reverseBySource(tx, ctx, { sourceType: "expense", sourceId: a.expenseId, event: EVENTS.expense, entryDate: a.date, memo: "Expense voided" });
 }
 
-export async function postCashMovement(tx: Transaction, ctx: PostingContext, a: { movementId: string; date: string; kind: "withdrawal" | "bank_deposit" | "float_added"; amountPaise: number }) {
-  await postJournal(tx, ctx, { entryDate: a.date, sourceType: "cash_movement", sourceId: a.movementId, draft: cashMoved({ kind: a.kind, amountPaise: a.amountPaise }) });
+export async function postCashMovement(tx: Transaction, ctx: PostingContext, a: { movementId: string; date: string; kind: "withdrawal" | "bank_deposit" | "float_added"; amountPaise: number; bankAccountKey?: string | null }) {
+  await postJournal(tx, ctx, { entryDate: a.date, sourceType: "cash_movement", sourceId: a.movementId, draft: cashMoved({ kind: a.kind, amountPaise: a.amountPaise, bankAccount: a.bankAccountKey }) });
 }
 
 /** Damaged stock and count corrections. `qtyBase` is signed (negative = stock lost). */

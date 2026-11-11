@@ -2735,4 +2735,8 @@ export const hinglish: Messages = {
   "server.bankConfirmPost": "Confirm karein ki yeh aapki books mein judna chahiye.",
   "bank.choose.label": "Kaun sa bank account?",
   "bank.choose.hint": "Payment isi account ke naam darj hoga.",
+  "server.bankChoiceRequired": "Batao yeh paisa kaun se bank account se gaya.",
+  "money.awaiting": "Settlement ka intezaar kar raha paisa",
+  "money.awaitingHint": "UPI, card ya cheque se liya, abhi bank mein nahi aaya. Cash aur bank ke total mein nahi gina gaya.",
+  "money.awaitingTotal": "Kul intezaar mein",
 };
