@@ -93,7 +93,7 @@ function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: 
   };
 
   const payload: BillInputPayload = useMemo(
-    () => ({ customerId, priceList, discountPercent, lines: lines.map((line) => ({ productId: line.product.id, unit: line.unit, quantity: line.quantity })), payments, cashReceived, placeOfSupply, ...(godownId ? { godownId } : {}), ...(bankAccountId ? { bankAccountId } : {}) }),
+    () => ({ customerId, priceList, discountPercent, lines: lines.map((line) => ({ productId: line.product.id, unit: line.unit, quantity: line.quantity, ...(line.discountValue.trim() ? { discountKind: line.discountKind, discountValue: line.discountValue.trim() } : {}) })), payments, cashReceived, placeOfSupply, ...(godownId ? { godownId } : {}), ...(bankAccountId ? { bankAccountId } : {}) }),
     [customerId, priceList, discountPercent, lines, payments, cashReceived, placeOfSupply, godownId, bankAccountId],
   );
   const payloadKey = JSON.stringify(payload);
@@ -145,7 +145,7 @@ function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: 
     setLines((current) => {
       const existing = current.find((line) => line.product.id === product.id);
       if (existing) return current.map((line) => (line.key === existing.key ? { ...line, quantity: bump(line.quantity, 1) } : line));
-      return [...current, { key: nextKey.current++, product, unit: product.baseUnit, quantity: "1" }];
+      return [...current, { key: nextKey.current++, product, unit: product.baseUnit, quantity: "1", discountKind: "flat", discountValue: "" }];
     });
     setQuery("");
     setResults([]);
@@ -161,6 +161,7 @@ function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: 
   const customerProblem = problems.find((problem) => problem.field === "customerId");
   const bannerProblems = billingBannerProblems(problems);
   const lineProblem = (index: number) => problems.find((problem) => problem.field === `lines.${index}.quantity`)?.message ?? fieldErrors[`lines.${index}.quantity`];
+  const discountProblem = (index: number) => problems.find((problem) => problem.field === `lines.${index}.discountValue`)?.message ?? fieldErrors[`lines.${index}.discountValue`];
   const cash = payments.cash ? cashSummary(payments.cash, cashReceived) : null;
   const cashShort = (cash?.shortPaise ?? 0) > 0;
   const canSave = Boolean(current) && !hasUnreadable && problems.length === 0 && !cashShort && !saving && !previewing;
@@ -267,6 +268,7 @@ function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: 
             {lines.map((line, index) => {
               const priced = shown?.lines[index]?.productId === line.product.id ? shown.lines[index] : undefined;
               const problem = lineProblem(index);
+              const discountError = discountProblem(index);
               return (
                 <li key={line.key} data-guide="bill-line" className="flex flex-col gap-2 py-3 first:pt-0">
                   <div className="flex items-start justify-between gap-3">
@@ -279,7 +281,12 @@ function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: 
                     <div className="shrink-0 text-right">
                       {priced ? (
                         <>
-                          <Money paise={priced.amountPaise} withPaise className="font-semibold text-foreground" />
+                          <Money paise={priced.amountPaise - priced.itemDiscountPaise} withPaise className="font-semibold text-foreground" />
+                          {priced.itemDiscountPaise > 0 ? (
+                            <p data-testid="line-discount" className="text-xs text-muted-foreground">
+                              <Money paise={priced.amountPaise} withPaise /> − <Money paise={priced.itemDiscountPaise} withPaise /> {t("billing.lineDiscountWord")}
+                            </p>
+                          ) : null}
                           <p className="text-xs text-muted-foreground">
                             <Money paise={priced.ratePaise} withPaise /> / {priced.unitName.toLowerCase()}
                           </p>
@@ -313,6 +320,26 @@ function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: 
                         </option>
                       ))}
                     </select>
+                    <div className="flex items-center rounded-lg border border-input">
+                      <select
+                        aria-label={t("billing.discountTypeFor", { name: line.product.name })}
+                        value={line.discountKind}
+                        onChange={(event) => setLine(line.key, { discountKind: event.target.value === "percent" ? "percent" : "flat" })}
+                        className="h-11 rounded-l-lg border-0 bg-transparent pl-3 pr-1 text-sm"
+                      >
+                        <option value="flat">₹</option>
+                        <option value="percent">%</option>
+                      </select>
+                      <Input
+                        value={line.discountValue}
+                        onChange={(event) => setLine(line.key, { discountValue: event.target.value })}
+                        inputMode="decimal"
+                        placeholder={t("billing.itemDiscountPlaceholder")}
+                        aria-label={t("billing.discountFor", { name: line.product.name })}
+                        aria-invalid={discountError ? true : undefined}
+                        className="h-11 w-24 border-0 text-center tabular-nums"
+                      />
+                    </div>
                     {priced ? <Badge variant="info">{priced.rateReason}</Badge> : null}
                     {priced && priced.unit !== priced.baseUnit ? <span className="text-xs text-muted-foreground">= {priced.baseQuantity} {priced.baseUnit}</span> : null}
                     <Button type="button" variant="ghost" size="touch" className="ml-auto" aria-label={t("billing.remove", { name: line.product.name })} onClick={() => setLines((all) => all.filter((candidate) => candidate.key !== line.key))}>
@@ -322,6 +349,11 @@ function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: 
                   {problem ? (
                     <p role="alert" className="text-sm text-danger">
                       {problem}
+                    </p>
+                  ) : null}
+                  {discountError ? (
+                    <p role="alert" className="text-sm text-danger">
+                      {discountError}
                     </p>
                   ) : null}
                 </li>
@@ -385,7 +417,10 @@ function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: 
           {shown ? (
             <>
               <Row label={t("common.subtotal")} paise={shown.totals.subtotalPaise} />
+              {/* One kind of discount is just "Total discount"; both kinds are listed, then added up. */}
+              {shown.totals.itemDiscountPaise > 0 && shown.totals.discountPaise > 0 ? <Row label={t("billing.itemDiscounts")} paise={-shown.totals.itemDiscountPaise} /> : null}
               {shown.totals.discountPaise > 0 ? <Row help="discount" label={t("common.discount")} paise={-shown.totals.discountPaise} /> : null}
+              {shown.totals.itemDiscountPaise + shown.totals.discountPaise > 0 && (shown.totals.itemDiscountPaise > 0) ? <Row label={t("billing.totalDiscount")} paise={-(shown.totals.itemDiscountPaise + shown.totals.discountPaise)} /> : null}
               <Row label={t("common.taxableValue")} paise={shown.totals.taxablePaise} />
               {shown.taxMode === "intra" ? (
                 <>

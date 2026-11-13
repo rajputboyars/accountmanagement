@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   char,
   check,
@@ -55,6 +56,7 @@ export const invoices = pgTable(
     subtotalPaise: paise("subtotal_paise").notNull(),
     discountBp: integer("discount_bp").notNull().default(0),
     discountPaise: paise("discount_paise").notNull().default(0),
+    itemDiscountPaise: paise("item_discount_paise").notNull().default(0), // Σ the lines' own discounts; the bill discount above comes after
     taxablePaise: paise("taxable_paise").notNull(),
     cgstPaise: paise("cgst_paise").notNull(),
     sgstPaise: paise("sgst_paise").notNull(),
@@ -111,7 +113,11 @@ export const invoiceLines = pgTable(
     ratePaise: paise("rate_paise").notNull(),
     rateReason: text("rate_reason").notNull(), // 'Slab 50+ −1%'
     linePaise: paise("line_paise").notNull(),
-    lineDiscountPaise: paise("line_discount_paise").notNull().default(0),
+    lineDiscountPaise: paise("line_discount_paise").notNull().default(0), // this line's share of the bill discount
+    // The line's own discount as it was entered and worked out: a snapshot, never recomputed from today's prices.
+    discountKind: text("discount_kind").notNull().default("none"), // none | flat | percent
+    discountValue: bigint("discount_value", { mode: "number" }).notNull().default(0), // flat: paise · percent: basis points
+    itemDiscountPaise: paise("item_discount_paise").notNull().default(0),
     taxablePaise: paise("taxable_paise").notNull(),
     gstRateBp: integer("gst_rate_bp").notNull(),
     cgstPaise: paise("cgst_paise").notNull(),
@@ -125,6 +131,8 @@ export const invoiceLines = pgTable(
   (t) => [
     unique("invoice_lines_invoice_line_no_key").on(t.invoiceId, t.lineNo),
     index("invoice_lines_product_idx").on(t.productId),
+    check("invoice_lines_discount_kind_check", sql`${t.discountKind} in ('none', 'flat', 'percent')`),
+    check("invoice_lines_item_discount_check", sql`${t.itemDiscountPaise} between 0 and ${t.linePaise}`),
     check("invoice_lines_qty_check", sql`${t.qty} > 0`),
     check("invoice_lines_base_qty_check", sql`${t.baseQty} > 0`),
   ],

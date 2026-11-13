@@ -2834,4 +2834,12 @@ export const hi: Messages = {
   "label.field.asAt": "हिसाब की",
   "label.field.baseUnit": "बेस यूनिट",
   "label.field.packUnit": "पैक यूनिट",
+  "billing.lineDiscountWord": "छूट",
+  "billing.discountTypeFor": "{name} पर छूट का प्रकार (₹ या %)",
+  "billing.itemDiscountPlaceholder": "0",
+  "billing.discountFor": "{name} पर छूट",
+  "billing.itemDiscounts": "सामान पर छूट",
+  "billing.totalDiscount": "कुल छूट",
+  "server.itemDiscountTooHigh": "छूट इस सामान की राशि से ज़्यादा नहीं हो सकती।",
+  "label.field.discount": "छूट",
 };

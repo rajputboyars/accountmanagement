@@ -2851,6 +2851,14 @@ export const en = {
   "label.field.asAt": "as-at",
   "label.field.baseUnit": "base unit",
   "label.field.packUnit": "pack unit",
+  "billing.lineDiscountWord": "discount",
+  "billing.discountTypeFor": "Discount type for {name}",
+  "billing.itemDiscountPlaceholder": "0",
+  "billing.discountFor": "Discount on {name}",
+  "billing.itemDiscounts": "Discount on items",
+  "billing.totalDiscount": "Total discount",
+  "server.itemDiscountTooHigh": "The discount cannot be more than the amount of this item.",
+  "label.field.discount": "discount",
 } as const;
 
 export type MessageKey = keyof typeof en;

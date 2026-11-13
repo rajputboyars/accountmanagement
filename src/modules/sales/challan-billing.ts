@@ -63,7 +63,7 @@ export async function deriveChallanBill(tx: Transaction, shopId: string, bill: P
   if (new Set(rows.map((row) => row.orderId)).size > 1) throw new ValidationError("A bill can cover the goods of one order.");
   const customerId = rows[0]!.customerId;
   if ((bill.customerId ?? null) !== customerId) throw new ConflictError("CUSTOMER_MISMATCH", "These goods were delivered to another customer.");
-  return { bill: { ...bill, lines: rows.map((row) => ({ productId: row.productId, unit: row.unit, quantity: row.qty })) } as ParsedBill, rows };
+  return { bill: { ...bill, lines: rows.map((row, index) => ({ productId: row.productId, unit: row.unit, quantity: row.qty, discount: wanted[index]!.discount })) } as ParsedBill, rows };
 }
 
 /** Product -> godown for a bill made from delivered goods, from the challans it was billed against. */

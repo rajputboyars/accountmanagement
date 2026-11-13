@@ -2834,4 +2834,12 @@ export const hinglish: Messages = {
   "label.field.asAt": "hisaab ki",
   "label.field.baseUnit": "base unit",
   "label.field.packUnit": "pack unit",
+  "billing.lineDiscountWord": "chhoot",
+  "billing.discountTypeFor": "{name} par chhoot ka type (₹ ya %)",
+  "billing.itemDiscountPlaceholder": "0",
+  "billing.discountFor": "{name} par chhoot",
+  "billing.itemDiscounts": "Maal par chhoot",
+  "billing.totalDiscount": "Kul chhoot",
+  "server.itemDiscountTooHigh": "Chhoot is maal ki rakam se zyada nahi ho sakti.",
+  "label.field.discount": "chhoot",
 };

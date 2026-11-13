@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ItemDiscount } from "@/shared/invoice";
 import { parseRupeesToPaise } from "@/shared/money";
 import { parsePercentToBasisPoints } from "@/shared/pricing-engine";
 import { parseQuantity, QuantityError, type Milli } from "@/shared/quantity";
@@ -20,7 +21,37 @@ const rupees = (label: string) =>
       return paise;
     });
 
-export const billLineSchema = z.object({
+/**
+ * A line's own discount as typed: a kind (none, flat ₹ or %) and a value. Empty, zero or "none" is no discount.
+ * Flat is paise for the whole line; percent is basis points. Whether a flat amount fits the line is checked when the bill is priced.
+ */
+export const itemDiscountFields = {
+  discountKind: z.enum(["", "none", "flat", "percent"]).optional(),
+  discountValue: z.string().trim().optional(),
+};
+
+export function parseItemDiscount(input: { discountKind?: string; discountValue?: string }, ctx: z.RefinementCtx): ItemDiscount {
+  const kind = input.discountKind === "flat" || input.discountKind === "percent" ? input.discountKind : "none";
+  const text = input.discountValue ?? "";
+  if (kind === "none" || !text) return { kind: "none", value: 0 };
+  if (kind === "flat") {
+    const paise = parseRupeesToPaise(text);
+    if (paise === null) {
+      ctx.addIssue({ code: "custom", path: ["discountValue"], message: "Enter the discount in rupees, for example 500 or 250.50." });
+      return { kind: "none", value: 0 };
+    }
+    return paise === 0 ? { kind: "none", value: 0 } : { kind: "flat", value: paise };
+  }
+  const basisPoints = parsePercentToBasisPoints(text);
+  if (basisPoints === null || basisPoints > 10000) {
+    ctx.addIssue({ code: "custom", path: ["discountValue"], message: "Enter a discount between 0% and 100%, for example 2 or 2.5." });
+    return { kind: "none", value: 0 };
+  }
+  return basisPoints === 0 ? { kind: "none", value: 0 } : { kind: "percent", value: basisPoints };
+}
+
+export const billLineSchema = z
+  .object({
   productId: id("Choose a product."),
   unit: z.string().trim().min(1, "Choose a unit."),
   quantity: z
@@ -36,7 +67,9 @@ export const billLineSchema = z.object({
         return z.NEVER;
       }
     }),
-});
+    ...itemDiscountFields,
+  })
+  .transform(({ discountKind, discountValue, ...line }, ctx) => ({ ...line, discount: parseItemDiscount({ discountKind, discountValue }, ctx) }));
 
 export const billInputSchema = z
   .object({
@@ -50,7 +83,14 @@ export const billInputSchema = z
     /** Where the goods are dispatched from. Only asked (and required) once the shop has more than one godown. */
     godownId: z.string().trim().optional(),
     /** Billing goods already delivered on challans: which delivered lines and how much of each (in the line's own unit). The server builds the bill's lines from these. */
-    challanLines: z.array(z.object({ challanLineId: z.string().regex(/^[0-9a-f-]{36}$/i, "Choose a delivered line."), quantity: z.string().trim().min(1, "Enter a quantity.") })).max(100).optional(),
+    challanLines: z
+      .array(
+        z
+          .object({ challanLineId: z.string().regex(/^[0-9a-f-]{36}$/i, "Choose a delivered line."), quantity: z.string().trim().min(1, "Enter a quantity."), ...itemDiscountFields })
+          .transform(({ discountKind, discountValue, ...line }, ctx) => ({ ...line, discount: parseItemDiscount({ discountKind, discountValue }, ctx) })),
+      )
+      .max(100)
+      .optional(),
     /** Empty means from the customer type. */
     priceList: z
       .enum(["", "retail", "wholesale"])

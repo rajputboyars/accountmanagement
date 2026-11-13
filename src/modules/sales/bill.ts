@@ -8,7 +8,7 @@ import type { Transaction } from "@/server/db";
 import { ConflictError } from "@/server/errors";
 import { formatPaise } from "@/shared/money";
 import { resolveTaxMode, type TaxMode } from "@/shared/gst";
-import { cashChange, computeInvoiceTotals, DISCOUNT_LIMIT_BP, type InvoiceTotals } from "@/shared/invoice";
+import { cashChange, computeInvoiceTotals, DISCOUNT_LIMIT_BP, effectiveDiscountBp, itemDiscountOf, type InvoiceTotals, type ItemDiscount } from "@/shared/invoice";
 import { formatBasisPoints } from "@/shared/pricing-engine";
 import { formatQuantity } from "@/shared/quantity";
 import type { billInputSchema } from "./validation";
@@ -28,7 +28,9 @@ export type BillProblem = { code: string; message: string; field?: string };
 export type ComputedBill = {
   customer: Pick<CustomerSummary, "id" | "name" | "type" | "creditLimitPaise" | "gstin"> | null;
   priceList: "retail" | "wholesale";
-  lines: (BillLinePrice & { baseQtyNeeded: bigint; stockQty: bigint | null })[];
+  lines: (BillLinePrice & { baseQtyNeeded: bigint; stockQty: bigint | null; discount: ItemDiscount; itemDiscountPaise: number })[];
+  /** Item discounts plus the bill discount as one % of the gross, in basis points (rounded up). What the role limit and approvals are compared with. */
+  effectiveDiscountBp: number;
   /** The godown the goods leave from; null while the shop has several and none was chosen. */
   godownId: string | null;
   totals: InvoiceTotals;
@@ -98,15 +100,20 @@ export async function computeBill(
         message: onHand === null ? `${line.product.name} has no stock entered yet.` : `Only ${formatQuantity(onHand > BigInt(0) ? onHand : BigInt(0))} ${line.product.baseUnit} of ${line.product.name} in ${godownName ?? "stock"}.`,
       });
     }
-    return { ...line, baseQtyNeeded: needed, stockQty: fromDelivery ? null : onHand };
+    const discount = input.lines[index]!.discount;
+    const worked = itemDiscountOf(line.quote.lineAmountPaise, discount);
+    if ("problem" in worked) problems.push({ code: "ITEM_DISCOUNT_TOO_HIGH", field: `lines.${index}.discountValue`, message: worked.problem });
+    return { ...line, baseQtyNeeded: needed, stockQty: fromDelivery ? null : onHand, discount, itemDiscountPaise: "paise" in worked ? worked.paise : 0 };
   });
 
+  // The role limit covers the whole discount: the lines' own discounts and the bill discount together, as a % of the gross.
   const limit = Math.max(DISCOUNT_LIMIT_BP[session.role] ?? 0, options.discountLimitBp ?? 0);
-  if (input.discountPercent > limit) {
+  const effectiveBp = effectiveDiscountBp(lines.map((line) => ({ amountPaise: line.quote.lineAmountPaise, discount: line.itemDiscountPaise > 0 || line.discount.kind === "none" ? line.discount : { kind: "none", value: 0 } })), input.discountPercent);
+  if (effectiveBp > limit) {
     problems.push({
       code: "DISCOUNT_APPROVAL_REQUIRED",
       field: "discountPercent",
-      message: `Discount ${formatBasisPoints(input.discountPercent)} is above your ${formatBasisPoints(limit)} limit. Ask the owner or submit an approval request.`,
+      message: `Discount ${formatBasisPoints(effectiveBp)} is above your ${formatBasisPoints(limit)} limit. Ask the owner or submit an approval request.`,
     });
   }
 
@@ -117,7 +124,7 @@ export async function computeBill(
   const taxMode: TaxMode = "problem" in tax ? (taxSettings.registration === "regular" ? "intra" : "none") : tax.mode;
   const placeOfSupply = "problem" in tax ? taxSettings.stateCode : tax.placeOfSupply;
   const totals = computeInvoiceTotals(
-    lines.map((line) => ({ amountPaise: line.quote.lineAmountPaise, gstRateBp: line.product.gstRateBp })),
+    lines.map((line) => ({ amountPaise: line.quote.lineAmountPaise, gstRateBp: line.product.gstRateBp, itemDiscountPaise: line.itemDiscountPaise })),
     input.discountPercent,
     taxMode,
   );
@@ -156,6 +163,7 @@ export async function computeBill(
     lines,
     godownId,
     totals,
+    effectiveDiscountBp: effectiveBp,
     paidNowPaise,
     creditPaise,
     balanceBeforePaise,
@@ -187,6 +195,9 @@ export function billView(bill: ComputedBill) {
       ratePaise: line.quote.saleUnitRatePaise,
       rateReason: line.rateReason,
       amountPaise: line.quote.lineAmountPaise,
+      discountKind: line.discount.kind,
+      discountValue: line.discount.value,
+      itemDiscountPaise: line.itemDiscountPaise,
       gstRateBp: bill.totals.lines[index]!.gstRateBp,
       stockQty: line.stockQty === null ? null : formatQuantity(line.stockQty),
       taxablePaise: bill.totals.lines[index]!.taxablePaise,

@@ -24,6 +24,10 @@ export function ChallanBillForm({ customerId, lines, bankAccounts = [] }: { cust
   const t = useT();
   const router = useRouter();
   const [quantities, setQuantities] = useState<Record<string, string>>(() => Object.fromEntries(lines.map((line) => [line.challanLineId, line.remainingQty])));
+  // Each delivered line can carry its own discount: ₹ off the whole line, or % off it. Empty is no discount.
+  const [discounts, setDiscounts] = useState<Record<string, { kind: "flat" | "percent"; value: string }>>({});
+  const discountOf = (id: string) => discounts[id] ?? { kind: "flat" as const, value: "" };
+  const discountFields = (id: string) => (discountOf(id).value.trim() ? { discountKind: discountOf(id).kind, discountValue: discountOf(id).value.trim() } : {});
   const [payments, setPayments] = useState({ cash: "", upi: "", card: "", bank: "" });
   const [bankPick, setBankPick] = useState("");
   const bankAccountId = payments.bank.trim() ? chosenBank(bankAccounts, bankPick) : "";
@@ -36,11 +40,11 @@ export function ChallanBillForm({ customerId, lines, bankAccounts = [] }: { cust
     customerId,
     priceList: "",
     discountPercent: "",
-    lines: picked.map((line) => ({ productId: line.productId, unit: line.unit, quantity: quantities[line.challanLineId]! })),
+    lines: picked.map((line) => ({ productId: line.productId, unit: line.unit, quantity: quantities[line.challanLineId]!, ...discountFields(line.challanLineId) })),
     payments,
     cashReceived: "",
     ...(bankAccountId ? { bankAccountId } : {}),
-    challanLines: picked.map((line) => ({ challanLineId: line.challanLineId, quantity: quantities[line.challanLineId]!.trim() })),
+    challanLines: picked.map((line) => ({ challanLineId: line.challanLineId, quantity: quantities[line.challanLineId]!.trim(), ...discountFields(line.challanLineId) })),
   };
   const key = JSON.stringify(payload);
   useEffect(() => {
@@ -75,7 +79,9 @@ export function ChallanBillForm({ customerId, lines, bankAccounts = [] }: { cust
     <div className="flex flex-col gap-4">
       <ul className="flex flex-col gap-3">
         {lines.map((line, index) => {
-          const shown = bill?.lines[picked.findIndex((candidate) => candidate.challanLineId === line.challanLineId)];
+          const pickedIndex = picked.findIndex((candidate) => candidate.challanLineId === line.challanLineId);
+          const shown = bill?.lines[pickedIndex];
+          const discountError = problems.find((problem) => problem.field === `lines.${pickedIndex}.discountValue`)?.message;
           return (
             <li key={line.challanLineId} className="grid gap-3 rounded-xl border border-border p-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
               <div className="flex min-w-0 flex-col gap-0.5 text-sm">
@@ -92,10 +98,38 @@ export function ChallanBillForm({ customerId, lines, bankAccounts = [] }: { cust
                     </>
                   ) : null}
                 </span>
+                {shown && shown.itemDiscountPaise > 0 ? (
+                  <span data-testid="line-discount" className="text-xs text-muted-foreground">
+                    <Money paise={shown.amountPaise} withPaise /> − <Money paise={shown.itemDiscountPaise} withPaise /> {t("billing.lineDiscountWord")} = <Money paise={shown.amountPaise - shown.itemDiscountPaise} withPaise />
+                  </span>
+                ) : null}
               </div>
               <Field label={`${t("orders.bill.now")} (${line.unit})`} error={problems.find((problem) => problem.field === `lines.${index}.quantity`)?.message}>
                 <Input value={quantities[line.challanLineId] ?? ""} onChange={(event) => setQuantities((all) => ({ ...all, [line.challanLineId]: event.target.value }))} inputMode="decimal" className="h-11 tabular-nums" />
               </Field>
+              <div className="flex flex-col gap-1 sm:col-start-2">
+                <div className="flex items-center rounded-lg border border-input">
+                  <select
+                    aria-label={t("billing.discountTypeFor", { name: line.productName })}
+                    value={discountOf(line.challanLineId).kind}
+                    onChange={(event) => setDiscounts((all) => ({ ...all, [line.challanLineId]: { ...discountOf(line.challanLineId), kind: event.target.value === "percent" ? "percent" : "flat" } }))}
+                    className="h-11 rounded-l-lg border-0 bg-transparent pl-3 pr-1 text-sm"
+                  >
+                    <option value="flat">₹</option>
+                    <option value="percent">%</option>
+                  </select>
+                  <Input
+                    value={discountOf(line.challanLineId).value}
+                    onChange={(event) => setDiscounts((all) => ({ ...all, [line.challanLineId]: { ...discountOf(line.challanLineId), value: event.target.value } }))}
+                    inputMode="decimal"
+                    placeholder={t("billing.itemDiscountPlaceholder")}
+                    aria-label={t("billing.discountFor", { name: line.productName })}
+                    aria-invalid={discountError ? true : undefined}
+                    className="h-11 border-0 tabular-nums"
+                  />
+                </div>
+                {discountError ? <p role="alert" className="text-sm text-danger">{discountError}</p> : null}
+              </div>
             </li>
           );
         })}
@@ -113,6 +147,14 @@ export function ChallanBillForm({ customerId, lines, bankAccounts = [] }: { cust
       </div>
       {bill ? (
         <div className="flex flex-col gap-1 rounded-xl bg-muted/40 p-3 text-sm">
+          {bill.totals.itemDiscountPaise + bill.totals.discountPaise > 0 ? (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">{t("billing.totalDiscount")}</span>
+              <span>
+                − <Money paise={bill.totals.itemDiscountPaise + bill.totals.discountPaise} withPaise />
+              </span>
+            </div>
+          ) : null}
           <div className="flex justify-between">
             <span className="text-muted-foreground">{t("common.total")}</span>
             <span className="text-lg font-semibold">

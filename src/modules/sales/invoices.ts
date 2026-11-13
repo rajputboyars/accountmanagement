@@ -47,7 +47,7 @@ async function computeWithApprovals(tx: Transaction, session: SessionContext, bi
   let creditApprovalId: string | null = null;
   if (computed.problems.some((problem) => problem.code === "DISCOUNT_APPROVAL_REQUIRED")) {
     const refs = registeredId ? [registeredId, ANY_TARGET] : [ANY_TARGET];
-    const covers = (payload: { limitBp?: number | null }) => ((payload.limitBp ?? 0) >= bill.discountPercent ? null : "The approved discount is lower than the discount on this bill.");
+    const covers = (payload: { limitBp?: number | null }) => ((payload.limitBp ?? 0) >= computed.effectiveDiscountBp ? null : "The approved discount is lower than the discount on this bill.");
     const used = save.discountApprovalId ? await consumeApproval(tx, session, save.discountApprovalId, "discount_over_limit", refs, covers) : await consumeMatchingApproval(tx, session, "discount_over_limit", refs, covers);
     if (used) {
       discountApprovalId = used.id;
@@ -153,6 +153,7 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
         createdBy: session.userId,
         subtotalPaise: totals.subtotalPaise,
         discountBp: totals.discountBp,
+        itemDiscountPaise: totals.itemDiscountPaise,
         discountPaise: totals.discountPaise,
         taxablePaise: totals.taxablePaise,
         cgstPaise: totals.cgstPaise,
@@ -183,6 +184,9 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
           rateReason: line.rateReason,
           linePaise: line.quote.lineAmountPaise,
           lineDiscountPaise: totals.lines[index]!.discountPaise,
+          discountKind: computed.lines[index]!.discount.kind,
+          discountValue: computed.lines[index]!.discount.value,
+          itemDiscountPaise: totals.lines[index]!.itemDiscountPaise,
           taxablePaise: totals.lines[index]!.taxablePaise,
           gstRateBp: totals.lines[index]!.gstRateBp,
           cgstPaise: totals.lines[index]!.cgstPaise,
@@ -237,6 +241,7 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
           priceList: computed.priceList,
           totalPaise: totals.totalPaise,
           discountBp: totals.discountBp,
+          itemDiscountPaise: totals.itemDiscountPaise,
           paidNowPaise: computed.paidNowPaise,
           methods: Object.fromEntries(Object.entries(bill.payments).filter(([, amount]) => amount > 0)),
           creditPaise: computed.creditPaise,
@@ -518,6 +523,7 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
           createdBy: session.userId,
           subtotalPaise: totals.subtotalPaise,
           discountBp: totals.discountBp,
+          itemDiscountPaise: totals.itemDiscountPaise,
           discountPaise: totals.discountPaise,
           taxablePaise: totals.taxablePaise,
           cgstPaise: totals.cgstPaise,
@@ -548,6 +554,9 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
             rateReason: line.rateReason,
             linePaise: line.quote.lineAmountPaise,
             lineDiscountPaise: totals.lines[index]!.discountPaise,
+            discountKind: computed.lines[index]!.discount.kind,
+            discountValue: computed.lines[index]!.discount.value,
+            itemDiscountPaise: totals.lines[index]!.itemDiscountPaise,
             taxablePaise: totals.lines[index]!.taxablePaise,
             gstRateBp: totals.lines[index]!.gstRateBp,
             cgstPaise: totals.lines[index]!.cgstPaise,
