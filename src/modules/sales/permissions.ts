@@ -8,3 +8,4 @@ export const BILLING_CREATE = "billing.create" as const;
 export const BILLING_VIEW = "billing.view" as const;
 export const INVOICE_CANCEL = "invoice.cancel" as const;
 export const BILLING_RETURN = "billing.return" as const;
+export const BILLING_RETURN_LIMITED = "billing.return.limited" as const;

@@ -98,7 +98,7 @@ export function ApprovalCard({ approval }: { approval: ApprovalView }) {
         </div>
         {approval.amountPaise !== null ? (
           <div>
-            <span className="text-xs text-muted-foreground">{t(approval.action === "credit_over_limit" ? "approvals.highestDues" : "approvals.valueAtCost")} </span>
+            <span className="text-xs text-muted-foreground">{t(approval.action === "credit_over_limit" ? "approvals.highestDues" : approval.action === "return_over_limit" || approval.action === "expense_over_limit" ? "approvals.amountUpTo" : "approvals.valueAtCost")} </span>
             <span className="font-semibold tabular-nums text-foreground">
               {formatPaise(approval.amountPaise, { withPaise: false })}
             </span>
@@ -236,8 +236,9 @@ export function NewApprovalForm({ options }: { options: RequestOptions }) {
           </select>
         </label>
         <label className={fieldClass}>
-          {action === "stock_adjustment" ? t("common.product") : action === "edit_invoice" ? t("approvals.billToday") : t("common.customer.label")}
-          <select key={action} name="targetRef" required className={selectClass} defaultValue="">
+          {action === "stock_adjustment" ? t("common.product") : action === "edit_invoice" ? t("approvals.billToday") : action === "return_over_limit" ? t("returns.billNumber") : action === "expense_over_limit" ? t("approvals.anyExpense") : t("common.customer.label")}
+          {action === "return_over_limit" ? <Input key={action} name="targetRef" required placeholder={t("returns.billNumberPlaceholder")} className="h-11" autoComplete="off" /> : action === "expense_over_limit" ? <input key={action} type="hidden" name="targetRef" value="any" /> : null}
+          <select key={action} name={action === "return_over_limit" || action === "expense_over_limit" ? "unused" : "targetRef"} required={action !== "return_over_limit" && action !== "expense_over_limit"} hidden={action === "return_over_limit" || action === "expense_over_limit"} className={selectClass} defaultValue="">
             <option value="" disabled>
               {t("common.choose")}
             </option>
@@ -265,6 +266,12 @@ export function NewApprovalForm({ options }: { options: RequestOptions }) {
           <label className={fieldClass}>
             {t("approvals.discountNeeded")}
             <Input name="discountPercent" inputMode="decimal" required placeholder="10" className="h-11" />
+          </label>
+        ) : null}
+        {action === "return_over_limit" || action === "expense_over_limit" ? (
+          <label className={fieldClass}>
+            {t("approvals.amountNeeded")}
+            <Input name="amount" inputMode="decimal" required placeholder="2,000" className="h-11" />
           </label>
         ) : null}
         {action === "credit_over_limit" ? (

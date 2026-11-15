@@ -5,3 +5,4 @@ export { getReminderProvider, metaCloudProvider, ProviderError, verifyWebhookSig
 export { applyWhatsAppStatuses, listWhatsAppMessages, MAX_ATTEMPTS, processWhatsAppOutbox, queueDuesReminder, queueOverdueReminders, retryDelayMinutes, sendQueuedWhatsApp } from "./whatsapp";
 export { CSV_ROWS, getDashboard, getReport, moneySummary, pendingCollections, PROFIT_VIEW, profitFrom, REPORT_KINDS, REPORTS_VIEW, reportToCsv, SCREEN_ROWS, type Dashboard, type ProfitView, type RangeInput, type Report, type ReportColumn, type ReportKind } from "./business";
 export { getOnboarding, type Onboarding, type OnboardingStep, type OnboardingStepKey } from "./onboarding";
+export { needsAttention, rankAttention, type AttentionItem, type AttentionKind } from "./attention";

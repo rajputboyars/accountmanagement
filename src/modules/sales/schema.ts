@@ -159,6 +159,8 @@ export const creditNotes = pgTable(
     roundOffPaise: integer("round_off_paise").notNull(),
     totalPaise: paise("total_paise").notNull(),
     createdBy: uuid("created_by").notNull().references(() => users.id),
+    /** The owner approval that allowed a return above the cashier's limit; empty when none was needed. */
+    approvalId: uuid("approval_id").references(() => approvals.id),
     createdAt: createdAt(),
   },
   (t) => [

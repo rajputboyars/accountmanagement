@@ -23,6 +23,8 @@ export {
   type PostResult,
 } from "./service";
 export {
+  postCashDifference,
+  postCashReconciled,
   postBankEntry,
   postBankOpening,
   postBankSettlement,
@@ -68,3 +70,4 @@ export {
 } from "./reports";
 export { BANK_MANAGE, bankAccountKeyOf, bookBalanceOn, createBankAccount, getBankAccount, listBankAccounts, listBankChoices, resolveBankRoute, saveCsvMapping, setBankAccountActive, type BankAccountView } from "./banks";
 export { listOpeningGaps, valueOpeningStock, type OpeningGap, type ValuedStock } from "./gaps";
+export { bookCashOn, cashBasisFor, openingCashInBooks, type CashBasis } from "./cash";

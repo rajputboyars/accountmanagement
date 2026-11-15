@@ -4,13 +4,17 @@
  * note or other credit is applied to the oldest open debit first. A credit left over after every
  * debit is paid is an advance. Balances still come from SUM(debit − credit); this only explains them.
  *
+ * A payment taken on a bill (it names that bill's entry in `appliesTo`) reduces that bill first. Only what is left of it
+ * after that bill is paid is NOT used on another bill: it is kept visible as unapplied credit (part of the advance). Every
+ * other credit still goes to the oldest open debit first.
+ *
  * Spec example: bills ₹48,000 (10 Sep) + ₹34,000 (9 Oct), payments ₹20,000 → the 10 Sep bill has
  * ₹28,000 left and is 45 days old on 25 Oct (overdue); the 9 Oct bill is unpaid, 16 days old.
  */
 
 import type { Paise } from "./money";
 
-export type AgeingEntry = { id: string; date: string; debitPaise: Paise; creditPaise: Paise; label: string };
+export type AgeingEntry = { id: string; date: string; debitPaise: Paise; creditPaise: Paise; label: string; /** The id of the debit entry (a bill) this credit was taken against, when it was paid on that bill. */ appliesTo?: string | null };
 export type OpenItem = { id: string; date: string; label: string; amountPaise: Paise; remainingPaise: Paise; ageDays: number; dueDate: string; daysPastDue: number };
 export type AgeingBuckets = { notDuePaise: Paise; days1to30Paise: Paise; days31to60Paise: Paise; days61to90Paise: Paise; over90Paise: Paise };
 
@@ -22,10 +26,24 @@ const addDays = (date: string, days: number) => new Date(Date.parse(`${date}T00:
  * @param termsDays days until a debit falls due (customers: the 30-day overdue threshold, spec
  *        assumption; suppliers: their payment terms).
  */
-export function ageOpenItems(entries: readonly AgeingEntry[], asOf: string, termsDays: number): { open: OpenItem[]; advancePaise: Paise; buckets: AgeingBuckets; overduePaise: Paise; oldestOverdueDays: number | null } {
+export function ageOpenItems(entries: readonly AgeingEntry[], asOf: string, termsDays: number): { open: OpenItem[]; advancePaise: Paise; unappliedPaise: Paise; buckets: AgeingBuckets; overduePaise: Paise; oldestOverdueDays: number | null } {
   const sorted = [...entries].sort((a, b) => (a.date === b.date ? a.id.localeCompare(b.id) : a.date < b.date ? -1 : 1));
   const debits = sorted.filter((entry) => entry.debitPaise > 0).map((entry) => ({ ...entry, remaining: entry.debitPaise }));
-  let credit = sorted.reduce((sum, entry) => sum + entry.creditPaise, 0);
+  const byId = new Map(debits.map((debit) => [debit.id, debit]));
+  // Payments taken on a bill settle that bill first; what they hold beyond it stays visible as unapplied credit.
+  let unapplied = 0;
+  let credit = 0;
+  for (const entry of sorted) {
+    if (entry.creditPaise <= 0) continue;
+    const target = entry.appliesTo ? byId.get(entry.appliesTo) : undefined;
+    if (!target) {
+      credit += entry.creditPaise;
+      continue;
+    }
+    const used = Math.min(entry.creditPaise, target.remaining);
+    target.remaining -= used;
+    unapplied += entry.creditPaise - used;
+  }
   for (const debit of debits) {
     const used = Math.min(credit, debit.remaining);
     debit.remaining -= used;
@@ -47,7 +65,8 @@ export function ageOpenItems(entries: readonly AgeingEntry[], asOf: string, term
   const overdue = open.filter((item) => item.daysPastDue > 0);
   return {
     open,
-    advancePaise: credit,
+    advancePaise: credit + unapplied,
+    unappliedPaise: unapplied,
     buckets,
     overduePaise: overdue.reduce((sum, item) => sum + item.remainingPaise, 0),
     oldestOverdueDays: overdue.length ? Math.max(...overdue.map((item) => item.ageDays)) : null,

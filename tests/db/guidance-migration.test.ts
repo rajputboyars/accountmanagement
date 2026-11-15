@@ -71,7 +71,7 @@ describe("migration deployment rehearsal", () => {
     await migrate(drizzle(upgradeOwnerPool), { migrationsFolder: "db/migrations" });
 
     const history = await upgradeOwnerPool.query<{ count: string }>("SELECT count(*) FROM drizzle.__drizzle_migrations");
-    expect(history.rows[0]?.count).toBe("33");
+    expect(history.rows[0]?.count).toBe("34");
     const oldRecords = await upgradeOwnerPool.query<{
       shop_id: string;
       user_id: string;
@@ -156,7 +156,7 @@ describe("migration deployment rehearsal", () => {
       expect(roles.rows[0]?.exists).toBe(false);
       await migrate(drizzle(pool), { migrationsFolder: "db/migrations" });
       const applied = await pool.query<{ count: string }>("SELECT count(*) FROM drizzle.__drizzle_migrations");
-      expect(applied.rows[0]?.count).toBe("33");
+      expect(applied.rows[0]?.count).toBe("34");
       const guidance = await pool.query<{ exists: boolean }>(
         "SELECT to_regclass('public.user_guidance') IS NOT NULL AS exists",
       );

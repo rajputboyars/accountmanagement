@@ -43,6 +43,7 @@ export const CHART = [
   { key: "sales", code: "4100", name: "Sales", type: "income", category: "sales", cashFlow: "operating" },
   { key: "sales_returns", code: "4110", name: "Sales returns", type: "income", category: "sales", cashFlow: "operating" },
   { key: "stock_gain", code: "4300", name: "Stock gain", type: "income", category: "stock", cashFlow: "operating" },
+  { key: "cash_over", code: "4500", name: "Cash over (counted more than expected)", type: "income", category: "other_income", cashFlow: "operating" },
   { key: "bank_interest", code: "4400", name: "Bank interest received", type: "income", category: "other_income", cashFlow: "operating" },
   { key: "round_off", code: "4900", name: "Round off", type: "income", category: "other_income", cashFlow: "operating" },
   { key: "cogs", code: "5100", name: "Cost of goods sold", type: "expense", category: "cost_of_goods", cashFlow: "operating" },
@@ -54,6 +55,7 @@ export const CHART = [
   { key: "expense_electricity", code: "6400", name: "Electricity", type: "expense", category: "expenses", cashFlow: "operating" },
   { key: "expense_tea", code: "6500", name: "Tea and snacks", type: "expense", category: "expenses", cashFlow: "operating" },
   { key: "expense_other", code: "6900", name: "Other expenses", type: "expense", category: "expenses", cashFlow: "operating" },
+  { key: "cash_shortage", code: "6800", name: "Cash shortage (counted less than expected)", type: "expense", category: "expenses", cashFlow: "operating" },
   { key: "bank_charges", code: "6700", name: "Bank charges and card/UPI fees", type: "expense", category: "expenses", cashFlow: "operating" },
 ] as const satisfies readonly AccountDef[];
 
@@ -89,6 +91,8 @@ export const EVENTS = {
   goodsReceipt: "goods_receipt",
   expense: "expense",
   cashMovement: "cash_movement",
+  cashDifference: "cash_difference",
+  cashReconcile: "cash_reconcile",
   stockAdjustment: "stock_adjustment",
   opening: "opening",
   openingReclass: "opening_reclass",
@@ -267,11 +271,11 @@ export function expenseRecorded(input: { category: string; method: string; amoun
   return { event: EVENTS.expense, lines: [...dr(expense, input.amountPaise), ...cr(moneyAccount(input.method, input.bankAccount), input.amountPaise)], gaps: [] };
 }
 
-export function cashMoved(input: { kind: "withdrawal" | "bank_deposit" | "float_added"; amountPaise: number; bankAccount?: string | null }): JournalDraft {
+export function cashMoved(input: { kind: "withdrawal" | "bank_deposit" | "bank_withdrawal" | "float_added"; amountPaise: number; bankAccount?: string | null }): JournalDraft {
   requirePaise("Amount", input.amountPaise);
   const { kind, amountPaise } = input;
   const lines =
-    kind === "withdrawal" ? [...dr("owner_drawings", amountPaise), ...cr("cash", amountPaise)] : kind === "bank_deposit" ? [...dr(moneyAccount("bank", input.bankAccount), amountPaise), ...cr("cash", amountPaise)] : [...dr("cash", amountPaise), ...cr("owner_funds_in", amountPaise)];
+    kind === "withdrawal" ? [...dr("owner_drawings", amountPaise), ...cr("cash", amountPaise)] : kind === "bank_deposit" ? [...dr(moneyAccount("bank", input.bankAccount), amountPaise), ...cr("cash", amountPaise)] : kind === "bank_withdrawal" ? [...dr("cash", amountPaise), ...cr(moneyAccount("bank", input.bankAccount), amountPaise)] : [...dr("cash", amountPaise), ...cr("owner_funds_in", amountPaise)];
   return { event: EVENTS.cashMovement, lines, gaps: [] };
 }
 
@@ -314,7 +318,7 @@ export function bankSettlement(input: { bankAccount: AnyAccountKey; bankNetPaise
   return { event: EVENTS.bankSettlement, lines, gaps: [] };
 }
 
-export const BANK_ENTRY_KINDS = ["bank_charge", "bank_interest", "owner_in", "owner_out"] as const;
+export const BANK_ENTRY_KINDS = ["bank_charge", "bank_interest", "owner_in", "owner_out", "cash_deposited", "cash_withdrawn"] as const;
 export type BankEntryKind = (typeof BANK_ENTRY_KINDS)[number];
 
 /** A bank statement line with no other record: a charge, interest, or the owner moving money in or out. Posted only after the owner confirms. */
@@ -328,7 +332,11 @@ export function bankEntry(input: { kind: BankEntryKind; bankAccount: AnyAccountK
         ? [...dr(bankAccount, amountPaise), ...cr("bank_interest", amountPaise)]
         : kind === "owner_in"
           ? [...dr(bankAccount, amountPaise), ...cr("owner_funds_in", amountPaise)]
-          : [...dr("owner_drawings", amountPaise), ...cr(bankAccount, amountPaise)];
+          : kind === "cash_deposited"
+            ? [...dr(bankAccount, amountPaise), ...cr("cash", amountPaise)] // cash taken to the bank: money moves between the drawer and the bank, profit is untouched
+            : kind === "cash_withdrawn"
+              ? [...dr("cash", amountPaise), ...cr(bankAccount, amountPaise)]
+              : [...dr("owner_drawings", amountPaise), ...cr(bankAccount, amountPaise)];
   return { event: EVENTS.bankEntry, lines, gaps: [] };
 }
 
@@ -337,6 +345,26 @@ export function bankOpening(input: { bankAccount: AnyAccountKey; differencePaise
   const { bankAccount, differencePaise } = input;
   if (!Number.isSafeInteger(differencePaise) || differencePaise === 0) throw new AccountingRuleError("There is no difference to add.");
   return { event: EVENTS.bankOpening, lines: differencePaise > 0 ? [...dr(bankAccount, differencePaise), ...cr("opening_clearing", differencePaise)] : [...dr("opening_clearing", -differencePaise), ...cr(bankAccount, -differencePaise)], gaps: [] };
+}
+
+/**
+ * The drawer was counted at the close of a day: book cash is moved to the counted amount. Short: the loss is an expense;
+ * extra: the gain is income. Both leave the books' cash equal to what was counted.
+ */
+export function cashDifference(input: { differencePaise: number }): JournalDraft {
+  const { differencePaise } = input;
+  if (!Number.isSafeInteger(differencePaise) || differencePaise === 0) throw new AccountingRuleError("There is no cash difference to post.");
+  return { event: EVENTS.cashDifference, lines: differencePaise < 0 ? [...dr("cash_shortage", -differencePaise), ...cr("cash", -differencePaise)] : [...dr("cash", differencePaise), ...cr("cash_over", differencePaise)], gaps: [] };
+}
+
+/**
+ * The owner confirmed what is really in the drawer when the books' cash and the cashbook disagreed from before. This is an
+ * opening-type difference, kept apart from profit in the unverified opening account until the owner reviews it.
+ */
+export function cashReconciled(input: { differencePaise: number }): JournalDraft {
+  const { differencePaise } = input;
+  if (!Number.isSafeInteger(differencePaise) || differencePaise === 0) throw new AccountingRuleError("There is no cash difference to reconcile.");
+  return { event: EVENTS.cashReconcile, lines: differencePaise > 0 ? [...dr("cash", differencePaise), ...cr("opening_clearing", differencePaise)] : [...dr("opening_clearing", -differencePaise), ...cr("cash", -differencePaise)], gaps: [] };
 }
 
 export type OpeningInput = {

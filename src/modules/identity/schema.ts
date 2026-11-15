@@ -76,6 +76,8 @@ export const APPROVAL_ACTIONS = [
   "edit_invoice",
   "stock_adjustment",
   "reopen_day",
+  "return_over_limit",
+  "expense_over_limit",
 ] as const;
 
 /** Single-use owner approval tied to one action and target. */

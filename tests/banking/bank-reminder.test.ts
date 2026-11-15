@@ -26,7 +26,7 @@ describe("unmatched bank lines reminder", () => {
     await activateBusinessAccounts(owner, { coverageStartDate: START });
 
     // Nothing to remind about before any bank account or statement exists.
-    expect(await unmatchedBankSummary(owner)).toEqual({ total: 0, accounts: [] });
+    expect(await unmatchedBankSummary(owner)).toEqual({ total: 0, amountPaise: 0, accounts: [] });
 
     const { id: bankId } = await createBankAccount(owner, { name: "Reminder Bank", statementBalance: "0", asOf: START });
     await importStatement(owner, {
@@ -39,7 +39,7 @@ describe("unmatched bank lines reminder", () => {
         [dmy(addDays(today, -1)), "CASH DEPOSIT", "", "500.00", "1,480.00"],
       ]),
     });
-    expect(await unmatchedBankSummary(owner)).toEqual({ total: 3, accounts: [{ id: bankId, name: "Reminder Bank", count: 3 }] });
+    expect(await unmatchedBankSummary(owner)).toEqual({ total: 3, amountPaise: 150000 + 2000, accounts: [{ id: bankId, name: "Reminder Bank", count: 3, amountPaise: 152000 }] });
 
     // Only people who manage the bank are told; everyone else sees nothing and no error.
     expect(await unmatchedBankSummary(manager)).toBeNull();

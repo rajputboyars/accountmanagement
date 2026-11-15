@@ -7,7 +7,9 @@ import {
   bankSettlement,
   type AnyAccountKey,
   type BankEntryKind,
+  cashDifference,
   cashMoved,
+  cashReconciled,
   creditNoteIssued,
   creditNoteRestock,
   deliveredGoodsBilled,
@@ -94,7 +96,17 @@ export async function postExpenseVoided(tx: Transaction, ctx: PostingContext, a:
   await reverseBySource(tx, ctx, { sourceType: "expense", sourceId: a.expenseId, event: EVENTS.expense, entryDate: a.date, memo: "Expense voided" });
 }
 
-export async function postCashMovement(tx: Transaction, ctx: PostingContext, a: { movementId: string; date: string; kind: "withdrawal" | "bank_deposit" | "float_added"; amountPaise: number; bankAccountKey?: string | null }) {
+/** The drawer was counted at day close: moves book cash to the counted amount. The source is unique to this close, so a later close posts its own. */
+export async function postCashDifference(tx: Transaction, ctx: PostingContext, a: { sourceId: string; date: string; differencePaise: number }) {
+  return postJournal(tx, ctx, { entryDate: a.date, sourceType: "day_closing", sourceId: a.sourceId, draft: cashDifference({ differencePaise: a.differencePaise }), memo: a.differencePaise < 0 ? "Cash short at day close" : "Cash extra at day close" });
+}
+
+/** The owner confirmed the real cash when the books and the cashbook disagreed from before. */
+export async function postCashReconciled(tx: Transaction, ctx: PostingContext, a: { reconciliationId: string; date: string; differencePaise: number }) {
+  return postJournal(tx, ctx, { entryDate: a.date, sourceType: "cash_reconciliation", sourceId: a.reconciliationId, draft: cashReconciled({ differencePaise: a.differencePaise }), memo: "Cash confirmed by the owner", kind: "adjustment" });
+}
+
+export async function postCashMovement(tx: Transaction, ctx: PostingContext, a: { movementId: string; date: string; kind: "withdrawal" | "bank_deposit" | "bank_withdrawal" | "float_added"; amountPaise: number; bankAccountKey?: string | null }) {
   await postJournal(tx, ctx, { entryDate: a.date, sourceType: "cash_movement", sourceId: a.movementId, draft: cashMoved({ kind: a.kind, amountPaise: a.amountPaise, bankAccount: a.bankAccountKey }) });
 }
 

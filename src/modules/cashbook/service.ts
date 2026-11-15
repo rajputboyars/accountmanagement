@@ -1,20 +1,21 @@
-import { and, asc, desc, eq, gt, lt, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { and, asc, desc, eq, gt, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
-import { postCashMovement, postExpense, postExpenseVoided, resolveBankRoute } from "@/modules/accounting";
+import { bookCashOn, cashBasisFor, openingCashInBooks, postCashDifference, postCashMovement, postCashReconciled, postExpense, postExpenseVoided, resolveBankRoute, reverseJournal } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
-import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
+import { ANY_TARGET, consumeMatchingApproval, hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
 import { paymentsOnDay, paymentTotals } from "@/modules/payments";
 import { purchasesDaySummary } from "@/modules/purchasing";
 import { salesDaySummary } from "@/modules/sales";
-import { shopOpeningCash } from "@/modules/settings";
+import { loadStaffLimits, shopOpeningCash } from "@/modules/settings";
 import { withIdempotency } from "@/modules/sync";
 import { lockDayExclusive, lockDayForWrite } from "@/server/day-lock";
 import { getDb, withTransaction, type Database, type Transaction } from "@/server/db";
-import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
 import { DIFFERENCE_REASONS, drawerResult, EXPENSE_CATEGORIES, expectedCash, netCashFlow, type CashFlows } from "@/shared/cashbook";
 import { indiaDate } from "@/shared/financial-year";
 import { formatPaise, parseRupeesToPaise } from "@/shared/money";
-import { cashMovements, dayClosings, expenses } from "./schema";
+import { cashMovements, cashReconciliations, dayClosings, drawerCounts, expenses } from "./schema";
 
 /**
  * Expenses, cash taken out or put in, and the daily cashbook (spec §6–7). The cashbook is never a
@@ -24,10 +25,13 @@ import { cashMovements, dayClosings, expenses } from "./schema";
  * that day's money (src/server/day-lock.ts). Cash flow is not profit.
  */
 
-export const CASH_VIEW = "cash.record" as const;
+export const CASH_VIEW = "cash.view" as const;
 export const CASH_RECORD = "cash.record" as const;
 export const DAY_CLOSE = "day.close" as const;
 export const DAY_REOPEN = "day.reopen" as const;
+export const DRAWER_COUNT = "drawer.count" as const;
+export const CASH_RECONCILE = "cash.reconcile" as const;
+const EXPENSE_SMALL = "expense.small" as const;
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
 const booksOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId });
@@ -80,7 +84,7 @@ export const expenseInputSchema = z
 export const cashMovementInputSchema = z.object({
   idempotencyKey: key,
   businessDate,
-  kind: z.enum(["withdrawal", "bank_deposit", "float_added"], { message: "Choose what happened." }),
+  kind: z.enum(["withdrawal", "bank_deposit", "bank_withdrawal", "float_added"], { message: "Choose what happened." }),
   amount: rupees("amount"),
   bankAccountId: z.string().uuid().optional().or(z.literal("").transform(() => undefined)),
   note: z
@@ -215,6 +219,16 @@ export async function expensesInRange(shopId: string, fromDate: string, toDate: 
  * recorded, so "counted ₹18,150 − deposited ₹15,000" reaches the same expected cash.
  */
 async function openingCash(db: Db, shopId: string, date: string): Promise<{ openingPaise: number; fromClosedDate: string | null }> {
+  // With Business Accounts on, the posted Cash account is the one cash figure: the day opens with what the books held at the end of the day before.
+  if ((await cashBasisFor(db, shopId, date)).mode === "books") {
+    const [closed] = await db
+      .select({ businessDate: dayClosings.businessDate })
+      .from(dayClosings)
+      .where(and(eq(dayClosings.shopId, shopId), eq(dayClosings.status, "closed"), lt(dayClosings.businessDate, date)))
+      .orderBy(desc(dayClosings.businessDate))
+      .limit(1);
+    return { openingPaise: await bookCashOn(db, shopId, previousDate(date)), fromClosedDate: closed?.businessDate ?? null };
+  }
   const [last] = await db
     .select({ businessDate: dayClosings.businessDate, counted: dayClosings.countedCashPaise })
     .from(dayClosings)
@@ -234,7 +248,10 @@ async function dayFigures(db: Db, shopId: string, date: string) {
     purchasesDaySummary(shopId, date, db),
   ]);
   const cash: CashFlows = { openingPaise, ...flows };
-  return { cash, expectedPaise: expectedCash(cash), nonCash, sales, purchases, openingFromClosedDate: fromClosedDate };
+  const books = (await cashBasisFor(db, shopId, date)).mode === "books";
+  // Expected cash in the drawer is the books' Cash balance at the end of the day, so the drawer, the closing and the Money overview are one figure.
+  const expectedPaise = books ? await bookCashOn(db, shopId, date) : expectedCash(cash);
+  return { cash, expectedPaise, cashFromBooks: books, nonCash, sales, purchases, openingFromClosedDate: fromClosedDate };
 }
 
 // ── Cashbook view ────────────────────────────────────────────────────────────
@@ -243,7 +260,8 @@ export async function getCashbook(session: SessionContext, date: string) {
   await requirePermission(session, CASH_VIEW);
   const day = DATE.test(date) ? date : indiaDate();
   const db = getDb();
-  const [figures, payments, dayExpenses, movements, closing, canClose, canReopen, laterClosed] = await Promise.all([
+  const [figures, payments, dayExpenses, movements, closing, canClose, canReopen, laterClosed, health, counts, canCount, smallLimits] = await Promise.all([
+
     dayFigures(db, session.shopId, day),
     paymentsOnDay(db, session.shopId, day),
     db.select().from(expenses).where(and(eq(expenses.shopId, session.shopId), eq(expenses.businessDate, day))).orderBy(asc(expenses.createdAt)),
@@ -252,6 +270,10 @@ export async function getCashbook(session: SessionContext, date: string) {
     hasPermission(session, DAY_CLOSE),
     hasPermission(session, DAY_REOPEN),
     db.select({ businessDate: dayClosings.businessDate }).from(dayClosings).where(and(eq(dayClosings.shopId, session.shopId), eq(dayClosings.status, "closed"), gt(dayClosings.businessDate, day))).limit(1),
+    cashHealthOf(db, session.shopId),
+    listDrawerCounts(db, session.shopId, day),
+    hasPermission(session, DRAWER_COUNT),
+    loadStaffLimits(session.shopId, db),
   ]);
   const userIds = [...new Set([...dayExpenses.map((row) => row.createdBy), ...movements.map((row) => row.createdBy), ...(closing ? [closing.closedBy] : [])])];
   const names = await loadUserNames(session.shopId, userIds);
@@ -260,14 +282,24 @@ export async function getCashbook(session: SessionContext, date: string) {
     date: day,
     today: indiaDate(),
     ...figures,
+    // A closed day keeps what was expected when it was closed: the short or extra posted at close is not counted again.
+    expectedPaise: closed && closing ? closing.expectedCashPaise : figures.expectedPaise,
     payments,
     expenses: dayExpenses.map((row) => ({ ...row, createdByName: names.get(row.createdBy) ?? "Unknown user", canVoid: row.status === "recorded" && !closed })),
     movements: movements.map((row) => ({ ...row, createdByName: names.get(row.createdBy) ?? "Unknown user" })),
     closing: closing ? { ...closing, closedByName: names.get(closing.closedBy) ?? "Unknown user" } : null,
     closed,
+    health,
+    drawerCounts: counts,
+    canCount: canCount && !closed,
+    canReconcile: health.needsReconciliation && (await hasPermission(session, CASH_RECONCILE)),
+    smallExpenseLimitPaise: (await hasPermission(session, CASH_RECORD)) ? null : smallLimits.smallExpensePaise,
     canClose: canClose && !closed && day <= indiaDate() && laterClosed.length === 0,
     canReopen: canReopen && closed && laterClosed.length === 0,
     canRecord: !closed && (await hasPermission(session, CASH_RECORD)),
+    /** Sales, credit notes and purchases are for people who may see reports; a cashier sees the drawer. */
+    showTotals: await hasPermission(session, "reports.view"),
+    canRecordExpense: !closed && ((await hasPermission(session, CASH_RECORD)) || (await hasPermission(session, EXPENSE_SMALL))),
   };
 }
 
@@ -286,18 +318,29 @@ export async function listClosings(session: SessionContext, limit = 30) {
 // ── Expenses and cash movements ──────────────────────────────────────────────
 
 export async function recordExpense(session: SessionContext, input: unknown): Promise<{ id: string; replayed: boolean }> {
-  await requirePermission(session, CASH_RECORD);
+  // Owners and managers record any expense. A cashier may record a small one on their own; a bigger one needs the owner's approval.
+  const unrestricted = await hasPermission(session, CASH_RECORD);
+  if (!unrestricted) await requirePermission(session, EXPENSE_SMALL);
   const { idempotencyKey, ...data } = expenseInputSchema.parse(input);
   return withTransaction(async (tx) => {
     const outcome = await withIdempotency<{ id: string }>(tx, { shopId: session.shopId, userId: session.userId, key: idempotencyKey }, { action: "cashbook.expense", ...data }, async () => {
       await lockDayForWrite(tx, session.shopId, data.businessDate);
+      let approvalId: string | null = null;
+      if (!unrestricted) {
+        const limit = (await loadStaffLimits(session.shopId, tx)).smallExpensePaise;
+        if (data.amount > limit) {
+          const used = await consumeMatchingApproval(tx, session, "expense_over_limit", [ANY_TARGET], (payload) => ((payload.amountPaise ?? 0) >= data.amount ? null : "The approved amount is lower than this expense."));
+          if (!used) throw new ForbiddenError(`This expense is above your ${formatPaise(limit, { withPaise: false })} limit. Ask the owner to approve it.`);
+          approvalId = used.id;
+        }
+      }
       const route = await resolveBankRoute(tx, session.shopId, data.method, data.bankAccountId);
       const [row] = await tx
         .insert(expenses)
-        .values({ shopId: session.shopId, businessDate: data.businessDate, category: data.category, amountPaise: data.amount, method: data.method, note: data.note, reference: data.reference, createdBy: session.userId })
+        .values({ shopId: session.shopId, businessDate: data.businessDate, category: data.category, amountPaise: data.amount, method: data.method, note: data.note, reference: data.reference, createdBy: session.userId, approvalId })
         .returning({ id: expenses.id });
       await postExpense(tx, booksOf(session), { expenseId: row!.id, date: data.businessDate, category: data.category, method: data.method, amountPaise: data.amount, bankAccountKey: route.key });
-      await recordAudit(tx, actorOf(session), { action: "cashbook.expense_recorded", entityType: "expense", entityId: row!.id, after: { ...data, bankAccountId: route.bankAccountId, amountPaise: data.amount, amount: undefined } });
+      await recordAudit(tx, actorOf(session), { action: "cashbook.expense_recorded", entityType: "expense", entityId: row!.id, approvalId, after: { ...data, bankAccountId: route.bankAccountId, amountPaise: data.amount, amount: undefined } });
       return { status: 201, body: { id: row!.id } };
     });
     return { ...outcome.body, replayed: outcome.replayed };
@@ -331,8 +374,9 @@ export async function recordCashMovement(session: SessionContext, input: unknown
   return withTransaction(async (tx) => {
     const outcome = await withIdempotency<{ id: string }>(tx, { shopId: session.shopId, userId: session.userId, key: idempotencyKey }, { action: "cashbook.cash_movement", ...data }, async () => {
       await lockDayForWrite(tx, session.shopId, data.businessDate);
-      const route = await resolveBankRoute(tx, session.shopId, data.kind === "bank_deposit" ? "bank" : "cash", data.bankAccountId);
-      const [row] = await tx.insert(cashMovements).values({ shopId: session.shopId, businessDate: data.businessDate, kind: data.kind, amountPaise: data.amount, note: data.note, createdBy: session.userId }).returning({ id: cashMovements.id });
+      // A deposit to the bank and a withdrawal from it both name the bank account; they move money between the drawer and the bank, never profit.
+      const route = await resolveBankRoute(tx, session.shopId, data.kind === "bank_deposit" || data.kind === "bank_withdrawal" ? "bank" : "cash", data.bankAccountId);
+      const [row] = await tx.insert(cashMovements).values({ shopId: session.shopId, businessDate: data.businessDate, kind: data.kind, amountPaise: data.amount, note: data.note, bankAccountId: route.bankAccountId, createdBy: session.userId }).returning({ id: cashMovements.id });
       await postCashMovement(tx, booksOf(session), { movementId: row!.id, date: data.businessDate, kind: data.kind, amountPaise: data.amount, bankAccountKey: route.key });
       await recordAudit(tx, actorOf(session), { action: "cashbook.cash_movement_recorded", entityType: "cash_movement", entityId: row!.id, after: { businessDate: data.businessDate, kind: data.kind, amountPaise: data.amount, bankAccountId: route.bankAccountId, note: data.note } });
       return { status: 201, body: { id: row!.id } };
@@ -362,6 +406,11 @@ export async function closeDay(session: SessionContext, input: unknown) {
     if (existing?.status === "closed") throw new ConflictError("ALREADY_CLOSED", "This day is already closed.");
     const later = await laterClosedDay(tx, session.shopId, data.businessDate);
     if (later) throw new ConflictError("LATER_DAY_CLOSED", `A later day (${later}) is already closed, so this one can't be closed now.`);
+    const basis = await cashBasisFor(tx, session.shopId, data.businessDate);
+    if (basis.mode === "books") {
+      const health = await cashHealthOf(tx, session.shopId);
+      if (health.needsReconciliation) throw new ConflictError("CASH_RECONCILIATION_REQUIRED", "The cash in your books and your cashbook don't agree yet. The owner needs to confirm the cash in the drawer before a day can be closed.");
+    }
     const figures = await dayFigures(tx, session.shopId, data.businessDate);
     const result = drawerResult(figures.expectedPaise, data.counted);
     if (result.differencePaise !== 0 && !data.reasonKey) {
@@ -386,13 +435,22 @@ export async function closeDay(session: SessionContext, input: unknown) {
       closedBy: session.userId,
       closedAt: new Date(),
     };
+    let closingId = existing?.id;
     if (existing) await tx.update(dayClosings).set(values).where(eq(dayClosings.id, existing.id));
-    else await tx.insert(dayClosings).values({ shopId: session.shopId, businessDate: data.businessDate, ...values });
+    else closingId = (await tx.insert(dayClosings).values({ shopId: session.shopId, businessDate: data.businessDate, ...values }).returning({ id: dayClosings.id }))[0]!.id;
+    // A short or extra drawer is posted in the same transaction, so book cash equals what was counted the moment the day closes.
+    let differenceJournalId: string | null = null;
+    if (basis.mode === "books" && result.differencePaise !== 0) {
+      const posted = await postCashDifference(tx, booksOf(session), { sourceId: randomUUID(), date: data.businessDate, differencePaise: result.differencePaise });
+      if (posted.status !== "posted") throw new ConflictError("NOT_POSTED", "The cash difference could not be added to your books.");
+      differenceJournalId = posted.journalId;
+      await tx.update(dayClosings).set({ differenceJournalId }).where(eq(dayClosings.id, closingId!));
+    }
     await recordAudit(tx, actorOf(session), {
       action: "cashbook.day_closed",
       entityType: "day_closing",
       entityId: data.businessDate,
-      after: { expectedCashPaise: figures.expectedPaise, countedCashPaise: data.counted, differencePaise: result.differencePaise, differenceReason, reopenedBefore: Boolean(existing) },
+      after: { expectedCashPaise: figures.expectedPaise, countedCashPaise: data.counted, differencePaise: result.differencePaise, differenceReason, differenceJournalId, cashFromBooks: figures.cashFromBooks, reopenedBefore: Boolean(existing) },
       reason: differenceReason,
     });
     return { expectedPaise: figures.expectedPaise, ...result };
@@ -410,7 +468,149 @@ export async function reopenDay(session: SessionContext, date: string, input: un
     if (!closing || closing.status !== "closed") throw new ConflictError("NOT_CLOSED", "This day is not closed.");
     const later = await laterClosedDay(tx, session.shopId, date);
     if (later) throw new ConflictError("LATER_DAY_CLOSED", `A later day (${later}) is closed. Reopen that one first.`);
+    // The short/extra journal is undone with a reversal (the original stays), so the next close posts what is true then.
+    if (closing.differenceJournalId) await reverseJournal(tx, booksOf(session), { journalId: closing.differenceJournalId, entryDate: date, memo: "Day reopened" });
     await tx.update(dayClosings).set({ status: "reopened", reopenedBy: session.userId, reopenedAt: new Date(), reopenReason: reason }).where(eq(dayClosings.id, closing.id));
     await recordAudit(tx, actorOf(session), { action: "cashbook.day_reopened", entityType: "day_closing", entityId: date, before: { status: "closed", countedCashPaise: closing.countedCashPaise }, after: { status: "reopened" }, reason });
   });
+}
+
+// ── One cash figure: health, explicit reconciliation and drawer counts ───────────────────────────────
+
+export type CashHealth = {
+  /** "books": the posted Cash account is the cash figure. "cashbook": the shop has no Business Accounts yet, so nothing changes. */
+  mode: "books" | "cashbook";
+  bookCashPaise: number | null;
+  needsReconciliation: boolean;
+  /** Why the figures disagree (only when they do). */
+  openingSettingPaise: number;
+  openingInBooksPaise: number;
+  unpostedDifferences: { businessDate: string; differencePaise: number }[];
+  reconciledAt: Date | null;
+};
+
+/**
+ * Whether the books' cash and the cashbook's history agree. They can disagree from before this feature: the opening cash typed
+ * at setup differing from the opening in the books, or a closed day whose short/extra was never posted. Nothing is corrected
+ * silently; the owner confirms the real cash once (`reconcileCash`), which posts the difference and is kept as a record.
+ */
+export async function cashHealthOf(db: Db, shopId: string): Promise<CashHealth> {
+  const today = indiaDate();
+  const basis = await cashBasisFor(db, shopId, today);
+  const empty: CashHealth = { mode: "cashbook", bookCashPaise: null, needsReconciliation: false, openingSettingPaise: 0, openingInBooksPaise: 0, unpostedDifferences: [], reconciledAt: null };
+  if (basis.mode !== "books") return empty;
+  const [bookCashPaise, openingSettingPaise, openingInBooksPaise] = await Promise.all([bookCashOn(db, shopId, null), shopOpeningCash(shopId), openingCashInBooks(db, shopId)]);
+  const unposted = await db
+    .select({ businessDate: dayClosings.businessDate, differencePaise: dayClosings.differencePaise })
+    .from(dayClosings)
+    .where(and(eq(dayClosings.shopId, shopId), eq(dayClosings.status, "closed"), sql`${dayClosings.differencePaise} <> 0`, isNull(dayClosings.differenceJournalId), sql`${dayClosings.businessDate} >= ${basis.coverageStartDate}`))
+    .orderBy(asc(dayClosings.businessDate));
+  // A confirmation counts until it is undone: an undo is a later row that points at it.
+  const confirmed = await db
+    .select({ createdAt: cashReconciliations.createdAt })
+    .from(cashReconciliations)
+    .where(and(eq(cashReconciliations.shopId, shopId), eq(cashReconciliations.kind, "confirm"), sql`not exists (select 1 from cash_reconciliations r where r.reverses_id = ${cashReconciliations.id})`))
+    .orderBy(desc(cashReconciliations.createdAt))
+    .limit(1);
+  const disagree = openingSettingPaise !== openingInBooksPaise || unposted.length > 0;
+  return { mode: "books", bookCashPaise, needsReconciliation: disagree && confirmed.length === 0, openingSettingPaise, openingInBooksPaise, unpostedDifferences: unposted, reconciledAt: confirmed[0]?.createdAt ?? null };
+}
+
+export async function getCashHealth(session: SessionContext): Promise<CashHealth> {
+  await requirePermission(session, CASH_VIEW);
+  return cashHealthOf(getDb(), session.shopId);
+}
+
+const countedSchema = z.string().trim().transform((value, ctx) => {
+  const paise = parseRupeesToPaise(value === "" ? "x" : value);
+  if (paise === null) {
+    ctx.addIssue({ code: "custom", message: "Enter the cash you counted, in rupees (0 if the drawer is empty)." });
+    return z.NEVER;
+  }
+  return paise;
+});
+
+const reconcileSchema = z.object({
+  idempotencyKey: key,
+  counted: countedSchema,
+  reason: z.string().trim().min(3, "Write a short reason (at least 3 characters).").max(200),
+});
+
+/**
+ * The owner counts the drawer and confirms it: books cash is moved to the counted amount with one journal and a record
+ * of who confirmed what. Nothing before it is rewritten. Undo it with `reverseCashReconciliation`.
+ */
+export async function reconcileCash(session: SessionContext, input: unknown): Promise<{ id: string; differencePaise: number; replayed: boolean }> {
+  await requirePermission(session, CASH_RECONCILE);
+  const { idempotencyKey, ...data } = reconcileSchema.parse(input);
+  return withTransaction(async (tx) => {
+    const outcome = await withIdempotency<{ id: string; differencePaise: number }>(tx, { shopId: session.shopId, userId: session.userId, key: idempotencyKey }, { action: "cashbook.reconcile", ...data }, async () => {
+      const today = indiaDate();
+      await lockDayForWrite(tx, session.shopId, today);
+      if ((await cashBasisFor(tx, session.shopId, today)).mode !== "books") throw new ConflictError("NO_BOOKS", "Business Accounts are not on, so there is nothing to reconcile.");
+      const bookCashPaise = await bookCashOn(tx, session.shopId, null);
+      const differencePaise = data.counted - bookCashPaise;
+      const [row] = await tx.insert(cashReconciliations).values({ shopId: session.shopId, kind: "confirm", asOfDate: today, bookCashPaise, countedPaise: data.counted, differencePaise, reason: data.reason, createdBy: session.userId }).returning({ id: cashReconciliations.id });
+      if (differencePaise !== 0) {
+        const posted = await postCashReconciled(tx, booksOf(session), { reconciliationId: row!.id, date: today, differencePaise });
+        if (posted.status !== "posted") throw new ConflictError("NOT_POSTED", "The cash difference could not be added to your books.");
+        await tx.update(cashReconciliations).set({ journalId: posted.journalId }).where(eq(cashReconciliations.id, row!.id));
+      }
+      await recordAudit(tx, actorOf(session), { action: "cashbook.cash_reconciled", entityType: "cash_reconciliation", entityId: row!.id, after: { bookCashPaise, countedPaise: data.counted, differencePaise }, reason: data.reason });
+      return { status: 201, body: { id: row!.id, differencePaise } };
+    });
+    return { ...outcome.body, replayed: outcome.replayed };
+  });
+}
+
+/** Undoes a confirmation: the journal is reversed and a reversal row is added. The original stays on record. */
+export async function reverseCashReconciliation(session: SessionContext, reconciliationId: string, input: unknown): Promise<void> {
+  await requirePermission(session, CASH_RECONCILE);
+  const { reason } = reasonSchema.parse(input);
+  await withTransaction(async (tx) => {
+    const today = indiaDate();
+    await lockDayForWrite(tx, session.shopId, today);
+    const [original] = await tx.select().from(cashReconciliations).where(and(eq(cashReconciliations.id, reconciliationId), eq(cashReconciliations.shopId, session.shopId))).limit(1).for("update");
+    if (!original || original.kind !== "confirm") throw new NotFoundError("Confirmation not found.");
+    const [already] = await tx.select({ id: cashReconciliations.id }).from(cashReconciliations).where(eq(cashReconciliations.reversesId, original.id)).limit(1);
+    if (already) throw new ConflictError("ALREADY_REVERSED", "This confirmation was already undone.");
+    if (original.journalId) await reverseJournal(tx, booksOf(session), { journalId: original.journalId, entryDate: today, memo: "Cash confirmation undone" });
+    const [row] = await tx.insert(cashReconciliations).values({ shopId: session.shopId, kind: "reversal", asOfDate: today, bookCashPaise: original.bookCashPaise, countedPaise: original.countedPaise, differencePaise: -original.differencePaise, reason, reversesId: original.id, createdBy: session.userId }).returning({ id: cashReconciliations.id });
+    await recordAudit(tx, actorOf(session), { action: "cashbook.cash_reconciliation_reversed", entityType: "cash_reconciliation", entityId: row!.id, before: { reconciliationId: original.id, differencePaise: original.differencePaise }, reason });
+  });
+}
+
+const drawerCountSchema = z.object({
+  idempotencyKey: key,
+  businessDate,
+  counted: countedSchema,
+  note: z.string().trim().max(200).optional().transform((value) => value || null),
+});
+
+/**
+ * Whoever counted the drawer (a cashier, a manager or the owner) submits the amount. It is kept with their name; the person who
+ * closes the day sees it. It never changes books by itself: only closing the day does.
+ */
+export async function submitDrawerCount(session: SessionContext, input: unknown): Promise<{ id: string; expectedPaise: number; differencePaise: number; replayed: boolean }> {
+  await requirePermission(session, DRAWER_COUNT);
+  const { idempotencyKey, ...data } = drawerCountSchema.parse(input);
+  return withTransaction(async (tx) => {
+    const outcome = await withIdempotency<{ id: string; expectedPaise: number; differencePaise: number }>(tx, { shopId: session.shopId, userId: session.userId, key: idempotencyKey }, { action: "cashbook.drawer_count", ...data }, async () => {
+      const [closing] = await tx.select({ status: dayClosings.status }).from(dayClosings).where(and(eq(dayClosings.shopId, session.shopId), eq(dayClosings.businessDate, data.businessDate))).limit(1);
+      if (closing?.status === "closed") throw new ConflictError("ALREADY_CLOSED", "This day is already closed.");
+      const figures = await dayFigures(tx, session.shopId, data.businessDate);
+      const [row] = await tx.insert(drawerCounts).values({ shopId: session.shopId, businessDate: data.businessDate, countedPaise: data.counted, note: data.note, countedBy: session.userId }).returning({ id: drawerCounts.id });
+      const differencePaise = data.counted - figures.expectedPaise;
+      await recordAudit(tx, actorOf(session), { action: "cashbook.drawer_counted", entityType: "drawer_count", entityId: row!.id, after: { businessDate: data.businessDate, countedPaise: data.counted, expectedPaise: figures.expectedPaise, differencePaise } });
+      return { status: 201, body: { id: row!.id, expectedPaise: figures.expectedPaise, differencePaise } };
+    });
+    return { ...outcome.body, replayed: outcome.replayed };
+  });
+}
+
+/** The latest counts submitted for a day, newest first, with who counted. */
+export async function listDrawerCounts(db: Db, shopId: string, date: string, limit = 5) {
+  const rows = await db.select().from(drawerCounts).where(and(eq(drawerCounts.shopId, shopId), eq(drawerCounts.businessDate, date))).orderBy(desc(drawerCounts.createdAt)).limit(limit);
+  const names = await loadUserNames(shopId, [...new Set(rows.map((row) => row.countedBy))]);
+  return rows.map((row) => ({ id: row.id, countedPaise: row.countedPaise, note: row.note, countedByName: names.get(row.countedBy) ?? "Unknown user", createdAt: row.createdAt }));
 }

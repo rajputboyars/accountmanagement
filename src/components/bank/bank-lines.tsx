@@ -29,8 +29,8 @@ export type BankSuggestion = { lineId: string; kind: "match" | "settlement"; ite
 type Party = { id: string; name: string };
 
 const rs = (paise: number) => formatPaise(paise, { withPaise: true });
-const CREDIT_KINDS = ["customer_receipt", "bank_interest", "owner_in"] as const;
-const DEBIT_KINDS = ["supplier_payment", "bank_charge", "owner_out"] as const;
+const CREDIT_KINDS = ["customer_receipt", "bank_interest", "owner_in", "cash_deposited"] as const;
+const DEBIT_KINDS = ["supplier_payment", "bank_charge", "owner_out", "cash_withdrawn"] as const;
 const itemLabelKey = (label: string) => (label === "payment" || label === "reversal" || label === "cash_movement" || label === "expense" ? (`bank.item.${label}` as const) : ("bank.item.other" as const));
 
 function Amount({ line }: { line: { debitPaise: number; creditPaise: number } }) {

@@ -1,3 +1,4 @@
+import { formatPaise } from "@/shared/money";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Money } from "@/components/nexora/money";
@@ -110,6 +111,11 @@ async function MoneyView({ searchParams }: Pick<Props, "searchParams">) {
                 <li key={row.key} className="flex items-baseline justify-between gap-3">
                   <span className="text-muted-foreground">{accountLabel(t, row.key, row.name)}</span>
                   <Money paise={row.amountPaise} withPaise />
+                </li>
+              ))}
+              {overview.cashAndBank.filter((row) => row.amountPaise < 0 && (row.key === "bank" || row.key.startsWith("bank:"))).map((row) => (
+                <li key={`neg-${row.key}`} role="status" data-testid="bank-negative" className="rounded-lg bg-amber-soft px-3 py-2 text-xs font-medium text-amber-ink">
+                  {t("bank.negative", { name: accountLabel(t, row.key, row.name), amount: formatPaise(-row.amountPaise, { withPaise: true }) })}
                 </li>
               ))}
               <li className="flex items-baseline justify-between gap-3 border-t border-border pt-2 font-semibold">

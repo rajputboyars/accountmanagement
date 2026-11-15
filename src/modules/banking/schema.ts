@@ -15,7 +15,7 @@ import { createdAt, id, oneOf, paise } from "../../server/schema-helpers";
 
 export const STATEMENT_LINE_STATUSES = ["unmatched", "matched", "ignored"] as const;
 export const MATCH_KINDS = ["match", "settlement", "posting"] as const;
-export const POSTING_KINDS = ["customer_receipt", "supplier_payment", "bank_charge", "bank_interest", "owner_in", "owner_out"] as const;
+export const POSTING_KINDS = ["customer_receipt", "supplier_payment", "bank_charge", "bank_interest", "owner_in", "owner_out", "cash_deposited", "cash_withdrawn"] as const;
 export const MATCH_STATUSES = ["active", "undone"] as const;
 
 export const bankStatements = pgTable(

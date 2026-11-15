@@ -10,6 +10,7 @@ export const DEFAULT_PERMISSIONS = {
   "billing.create": ["owner", "manager", "cashier"],
   "billing.view": ["owner", "manager", "cashier"],
   "billing.return": ["owner", "manager"],
+  "billing.return.limited": ["cashier"], // a return within the shop's return limit; a larger one needs the owner's approval
   "invoice.edit": ["owner", "manager"], // manager needs owner approval per correction
   "invoice.cancel": ["owner"],
   "pricing.edit": ["owner"],
@@ -29,7 +30,11 @@ export const DEFAULT_PERMISSIONS = {
   "reports.view": ["owner", "manager"],
   "profit.view": ["owner"],
   "cash.record": ["owner", "manager"],
-  "day.close": ["owner"],
+  "cash.view": ["owner", "manager", "cashier"], // see the cashbook
+  "expense.small": ["cashier"], // record an expense within the shop's small-expense limit
+  "drawer.count": ["owner", "manager", "cashier"], // submit the counted cash for the day
+  "cash.reconcile": ["owner"], // confirm the real cash when the books and the cashbook disagree
+  "day.close": ["owner", "manager"],
   "day.reopen": ["owner"],
   "staff.manage": ["owner"],
   "settings.edit": ["owner"], // business profile, GST and invoice settings

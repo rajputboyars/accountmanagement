@@ -254,6 +254,27 @@ export { collectionsByDay, PAYMENT_REPORT_KIND_SQL, paymentKindTotals, paymentsI
  * payments refunded when a bill was cancelled, supplier payments undone). Ageing drops each pair, so
  * an undone payment neither pays off an old bill nor shows up as new debt on the day it was undone.
  */
+/**
+ * Customer receipts taken on a specific bill (payment id → bill id). Ageing settles that bill with them first.
+ * Only money in is linked: a refund that names a bill is the shop paying out, not a collection.
+ */
+export async function billLinkedReceipts(db: Database | Transaction, shopId: string, partyId?: string): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ id: payments.id, invoiceId: payments.invoiceId })
+    .from(payments)
+    .where(and(eq(payments.shopId, shopId), eq(payments.partyType, "customer"), eq(payments.direction, "in"), sql`${payments.invoiceId} is not null`, partyId ? eq(payments.partyId, partyId) : undefined));
+  return new Map(rows.flatMap((row) => (row.invoiceId ? [[row.id, row.invoiceId] as const] : [])));
+}
+
+/** Refunds paid out against a credit note (payment id → credit note id). A refund and its credit note cancel each other. */
+export async function creditNoteRefunds(db: Database | Transaction, shopId: string, partyId?: string): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ id: payments.id, creditNoteId: payments.creditNoteId })
+    .from(payments)
+    .where(and(eq(payments.shopId, shopId), eq(payments.partyType, "customer"), eq(payments.direction, "out"), sql`${payments.creditNoteId} is not null`, partyId ? eq(payments.partyId, partyId) : undefined));
+  return new Map(rows.flatMap((row) => (row.creditNoteId ? [[row.id, row.creditNoteId] as const] : [])));
+}
+
 export async function reversedPaymentIds(db: Database | Transaction, shopId: string, partyType: "customer" | "supplier", partyId?: string): Promise<Set<string>> {
   const rows = await db
     .select({ id: payments.id, reversalId: payments.reversedByPaymentId })

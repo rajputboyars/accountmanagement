@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { LoaderCircle } from "lucide-react";
 import { createPurchaseReturnAction } from "@/app/(app)/purchases/actions";
-import { BankAccountPicker, chosenBank, type BankChoice } from "@/components/bank/bank-choice";
+import { BankAccountPicker, chosenBank, mustChooseBank, type BankChoice } from "@/components/bank/bank-choice";
 import { Field, FormAlert, selectClass } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ export function PurchaseReturnForm({ receiptId, lines, godowns, homeGodownId, ca
   const [refundMethod, setRefundMethod] = useState("cash");
   const [bankPick, setBankPick] = useState("");
   const bankAccountId = settlement === "refund" && refundMethod === "bank" ? chosenBank(bankAccounts, bankPick) : "";
+  const bankChoiceMissing = settlement === "refund" && refundMethod === "bank" && mustChooseBank(bankAccounts) && !bankAccountId;
   const [godownId, setGodownId] = useState(homeGodownId ?? "");
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   const [error, setError] = useState<string>();
@@ -99,10 +100,10 @@ export function PurchaseReturnForm({ receiptId, lines, godowns, homeGodownId, ca
             </select>
           </Field>
         ) : null}
-        {bankAccountId ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={setBankPick} error={fieldErrors.bankAccountId} /> : null}
+        {settlement === "refund" && refundMethod === "bank" && mustChooseBank(bankAccounts) ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={setBankPick} error={fieldErrors.bankAccountId} /> : null}
       </div>
       <FormAlert error={error} />
-      <Button type="button" size="touch" className="self-start" disabled={pending || picked.length === 0} onClick={submit}>
+      <Button type="button" size="touch" className="self-start" disabled={pending || picked.length === 0 || bankChoiceMissing} onClick={submit}>
         {pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
         {t("purchases.return.save")}
       </Button>

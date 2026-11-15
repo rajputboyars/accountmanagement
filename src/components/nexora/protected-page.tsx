@@ -12,7 +12,7 @@ import { PageSkeleton } from "./page-skeleton";
  * (layouts are not re-checked on client navigation), redirects to /login without a valid session,
  * and shows an access-denied state when the role lacks `permission`.
  */
-export function ProtectedPage({ permission, title, guide, children }: { permission?: Permission; title: string; guide?: GuideModule; children: React.ReactNode }) {
+export function ProtectedPage({ permission, title, guide, children }: { permission?: Permission | readonly Permission[]; title: string; guide?: GuideModule; children: React.ReactNode }) {
   return (
     <Suspense fallback={<PageSkeleton />}>
       <Gate permission={permission} title={title} guide={guide}>
@@ -22,7 +22,7 @@ export function ProtectedPage({ permission, title, guide, children }: { permissi
   );
 }
 
-async function Gate({ permission, title, guide, children }: { permission?: Permission; title: string; guide?: GuideModule; children: React.ReactNode }) {
+async function Gate({ permission, title, guide, children }: { permission?: Permission | readonly Permission[]; title: string; guide?: GuideModule; children: React.ReactNode }) {
   if (!permission) {
     await requireSession();
     return withGuide(guide, children);

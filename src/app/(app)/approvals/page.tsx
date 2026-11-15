@@ -30,8 +30,8 @@ export default function ApprovalsPage() {
 /** What this person may ask for (they must be allowed to do the action itself) and the records to pick from. */
 async function requestOptions(session: SessionContext, t: Translate): Promise<RequestOptions | null> {
   if (session.role === "owner") return null;
-  const [canBill, canAdjust, canCorrect] = await Promise.all([hasPermission(session, "billing.create"), hasPermission(session, "stock.adjust"), hasPermission(session, "invoice.edit")]);
-  const allowed = REQUESTABLE_ACTIONS.filter((action) => (action === "stock_adjustment" ? canAdjust : action === "edit_invoice" ? canCorrect : canBill));
+  const [canBill, canAdjust, canCorrect, canReturnSmall, canExpenseSmall] = await Promise.all([hasPermission(session, "billing.create"), hasPermission(session, "stock.adjust"), hasPermission(session, "invoice.edit"), hasPermission(session, "billing.return.limited"), hasPermission(session, "expense.small")]);
+  const allowed = REQUESTABLE_ACTIONS.filter((action) => (action === "stock_adjustment" ? canAdjust : action === "edit_invoice" ? canCorrect : action === "return_over_limit" ? canReturnSmall : action === "expense_over_limit" ? canExpenseSmall : canBill));
   if (allowed.length === 0) return null;
   const [customers, products, invoices] = await Promise.all([
     canBill ? listBillingCustomers(session) : [],

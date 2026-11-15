@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import type { BusinessSettings } from "@/modules/settings";
 import { COMPOSITION_DECLARATION, GST_STATE_LIST, STATUTORY_GST_RATES_BP } from "@/shared/gst";
 import type { MessageKey } from "@/shared/i18n/messages/en";
-import { saveGstAction, saveInvoiceAction, saveProfileAction, type SettingsFormState } from "./actions";
+import { saveGstAction, saveInvoiceAction, saveProfileAction, saveStaffLimitsAction, type SettingsFormState } from "./actions";
 
 const REGISTRATION_KEYS = { regular: "settings.regRegular", composition: "settings.regComposition", unregistered: "settings.regNone" } as const;
 const selectClass = "h-11 w-full min-w-0 rounded-lg border border-input bg-background px-3 text-sm text-foreground";
@@ -132,6 +132,27 @@ export function InvoiceForm({ invoice }: { invoice: BusinessSettings["invoice"] 
       </Field>
       <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
         <SubmitButton>{t("settings.saveInvoice")}</SubmitButton>
+        <FormAlert error={state.error} message={state.message} />
+      </div>
+    </form>
+  );
+}
+
+/** What a cashier may do alone: the biggest expense and the biggest return before the owner must approve. */
+export function StaffLimitsForm({ limits }: { limits: { smallExpensePaise: number; returnLimitPaise: number } }) {
+  const t = useT();
+  const [state, action] = useActionState<SettingsFormState, FormData>(saveStaffLimitsAction, {});
+  const rupees = (paise: number) => String(paise / 100);
+  return (
+    <form key={state.nonce ?? "limits"} action={action} className="grid gap-4 sm:grid-cols-2">
+      <Field label={t("settings.limitExpense")} hint={t("settings.limitExpenseHint")}>
+        <Input name="smallExpense" inputMode="decimal" defaultValue={pick(state, "smallExpense", rupees(limits.smallExpensePaise))} className="h-11 tabular-nums" />
+      </Field>
+      <Field label={t("settings.limitReturn")} hint={t("settings.limitReturnHint")}>
+        <Input name="returnLimit" inputMode="decimal" defaultValue={pick(state, "returnLimit", rupees(limits.returnLimitPaise))} className="h-11 tabular-nums" />
+      </Field>
+      <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+        <SubmitButton>{t("settings.saveLimits")}</SubmitButton>
         <FormAlert error={state.error} message={state.message} />
       </div>
     </form>

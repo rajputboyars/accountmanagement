@@ -42,7 +42,9 @@ export async function requestApprovalAction(_previous: FormState, formData: Form
       const product = (await loadProductNames(session.shopId, [targetRef])).get(targetRef);
       if (!product) throw new NotFoundError("Product not found.");
       targetLabel = product.name;
-    } else if (action === "edit_invoice" && targetRef) {
+    } else if (action === "expense_over_limit") {
+      targetLabel = "Any expense";
+    } else if ((action === "edit_invoice" || action === "return_over_limit") && targetRef) {
       const invoice = await findInvoiceByNumber(session, targetRef);
       if (!invoice) throw new NotFoundError(`No bill numbered ${targetRef}.`);
       targetLabel = invoice.number;
@@ -51,14 +53,14 @@ export async function requestApprovalAction(_previous: FormState, formData: Form
       limitBp = parsePercentToBasisPoints(text("discountPercent"));
       if (limitBp === null || limitBp <= 0 || limitBp > 10_000) return { error: await localizeServerMessage("Enter the discount % you need, for example 10.") };
     }
-    if (action === "credit_over_limit" || action === "stock_adjustment") {
+    if (action === "credit_over_limit" || action === "stock_adjustment" || action === "return_over_limit" || action === "expense_over_limit") {
       const raw = text("amount");
       amountPaise = raw ? parseRupeesToPaise(raw) : null;
       if (raw && (amountPaise === null || amountPaise <= 0)) return { error: await localizeServerMessage("Enter the amount in rupees, more than 0.") };
     }
     const result = await requestApproval(session, {
       action,
-      targetRef: action === "edit_invoice" ? targetLabel || targetRef : targetRef,
+      targetRef: action === "edit_invoice" || action === "return_over_limit" ? targetLabel || targetRef : targetRef,
       targetLabel: targetLabel || targetRef || "-",
       reason: text("reason"),
       amountPaise,

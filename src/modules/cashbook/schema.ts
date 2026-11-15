@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { check, date, index, jsonb, pgTable, text, timestamp, unique, uuid, varchar } from "drizzle-orm/pg-core";
-import { users } from "../identity/schema";
+import { bankAccounts } from "../accounting/schema";
+import { approvals, users } from "../identity/schema";
 import { shops } from "../settings/schema";
 import { createdAt, id, oneOf, paise } from "../../server/schema-helpers";
 
@@ -8,7 +9,7 @@ import { createdAt, id, oneOf, paise } from "../../server/schema-helpers";
 
 export const EXPENSE_METHODS = ["cash", "upi", "bank"] as const;
 export const EXPENSE_STATUSES = ["recorded", "voided"] as const;
-export const CASH_MOVEMENT_KINDS = ["withdrawal", "bank_deposit", "float_added"] as const;
+export const CASH_MOVEMENT_KINDS = ["withdrawal", "bank_deposit", "bank_withdrawal", "float_added"] as const;
 export const DAY_CLOSING_STATUSES = ["closed", "reopened"] as const;
 
 export const expenses = pgTable(
@@ -27,6 +28,8 @@ export const expenses = pgTable(
     voidedBy: uuid("voided_by").references(() => users.id),
     voidReason: text("void_reason"),
     createdBy: uuid("created_by").notNull().references(() => users.id),
+    /** The owner approval that allowed an expense above the small-expense limit; null when none was needed. */
+    approvalId: uuid("approval_id").references(() => approvals.id),
     createdAt: createdAt(),
   },
   (t) => [
@@ -49,6 +52,8 @@ export const cashMovements = pgTable(
     kind: text("kind").$type<(typeof CASH_MOVEMENT_KINDS)[number]>().notNull(),
     amountPaise: paise("amount_paise").notNull(),
     note: text("note"),
+    /** The bank account a deposit or withdrawal went to or came from. */
+    bankAccountId: uuid("bank_account_id").references(() => bankAccounts.id),
     createdBy: uuid("created_by").notNull().references(() => users.id),
     createdAt: createdAt(),
   },
@@ -78,11 +83,60 @@ export const dayClosings = pgTable(
     reopenedBy: uuid("reopened_by").references(() => users.id),
     reopenedAt: timestamp("reopened_at", { withTimezone: true }),
     reopenReason: text("reopen_reason"),
+    /** The journal that moved book cash to the counted amount (short or extra); reversed if the day is reopened. */
+    differenceJournalId: uuid("difference_journal_id"),
+    /** The drawer count this closing used, when the person who counted was not the one who closed. */
+    drawerCountId: uuid("drawer_count_id"),
     createdAt: createdAt(),
   },
   (t) => [
     unique("day_closings_shop_business_date_key").on(t.shopId, t.businessDate),
     check("day_closings_status_check", oneOf(t.status, DAY_CLOSING_STATUSES)),
     check("day_closings_reason_check", sql`${t.differencePaise} = 0 or ${t.differenceReason} is not null`),
+  ],
+);
+
+/** A drawer count submitted by whoever counted it (a cashier or the closer). Never edited: a recount is a new row. */
+export const drawerCounts = pgTable(
+  "drawer_counts",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    businessDate: date("business_date", { mode: "string" }).notNull(),
+    countedPaise: paise("counted_paise").notNull(),
+    note: text("note"),
+    countedBy: uuid("counted_by").notNull().references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("drawer_counts_shop_date_idx").on(t.shopId, t.businessDate, t.createdAt)],
+);
+
+export const CASH_RECONCILIATION_KINDS = ["confirm", "reversal"] as const;
+
+/**
+ * The owner's explicit confirmation of what the drawer really holds when the books' cash and the cashbook did not agree
+ * from before. It posts one journal for the difference and is never edited; undoing it adds a "reversal" row that
+ * points at it and reverses that journal.
+ */
+export const cashReconciliations = pgTable(
+  "cash_reconciliations",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    kind: text("kind").$type<(typeof CASH_RECONCILIATION_KINDS)[number]>().notNull().default("confirm"),
+    asOfDate: date("as_of_date", { mode: "string" }).notNull(),
+    bookCashPaise: paise("book_cash_paise").notNull(),
+    countedPaise: paise("counted_paise").notNull(),
+    differencePaise: paise("difference_paise").notNull(),
+    reason: text("reason").notNull(),
+    journalId: uuid("journal_id"),
+    reversesId: uuid("reverses_id"),
+    createdBy: uuid("created_by").notNull().references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("cash_reconciliations_shop_idx").on(t.shopId, t.createdAt),
+    unique("cash_reconciliations_reverses_key").on(t.reversesId),
+    check("cash_reconciliations_kind_check", oneOf(t.kind, CASH_RECONCILIATION_KINDS)),
   ],
 );

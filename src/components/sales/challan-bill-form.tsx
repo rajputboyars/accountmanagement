@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { LoaderCircle } from "lucide-react";
 import { previewBillAction, saveBillAction, type BillInputPayload } from "@/app/(app)/billing/actions";
-import { BankAccountPicker, chosenBank, type BankChoice } from "@/components/bank/bank-choice";
+import { BankAccountPicker, chosenBank, mustChooseBank, type BankChoice } from "@/components/bank/bank-choice";
 import { Field, FormAlert } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Money } from "@/components/nexora/money";
@@ -31,6 +31,7 @@ export function ChallanBillForm({ customerId, lines, bankAccounts = [] }: { cust
   const [payments, setPayments] = useState({ cash: "", upi: "", card: "", bank: "" });
   const [bankPick, setBankPick] = useState("");
   const bankAccountId = payments.bank.trim() ? chosenBank(bankAccounts, bankPick) : "";
+  const bankChoiceMissing = Boolean(payments.bank.trim()) && mustChooseBank(bankAccounts) && !bankAccountId;
   const [bill, setBill] = useState<BillView | null>(null);
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   const [error, setError] = useState<string>();
@@ -143,7 +144,7 @@ export function ChallanBillForm({ customerId, lines, bankAccounts = [] }: { cust
             </Field>
           ))}
         </div>
-        {bankAccountId ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={setBankPick} /> : null}
+        {payments.bank.trim() && mustChooseBank(bankAccounts) ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={setBankPick} /> : null}
       </div>
       {bill ? (
         <div className="flex flex-col gap-1 rounded-xl bg-muted/40 p-3 text-sm">
@@ -165,7 +166,7 @@ export function ChallanBillForm({ customerId, lines, bankAccounts = [] }: { cust
       ) : null}
       {problems.length > 0 ? <FormAlert error={problems[0]!.message} /> : null}
       <FormAlert error={error} />
-      <Button type="button" size="touch" className="self-start" disabled={saving || !bill || problems.length > 0 || picked.length === 0} onClick={save}>
+      <Button type="button" size="touch" className="self-start" disabled={saving || !bill || problems.length > 0 || picked.length === 0 || bankChoiceMissing} onClick={save}>
         {saving ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
         {t("orders.bill.save")}
       </Button>

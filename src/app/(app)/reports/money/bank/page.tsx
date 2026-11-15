@@ -1,3 +1,4 @@
+import { formatPaise } from "@/shared/money";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -82,6 +83,11 @@ async function BankView() {
                   {account.lastStatementDate ? <dd className="text-xs text-muted-foreground">{billDate(account.lastStatementDate, language)}</dd> : null}
                 </div>
               </dl>
+              {account.isActive && account.bookBalancePaise < 0 ? (
+                <p role="status" data-testid="bank-negative" className="rounded-lg bg-amber-soft px-3 py-2 text-xs font-medium text-amber-ink">
+                  {t("bank.negative", { name: account.name, amount: formatPaise(-account.bookBalancePaise, { withPaise: true }) })}
+                </p>
+              ) : null}
               <p className="text-xs text-muted-foreground">{account.reconciledThrough ? t("bank.reconciledThrough", { date: billDate(account.reconciledThrough, language) }) : t("bank.notReconciled")}</p>
               <Link href={`/reports/money/bank/${account.id}`} className={buttonVariants({ size: "touch", className: "self-start" })}>
                 {t("bank.open")}

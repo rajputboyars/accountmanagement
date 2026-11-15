@@ -8,7 +8,7 @@ import { GST_STATE_LIST, stateTaxLabel } from "@/shared/gst";
 import { stateName } from "@/shared/i18n/unit-labels";
 import { CircleAlert, FilePlus2, LoaderCircle, Minus, Plus, ReceiptText, Search, Trash2 } from "lucide-react";
 import { previewBillAction, saveBillAction, searchProductsAction, type BillInputPayload } from "@/app/(app)/billing/actions";
-import { BankAccountPicker, chosenBank, type BankChoice } from "@/components/bank/bank-choice";
+import { BankAccountPicker, chosenBank, mustChooseBank, type BankChoice } from "@/components/bank/bank-choice";
 import { Field, selectClass } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Money } from "@/components/nexora/money";
@@ -66,6 +66,8 @@ function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: 
   const godownId = manyGodowns && godowns.some((godown) => godown.id === draft.godownId) ? draft.godownId : "";
   // Asked only when the shop has more than one bank account and part of the bill is paid through the bank.
   const bankAccountId = payments.bank.trim() ? chosenBank(bankAccounts, draft.bankAccountId) : "";
+  // With several bank accounts the cashier must choose one before the bill can be saved.
+  const bankChoiceMissing = Boolean(payments.bank.trim()) && mustChooseBank(bankAccounts) && !bankAccountId;
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
   const [bill, setBill] = useState<BillView | null>(null);
@@ -164,7 +166,7 @@ function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: 
   const discountProblem = (index: number) => problems.find((problem) => problem.field === `lines.${index}.discountValue`)?.message ?? fieldErrors[`lines.${index}.discountValue`];
   const cash = payments.cash ? cashSummary(payments.cash, cashReceived) : null;
   const cashShort = (cash?.shortPaise ?? 0) > 0;
-  const canSave = Boolean(current) && !hasUnreadable && problems.length === 0 && !cashShort && !saving && !previewing;
+  const canSave = Boolean(current) && !bankChoiceMissing && !hasUnreadable && problems.length === 0 && !cashShort && !saving && !previewing;
 
   const fillPayment = (method: Method | "credit") => {
     if (!shown) return;
@@ -462,7 +464,7 @@ function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: 
               </Field>
             ))}
           </div>
-          {bankAccountId ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={(id) => update({ bankAccountId: id })} error={problems.find((problem) => problem.field === "bankAccountId")?.message} /> : null}
+          {payments.bank.trim() && mustChooseBank(bankAccounts) ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={(id) => update({ bankAccountId: id })} error={problems.find((problem) => problem.field === "bankAccountId")?.message} /> : null}
           {payments.cash ? (
             <Field
               label={t("billing.cashReceived")}

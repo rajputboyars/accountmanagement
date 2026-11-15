@@ -284,7 +284,7 @@ export async function restoreLine(session: SessionContext, lineId: string): Prom
 
 // ── Posting a line nothing explains ─────────────────────────────────────────────────────────────────
 
-const CREDIT_KINDS = ["customer_receipt", "bank_interest", "owner_in"] as const;
+const CREDIT_KINDS = ["customer_receipt", "bank_interest", "owner_in", "cash_deposited"] as const;
 
 export const postLineSchema = z.object({
   idempotencyKey: idKey,
