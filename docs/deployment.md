@@ -45,6 +45,23 @@ Hosting (handoff T1): **Vercel** (Node runtime, region `bom1` Mumbai) and **mana
 4. Check `GET /api/health`: `200 {"status":"ok","database":"ok","migrations":"current"}`; `503` means the database is unreachable or migrations are behind.
 5. Smoke test on the live site with the owner: sign in (SMS code arrives), make a ₹1 test bill and cancel it, open Reports.
 
+### Neon credential rotation
+
+Rotate connections without changing the database, schema, or migration files:
+
+| Variable | Required credential | Use |
+| --- | --- | --- |
+| `DATABASE_URL` | Pooled login for `nexora_app` | Application runtime; data access only, no DDL. It needs database connect, schema usage, table read/write and sequence usage/select. `ledger_entries`, `stock_movements`, and `audit_log` remain append-only: the app role must not update, delete, or truncate them. |
+| `DATABASE_MIGRATION_URL` | Direct login for `nexora_owner` | Canonical production migration connection. This role owns the schema and runs Drizzle migrations, so it needs the DDL/ownership privileges those migrations require. Keep it out of runtime use. |
+| `DATABASE_URL_UNPOOLED` | Direct `nexora_owner` connection, if used | Fallback only: the deploy script copies it to `DATABASE_MIGRATION_URL` only when that variable is unset. Prefer setting `DATABASE_MIGRATION_URL` explicitly. |
+
+1. **Neon Console:** confirm the intended project, database and branch; confirm a recent backup/PITR; identify the credentials for both roles. Do not rotate the app and owner credentials as if they were interchangeable.
+2. Confirm Neon can keep old and replacement credentials valid simultaneously for the same role. If it can, issue replacements while retaining the old credentials. If it cannot, schedule a maintenance window: resetting a role password may invalidate the old password immediately, so there is no separate old-credential revocation step after verification. Do not assume a parallel-role replacement is equivalent; ownership and grants, including grants in future migrations, must be planned and tested first.
+3. **Vercel → Project → Settings → Environment Variables:** update Production `DATABASE_URL` with the pooled `nexora_app` credential and `DATABASE_MIGRATION_URL` with the direct `nexora_owner` credential. Keep `DATABASE_URL_UNPOOLED` only as a direct owner-role fallback; never point Preview at Production. Give Preview a separate non-production database or no database, and update Development separately when appropriate.
+4. With overlapping credentials, deploy after saving the new Production values. Confirm the build applied migrations successfully (a failed migration stops the build and leaves the current deployment serving), then check `/api/health` reports database OK and migrations current. Perform read-only smoke checks; do not create test financial records just to verify connectivity.
+5. Confirm the healthy deployment is using the new Neon connections. Only then revoke the old credentials in Neon Console. If verification fails, keep the old credentials active and restore the previous Vercel values before retrying. Without overlap, perform the credential replacement and Vercel update in the agreed maintenance window, then verify immediately; recovery requires issuing a working credential and updating Vercel, not relying on the invalidated password.
+6. Update any separately maintained Development connection only after Production is verified. Never place connection values in Git, logs, or chat.
+
 ## 3. Monitoring and error logging
 
 - **Uptime:** point an uptime monitor at `/api/health` every minute; alert on two failures.
