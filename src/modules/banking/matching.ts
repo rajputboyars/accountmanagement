@@ -9,7 +9,7 @@ import { findCustomer, findSupplier } from "@/modules/parties";
 import { insertBankReceiptRow, recordSupplierPayment } from "@/modules/payments";
 import { takeDocumentNumber } from "@/modules/settings";
 import { withIdempotency } from "@/modules/sync";
-import { lockDayForWrite } from "@/server/day-lock";
+import { lockDayForBankSettlement, lockDayForWrite } from "@/server/day-lock";
 import { isUniqueViolation } from "@/server/db-errors";
 import { getDb, withTransaction, type Transaction } from "@/server/db";
 import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
@@ -167,6 +167,8 @@ export async function confirmMatch(session: SessionContext, input: unknown): Pro
       if (clearing.length > 0 && clearing.length !== items.length) throw new ValidationError("Match bank entries and UPI, card or cheque entries separately.");
 
       const groupId = randomUUID();
+      let settledOnClosedDay = false;
+      let settlementDate: string | null = null;
       let kind: "match" | "settlement" = "match";
       let feePaise = 0;
       if (clearing.length === 0) {
@@ -195,7 +197,10 @@ export async function confirmMatch(session: SessionContext, input: unknown): Pro
       }
       if (kind === "settlement") {
         const date = [...lines.map((line) => line.txnDate), ...items.map((item) => item.date)].sort().at(-1)!;
-        await lockDayForWrite(tx, session.shopId, date);
+        // A settlement is posted on its statement date even if that day is closed (see lockDayForBankSettlement); nothing else is.
+        const lock = await lockDayForBankSettlement(tx, session.shopId, date);
+        settledOnClosedDay = lock.dayClosed;
+        settlementDate = date;
         const byAccount = new Map<"upi" | "card" | "cheques", number>();
         for (const item of items) byAccount.set(item.accountKey as "upi" | "card" | "cheques", (byAccount.get(item.accountKey as "upi" | "card" | "cheques") ?? 0) + item.signedPaise);
         const result = await postBankSettlement(tx, booksOf(session), { groupId, date, bankAccount: bank.accountKey as AnyAccountKey, bankNetPaise: statementNet, clearing: [...byAccount].map(([account, paise]) => ({ account, paise })) });
@@ -203,7 +208,7 @@ export async function confirmMatch(session: SessionContext, input: unknown): Pro
         await tx.update(bankMatchGroups).set({ journalId: result.journalId }).where(eq(bankMatchGroups.id, groupId));
       }
       await tx.update(bankStatementLines).set({ status: "matched" }).where(inArray(bankStatementLines.id, lines.map((line) => line.id)));
-      await recordAudit(tx, actorOf(session), { action: kind === "settlement" ? "bank.settled" : "bank.matched", entityType: "bank_match_group", entityId: groupId, after: { bankAccountId: bank.id, lineIds: lines.map((line) => line.id), itemIds, statementNetPaise: statementNet, bookPaise: bookTotal, feePaise } });
+      await recordAudit(tx, actorOf(session), { action: kind === "settlement" ? "bank.settled" : "bank.matched", entityType: "bank_match_group", entityId: groupId, after: { bankAccountId: bank.id, lineIds: lines.map((line) => line.id), itemIds, statementNetPaise: statementNet, bookPaise: bookTotal, feePaise, ...(settlementDate ? { journalDate: settlementDate, statementDates: lines.map((line) => line.txnDate), postedOnClosedDay: settledOnClosedDay, reconciledAt: new Date().toISOString() } : {}) } });
       return { status: 201, body: { groupId, kind, feePaise } };
     });
     return { ...outcome.body, replayed: outcome.replayed };
