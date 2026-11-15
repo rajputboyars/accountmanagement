@@ -19,6 +19,7 @@ export type CounterPayment = {
   amountPaise: number;
   businessDate: string;
   recordedBy: string;
+  bankAccountId?: string | null;
 };
 
 /** Money received at the counter for a bill: one row per method (split payments stay separate). */
@@ -34,6 +35,7 @@ export async function recordCounterPayment(tx: Transaction, payment: CounterPaym
     invoiceId: payment.invoiceId,
     method: payment.method,
     amountPaise: payment.amountPaise,
+    bankAccountId: payment.method === "bank" ? (payment.bankAccountId ?? null) : null,
     businessDate: payment.businessDate,
     recordedBy: payment.recordedBy,
   });
@@ -57,13 +59,13 @@ export async function paymentsForInvoice(db: Database | Transaction, shopId: str
 export async function refundInvoicePayments(
   tx: Transaction,
   invoice: { shopId: string; fy: string; invoiceId: string; customerId: string | null; businessDate: string; recordedBy: string },
-): Promise<{ id: string; method: PaymentMethod; amountPaise: number }[]> {
+): Promise<{ id: string; method: PaymentMethod; amountPaise: number; bankAccountId: string | null }[]> {
   const originals = await tx
     .select()
     .from(payments)
     .where(and(eq(payments.shopId, invoice.shopId), eq(payments.invoiceId, invoice.invoiceId), eq(payments.direction, "in"), eq(payments.status, "recorded")))
     .for("update");
-  const refunds: { id: string; method: PaymentMethod; amountPaise: number }[] = [];
+  const refunds: { id: string; method: PaymentMethod; amountPaise: number; bankAccountId: string | null }[] = [];
   for (const original of originals) {
     const id = randomUUID();
     await tx.insert(payments).values({
@@ -76,11 +78,13 @@ export async function refundInvoicePayments(
       invoiceId: invoice.invoiceId,
       method: original.method,
       amountPaise: original.amountPaise,
+      // The money goes back out of the account it came into.
+      bankAccountId: original.bankAccountId,
       businessDate: invoice.businessDate,
       recordedBy: invoice.recordedBy,
     });
     await tx.update(payments).set({ status: "reversed", reversedByPaymentId: id }).where(eq(payments.id, original.id));
-    refunds.push({ id, method: original.method, amountPaise: original.amountPaise });
+    refunds.push({ id, method: original.method, amountPaise: original.amountPaise, bankAccountId: original.bankAccountId });
   }
   return refunds;
 }
@@ -88,7 +92,7 @@ export async function refundInvoicePayments(
 /** Money paid back to a customer for a credit note (an "out" row linked to the note and its invoice). */
 export async function recordCreditNoteRefund(
   tx: Transaction,
-  refund: { shopId: string; fy: string; customerId: string | null; invoiceId: string; creditNoteId: string; method: PaymentMethod; amountPaise: number; businessDate: string; recordedBy: string },
+  refund: { shopId: string; fy: string; customerId: string | null; invoiceId: string; creditNoteId: string; method: PaymentMethod; amountPaise: number; businessDate: string; recordedBy: string; bankAccountId?: string | null },
 ): Promise<string> {
   const id = randomUUID();
   await tx.insert(payments).values({
@@ -102,6 +106,7 @@ export async function recordCreditNoteRefund(
     creditNoteId: refund.creditNoteId,
     method: refund.method,
     amountPaise: refund.amountPaise,
+    bankAccountId: refund.method === "bank" ? (refund.bankAccountId ?? null) : null,
     businessDate: refund.businessDate,
     recordedBy: refund.recordedBy,
   });
@@ -113,7 +118,7 @@ export type SupplierPaymentRow = { id: string; method: PaymentMethod; amountPais
 /** Money paid to a supplier ("out", party supplier). */
 export async function recordSupplierPayment(
   tx: Transaction,
-  payment: { shopId: string; fy: string; supplierId: string; method: PaymentMethod; amountPaise: number; reference: string | null; businessDate: string; recordedBy: string },
+  payment: { shopId: string; fy: string; supplierId: string; method: PaymentMethod; amountPaise: number; reference: string | null; businessDate: string; recordedBy: string; bankAccountId?: string | null },
 ): Promise<string> {
   const id = randomUUID();
   await tx.insert(payments).values({
@@ -126,6 +131,7 @@ export async function recordSupplierPayment(
     method: payment.method,
     amountPaise: payment.amountPaise,
     reference: payment.reference,
+    bankAccountId: payment.method === "bank" ? (payment.bankAccountId ?? null) : null,
     businessDate: payment.businessDate,
     recordedBy: payment.recordedBy,
   });
@@ -155,6 +161,7 @@ export async function reverseSupplierPaymentRow(tx: Transaction, shopId: string,
     partyType: "supplier",
     partyId: original.partyId,
     method: original.method,
+    bankAccountId: original.bankAccountId,
     amountPaise: original.amountPaise,
     businessDate: info.businessDate,
     recordedBy: info.recordedBy,
@@ -212,7 +219,7 @@ export async function paymentsOnDay(db: Database | Transaction, shopId: string, 
   return rows.map((row) => ({ ...row, category: row.category as PaymentCategory }));
 }
 
-export { PAYMENTS_RECORD, PAYMENTS_REVERSE, recordCustomerReceipt, reverseCustomerReceipt, type RecordedReceipt } from "./receipts";
+export { insertBankReceiptRow, PAYMENTS_RECORD, PAYMENTS_REVERSE, recordCustomerReceipt, reverseCustomerReceipt, type RecordedReceipt } from "./receipts";
 
 /** Payment details for labelling ledger lines (receipt number, method, links). Ids of other shops are ignored. */
 export async function paymentDetails(db: Database | Transaction, shopId: string, ids: string[]) {
@@ -247,10 +254,56 @@ export { collectionsByDay, PAYMENT_REPORT_KIND_SQL, paymentKindTotals, paymentsI
  * payments refunded when a bill was cancelled, supplier payments undone). Ageing drops each pair, so
  * an undone payment neither pays off an old bill nor shows up as new debt on the day it was undone.
  */
+/**
+ * Customer receipts taken on a specific bill (payment id → bill id). Ageing settles that bill with them first.
+ * Only money in is linked: a refund that names a bill is the shop paying out, not a collection.
+ */
+export async function billLinkedReceipts(db: Database | Transaction, shopId: string, partyId?: string): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ id: payments.id, invoiceId: payments.invoiceId })
+    .from(payments)
+    .where(and(eq(payments.shopId, shopId), eq(payments.partyType, "customer"), eq(payments.direction, "in"), sql`${payments.invoiceId} is not null`, partyId ? eq(payments.partyId, partyId) : undefined));
+  return new Map(rows.flatMap((row) => (row.invoiceId ? [[row.id, row.invoiceId] as const] : [])));
+}
+
+/** Refunds paid out against a credit note (payment id → credit note id). A refund and its credit note cancel each other. */
+export async function creditNoteRefunds(db: Database | Transaction, shopId: string, partyId?: string): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ id: payments.id, creditNoteId: payments.creditNoteId })
+    .from(payments)
+    .where(and(eq(payments.shopId, shopId), eq(payments.partyType, "customer"), eq(payments.direction, "out"), sql`${payments.creditNoteId} is not null`, partyId ? eq(payments.partyId, partyId) : undefined));
+  return new Map(rows.flatMap((row) => (row.creditNoteId ? [[row.id, row.creditNoteId] as const] : [])));
+}
+
 export async function reversedPaymentIds(db: Database | Transaction, shopId: string, partyType: "customer" | "supplier", partyId?: string): Promise<Set<string>> {
   const rows = await db
     .select({ id: payments.id, reversalId: payments.reversedByPaymentId })
     .from(payments)
     .where(and(eq(payments.shopId, shopId), eq(payments.partyType, partyType), eq(payments.status, "reversed"), partyId ? eq(payments.partyId, partyId) : undefined));
   return new Set(rows.flatMap((row) => (row.reversalId ? [row.id, row.reversalId] : [row.id])));
+}
+
+/**
+ * Money received back from a supplier ("in", party supplier), for example the refund of goods returned. This is a genuine incoming
+ * payment, not a reversal of anything the shop paid out.
+ */
+export async function recordSupplierRefund(
+  tx: Transaction,
+  refund: { shopId: string; fy: string; supplierId: string; method: PaymentMethod; amountPaise: number; businessDate: string; recordedBy: string; bankAccountId?: string | null },
+): Promise<string> {
+  const id = randomUUID();
+  await tx.insert(payments).values({
+    id,
+    shopId: refund.shopId,
+    fy: refund.fy,
+    direction: "in",
+    partyType: "supplier",
+    partyId: refund.supplierId,
+    method: refund.method,
+    amountPaise: refund.amountPaise,
+    bankAccountId: refund.method === "bank" ? (refund.bankAccountId ?? null) : null,
+    businessDate: refund.businessDate,
+    recordedBy: refund.recordedBy,
+  });
+  return id;
 }

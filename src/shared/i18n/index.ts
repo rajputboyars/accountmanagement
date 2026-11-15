@@ -22,7 +22,8 @@ let patterns: Pattern[] | undefined;
 function serverMessagePatterns(): Pattern[] {
   patterns ??= (Object.keys(en) as MessageKey[])
     .filter((key) => key.startsWith("server."))
-    .sort((a, b) => en[b].length - en[a].length)
+    // The most specific wording first: compare the fixed text, not the placeholders, so "Enter the amount in rupees" beats "Enter the {label} in rupees".
+    .sort((a, b) => en[b].replace(/\{\w+\}/g, "").length - en[a].replace(/\{\w+\}/g, "").length)
     .map((key) => {
       const names: string[] = [];
       const source = en[key].replace(/[.*+?^$()|[\]\\]/g, "\\$&").replace(/\{(\w+)\}/g, (_, name: string) => {
@@ -51,6 +52,14 @@ function messageValue(name: string, value: string, language: Language): string {
   if (name === "importType") {
     const type = (Object.keys(en) as MessageKey[]).find((key) => key.startsWith("import.type.") && en[key] === value);
     return type ? DICTIONARIES[language][type] : value;
+  }
+  // Names the system itself puts in a message (a field label, a unit purpose, an approval status) are translated when they are one of the known
+  // ones. Anything else a person typed, such as a product or customer name, is left exactly as written.
+  if (name === "label" || name === "purpose" || name === "status") {
+    const lower = value.toLowerCase();
+    if (name === "status") return `approvals.status.${lower}` in en ? DICTIONARIES[language][`approvals.status.${lower}` as MessageKey] : value;
+    const known = (Object.keys(en) as MessageKey[]).find((key) => key.startsWith("label.field.") && en[key].toLowerCase() === lower);
+    return known ? DICTIONARIES[language][known] : value;
   }
   if (name === "message") return translateServerMessage(value, language);
   const unitKey = `unit.${value}.short`;

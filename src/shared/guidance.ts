@@ -19,7 +19,7 @@ export const GUIDE_MODULES = {
   inventory: { topic: "moduleInventory", permission: "inventory.view", task: "updateStock" },
   pricing: { topic: "modulePricing", permission: "pricing.edit", task: null },
   payments: { topic: "modulePayments", permission: "payments.record", task: "receivePayment" },
-  cashbook: { topic: "moduleCashbook", permission: "cash.record", task: null },
+  cashbook: { topic: "moduleCashbook", permission: "cash.view", task: null },
   reports: { topic: "moduleReports", permission: "reports.view", task: null },
   approvals: { topic: "moduleApprovals", permission: "approvals.view", task: null },
   notifications: { topic: "moduleNotifications", permission: null, task: null },

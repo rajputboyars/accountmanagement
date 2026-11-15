@@ -8,6 +8,7 @@ import { GST_STATE_LIST, stateTaxLabel } from "@/shared/gst";
 import { stateName } from "@/shared/i18n/unit-labels";
 import { CircleAlert, FilePlus2, LoaderCircle, Minus, Plus, ReceiptText, Search, Trash2 } from "lucide-react";
 import { previewBillAction, saveBillAction, searchProductsAction, type BillInputPayload } from "@/app/(app)/billing/actions";
+import { BankAccountPicker, chosenBank, mustChooseBank, type BankChoice } from "@/components/bank/bank-choice";
 import { Field, selectClass } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Money } from "@/components/nexora/money";
@@ -48,16 +49,25 @@ function bump(quantity: string, by: number): string {
 /** `noProducts`: the shop has no products yet, so the empty bill says what to do first. */
 type FirstRun = { noProducts: boolean; canAddProducts: boolean };
 
-export function BillingScreen({ customers, firstRun = { noProducts: false, canAddProducts: false } }: { customers: Customer[]; firstRun?: FirstRun }) {
+type Godown = { id: string; name: string; isDefault: boolean };
+
+export function BillingScreen({ customers, godowns = [], bankAccounts = [], firstRun = { noProducts: false, canAddProducts: false } }: { customers: Customer[]; godowns?: Godown[]; bankAccounts?: BankChoice[]; firstRun?: FirstRun }) {
   const { bfcacheId } = useRouter();
-  return <BillDraft key={bfcacheId} customers={customers} firstRun={firstRun} />;
+  return <BillDraft key={bfcacheId} customers={customers} godowns={godowns} bankAccounts={bankAccounts} firstRun={firstRun} />;
 }
 
-function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: FirstRun }) {
+function BillDraft({ customers, godowns, bankAccounts, firstRun }: { customers: Customer[]; godowns: Godown[]; bankAccounts: BankChoice[]; firstRun: FirstRun }) {
   const router = useRouter();
   const t = useT();
   const [draft, setDraft] = useState<Draft<Product>>(emptyDraft);
   const { customerId, priceList, discountPercent, placeOfSupply, lines, payments, cashReceived, idempotencyKey } = draft;
+  // Asked only when the shop has more than one godown; the choice is never made for the cashier.
+  const manyGodowns = godowns.length > 1;
+  const godownId = manyGodowns && godowns.some((godown) => godown.id === draft.godownId) ? draft.godownId : "";
+  // Asked only when the shop has more than one bank account and part of the bill is paid through the bank.
+  const bankAccountId = payments.bank.trim() ? chosenBank(bankAccounts, draft.bankAccountId) : "";
+  // With several bank accounts the cashier must choose one before the bill can be saved.
+  const bankChoiceMissing = Boolean(payments.bank.trim()) && mustChooseBank(bankAccounts) && !bankAccountId;
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
   const [bill, setBill] = useState<BillView | null>(null);
@@ -85,8 +95,8 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
   };
 
   const payload: BillInputPayload = useMemo(
-    () => ({ customerId, priceList, discountPercent, lines: lines.map((line) => ({ productId: line.product.id, unit: line.unit, quantity: line.quantity })), payments, cashReceived, placeOfSupply }),
-    [customerId, priceList, discountPercent, lines, payments, cashReceived, placeOfSupply],
+    () => ({ customerId, priceList, discountPercent, lines: lines.map((line) => ({ productId: line.product.id, unit: line.unit, quantity: line.quantity, ...(line.discountValue.trim() ? { discountKind: line.discountKind, discountValue: line.discountValue.trim() } : {}) })), payments, cashReceived, placeOfSupply, ...(godownId ? { godownId } : {}), ...(bankAccountId ? { bankAccountId } : {}) }),
+    [customerId, priceList, discountPercent, lines, payments, cashReceived, placeOfSupply, godownId, bankAccountId],
   );
   const payloadKey = JSON.stringify(payload);
   // Unreadable amounts stay as typed and are pointed out in place; nothing is asked of the server until they are corrected.
@@ -137,7 +147,7 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
     setLines((current) => {
       const existing = current.find((line) => line.product.id === product.id);
       if (existing) return current.map((line) => (line.key === existing.key ? { ...line, quantity: bump(line.quantity, 1) } : line));
-      return [...current, { key: nextKey.current++, product, unit: product.baseUnit, quantity: "1" }];
+      return [...current, { key: nextKey.current++, product, unit: product.baseUnit, quantity: "1", discountKind: "flat", discountValue: "" }];
     });
     setQuery("");
     setResults([]);
@@ -153,9 +163,10 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
   const customerProblem = problems.find((problem) => problem.field === "customerId");
   const bannerProblems = billingBannerProblems(problems);
   const lineProblem = (index: number) => problems.find((problem) => problem.field === `lines.${index}.quantity`)?.message ?? fieldErrors[`lines.${index}.quantity`];
+  const discountProblem = (index: number) => problems.find((problem) => problem.field === `lines.${index}.discountValue`)?.message ?? fieldErrors[`lines.${index}.discountValue`];
   const cash = payments.cash ? cashSummary(payments.cash, cashReceived) : null;
   const cashShort = (cash?.shortPaise ?? 0) > 0;
-  const canSave = Boolean(current) && !hasUnreadable && problems.length === 0 && !cashShort && !saving && !previewing;
+  const canSave = Boolean(current) && !bankChoiceMissing && !hasUnreadable && problems.length === 0 && !cashShort && !saving && !previewing;
 
   const fillPayment = (method: Method | "credit") => {
     if (!shown) return;
@@ -259,6 +270,7 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
             {lines.map((line, index) => {
               const priced = shown?.lines[index]?.productId === line.product.id ? shown.lines[index] : undefined;
               const problem = lineProblem(index);
+              const discountError = discountProblem(index);
               return (
                 <li key={line.key} data-guide="bill-line" className="flex flex-col gap-2 py-3 first:pt-0">
                   <div className="flex items-start justify-between gap-3">
@@ -271,7 +283,12 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
                     <div className="shrink-0 text-right">
                       {priced ? (
                         <>
-                          <Money paise={priced.amountPaise} withPaise className="font-semibold text-foreground" />
+                          <Money paise={priced.amountPaise - priced.itemDiscountPaise} withPaise className="font-semibold text-foreground" />
+                          {priced.itemDiscountPaise > 0 ? (
+                            <p data-testid="line-discount" className="text-xs text-muted-foreground">
+                              <Money paise={priced.amountPaise} withPaise /> − <Money paise={priced.itemDiscountPaise} withPaise /> {t("billing.lineDiscountWord")}
+                            </p>
+                          ) : null}
                           <p className="text-xs text-muted-foreground">
                             <Money paise={priced.ratePaise} withPaise /> / {priced.unitName.toLowerCase()}
                           </p>
@@ -305,6 +322,26 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
                         </option>
                       ))}
                     </select>
+                    <div className="flex items-center rounded-lg border border-input">
+                      <select
+                        aria-label={t("billing.discountTypeFor", { name: line.product.name })}
+                        value={line.discountKind}
+                        onChange={(event) => setLine(line.key, { discountKind: event.target.value === "percent" ? "percent" : "flat" })}
+                        className="h-11 rounded-l-lg border-0 bg-transparent pl-3 pr-1 text-sm"
+                      >
+                        <option value="flat">₹</option>
+                        <option value="percent">%</option>
+                      </select>
+                      <Input
+                        value={line.discountValue}
+                        onChange={(event) => setLine(line.key, { discountValue: event.target.value })}
+                        inputMode="decimal"
+                        placeholder={t("billing.itemDiscountPlaceholder")}
+                        aria-label={t("billing.discountFor", { name: line.product.name })}
+                        aria-invalid={discountError ? true : undefined}
+                        className="h-11 w-24 border-0 text-center tabular-nums"
+                      />
+                    </div>
                     {priced ? <Badge variant="info">{priced.rateReason}</Badge> : null}
                     {priced && priced.unit !== priced.baseUnit ? <span className="text-xs text-muted-foreground">= {priced.baseQuantity} {priced.baseUnit}</span> : null}
                     <Button type="button" variant="ghost" size="touch" className="ml-auto" aria-label={t("billing.remove", { name: line.product.name })} onClick={() => setLines((all) => all.filter((candidate) => candidate.key !== line.key))}>
@@ -316,6 +353,11 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
                       {problem}
                     </p>
                   ) : null}
+                  {discountError ? (
+                    <p role="alert" className="text-sm text-danger">
+                      {discountError}
+                    </p>
+                  ) : null}
                 </li>
               );
             })}
@@ -325,6 +367,18 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
 
       <section aria-label={t("billing.summary")} className="flex flex-col gap-4 self-start rounded-2xl border border-border bg-card p-4 sm:p-5 lg:sticky lg:top-20">
         <div className="grid grid-cols-2 gap-3">
+          {manyGodowns ? (
+            <Field label={t("godown.takeFrom")} className="col-span-2" error={problems.find((problem) => problem.field === "godownId")?.message}>
+              <select data-guide="bill-godown" value={godownId} onChange={(event) => update({ godownId: event.target.value })} className={selectClass}>
+                <option value="">{t("godown.choose")}</option>
+                {godowns.map((godown) => (
+                  <option key={godown.id} value={godown.id}>
+                    {godown.isDefault && godown.name === "Main Store" ? t("godown.mainStore") : godown.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
           <Field label={t("common.customer.label")} className="col-span-2" error={customerProblem?.message}>
             <select data-guide="bill-customer" value={customerId} onChange={(event) => update({ customerId: event.target.value })} className={selectClass}>
               <option value="">{t("common.walkInCustomer")}</option>
@@ -365,7 +419,10 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
           {shown ? (
             <>
               <Row label={t("common.subtotal")} paise={shown.totals.subtotalPaise} />
+              {/* One kind of discount is just "Total discount"; both kinds are listed, then added up. */}
+              {shown.totals.itemDiscountPaise > 0 && shown.totals.discountPaise > 0 ? <Row label={t("billing.itemDiscounts")} paise={-shown.totals.itemDiscountPaise} /> : null}
               {shown.totals.discountPaise > 0 ? <Row help="discount" label={t("common.discount")} paise={-shown.totals.discountPaise} /> : null}
+              {shown.totals.itemDiscountPaise + shown.totals.discountPaise > 0 && (shown.totals.itemDiscountPaise > 0) ? <Row label={t("billing.totalDiscount")} paise={-(shown.totals.itemDiscountPaise + shown.totals.discountPaise)} /> : null}
               <Row label={t("common.taxableValue")} paise={shown.totals.taxablePaise} />
               {shown.taxMode === "intra" ? (
                 <>
@@ -407,6 +464,7 @@ function BillDraft({ customers, firstRun }: { customers: Customer[]; firstRun: F
               </Field>
             ))}
           </div>
+          {payments.bank.trim() && mustChooseBank(bankAccounts) ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={(id) => update({ bankAccountId: id })} error={problems.find((problem) => problem.field === "bankAccountId")?.message} /> : null}
           {payments.cash ? (
             <Field
               label={t("billing.cashReceived")}

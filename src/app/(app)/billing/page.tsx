@@ -7,9 +7,10 @@ import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
 import { buttonVariants } from "@/components/ui/button";
 import { getNavItem } from "@/config/navigation";
+import { listBankChoices } from "@/modules/accounting";
 import { CATALOG_MANAGE, shopHasProducts } from "@/modules/catalog";
 import { hasPermission } from "@/modules/identity";
-import { BILLING_CREATE, listBillingCustomers } from "@/modules/sales";
+import { BILLING_CREATE, listBillingCustomers, listBillingGodowns } from "@/modules/sales";
 import { homePathForRole, requireSession } from "@/server/auth";
 import { getT } from "@/server/i18n";
 
@@ -38,7 +39,7 @@ async function NewBill() {
     );
   }
   const t = await getT();
-  const [customers, hasProducts, canAddProducts] = await Promise.all([listBillingCustomers(session), shopHasProducts(session.shopId), hasPermission(session, CATALOG_MANAGE)]);
+  const [customers, hasProducts, canAddProducts, godowns, bankAccounts] = await Promise.all([listBillingCustomers(session), shopHasProducts(session.shopId), hasPermission(session, CATALOG_MANAGE), listBillingGodowns(session), listBankChoices(session).catch(() => [])]);
   return (
     <PageContainer>
       <PageIntro
@@ -49,6 +50,9 @@ async function NewBill() {
               <Undo2 aria-hidden="true" />
               {t("billing.returns")}
             </Link>
+            <Link href="/billing/orders" className={buttonVariants({ variant: "outline", size: "touch" })}>
+              {t("orders.link")}
+            </Link>
             <Link href="/billing/invoices" className={buttonVariants({ variant: "outline", size: "touch" })}>
               <History aria-hidden="true" />
               {t("billing.bills")}
@@ -56,7 +60,7 @@ async function NewBill() {
           </>
         }
       />
-      <BillingScreen customers={customers} firstRun={{ noProducts: !hasProducts, canAddProducts }} />
+      <BillingScreen customers={customers} godowns={godowns} bankAccounts={bankAccounts} firstRun={{ noProducts: !hasProducts, canAddProducts }} />
     </PageContainer>
   );
 }

@@ -1,8 +1,9 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { closeDayAction, recordCashMovementAction, recordExpenseAction, reopenDayAction, voidExpenseAction, type CashFormState } from "@/app/(app)/cashbook/actions";
-import { Field, FormAlert, FormSelect, SubmitButton } from "@/components/catalog/form-bits";
+import { closeDayAction, reconcileCashAction, recordCashMovementAction, recordExpenseAction, reopenDayAction, submitDrawerCountAction, voidExpenseAction, type CashFormState } from "@/app/(app)/cashbook/actions";
+import { BankAccountSelect, type BankChoice } from "@/components/bank/bank-choice";
+import { Field, FormAlert, FormSelect, selectClass, SubmitButton } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Money } from "@/components/nexora/money";
 import { Button } from "@/components/ui/button";
@@ -24,8 +25,9 @@ function useKeyedAction(action: (previous: CashFormState, formData: FormData) =>
   return { idempotencyKey, state, formAction };
 }
 
-export function ExpenseForm({ date }: { date: string }) {
+export function ExpenseForm({ date, bankAccounts = [] }: { date: string; bankAccounts?: BankChoice[] }) {
   const t = useT();
+  const [method, setMethod] = useState("cash");
   const { idempotencyKey, state, formAction } = useKeyedAction(recordExpenseAction);
   const values = state.ok ? {} : (state.values ?? {});
   const errors = state.fieldErrors ?? {};
@@ -47,16 +49,17 @@ export function ExpenseForm({ date }: { date: string }) {
           <Input name="amount" defaultValue={values.amount} inputMode="decimal" placeholder={t("cashbook.amountExample")} className="h-11 tabular-nums" />
         </Field>
         <Field label={t("cashbook.paidBy")} error={errors.method}>
-          <FormSelect name="method" defaultValue={values.method ?? "cash"}>
+          <select name="method" value={method} onChange={(event) => setMethod(event.target.value)} className={selectClass}>
             <option value="cash">{t("cashbook.cashFromDrawer")}</option>
             <option value="upi">{t("common.upi")}</option>
             <option value="bank">{t("common.bank")}</option>
-          </FormSelect>
+          </select>
         </Field>
         <Field label={<span>{t("cashbook.reference")} <span className="font-normal text-muted-foreground">{t("common.optional")}</span></span>} error={errors.reference}>
           <Input name="reference" defaultValue={values.reference} maxLength={40} className="h-11" />
         </Field>
       </div>
+      {method === "bank" && bankAccounts.length > 1 ? <BankAccountSelect accounts={bankAccounts} error={errors.bankAccountId} /> : null}
       <Field label={<span>{t("cashbook.note")} <span className="font-normal text-muted-foreground">{t("cashbook.neededForOther")}</span></span>} error={errors.note}>
         <Input name="note" defaultValue={values.note} maxLength={200} placeholder={t("cashbook.noteExample")} className="h-11" />
       </Field>
@@ -68,8 +71,9 @@ export function ExpenseForm({ date }: { date: string }) {
   );
 }
 
-export function CashMovementForm({ date }: { date: string }) {
+export function CashMovementForm({ date, bankAccounts = [] }: { date: string; bankAccounts?: BankChoice[] }) {
   const t = useT();
+  const [kind, setKind] = useState("bank_deposit");
   const { idempotencyKey, state, formAction } = useKeyedAction(recordCashMovementAction);
   const values = state.ok ? {} : (state.values ?? {});
   const errors = state.fieldErrors ?? {};
@@ -79,16 +83,18 @@ export function CashMovementForm({ date }: { date: string }) {
       <input type="hidden" name="businessDate" value={date} />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
         <Field label={t("cashbook.whatHappened")} error={errors.kind}>
-          <FormSelect name="kind" defaultValue={values.kind ?? "bank_deposit"}>
+          <select name="kind" value={kind} onChange={(event) => setKind(event.target.value)} className={selectClass}>
             <option value="bank_deposit">{t("cashbook.movement.bankDeposit")}</option>
+            <option value="bank_withdrawal">{t("cashbook.movement.bankWithdrawal")}</option>
             <option value="withdrawal">{t("cashbook.movement.withdrawal")}</option>
             <option value="float_added">{t("cashbook.line.added")}</option>
-          </FormSelect>
+          </select>
         </Field>
         <Field label={t("common.amountRupees")} error={errors.amount}>
           <Input name="amount" defaultValue={values.amount} inputMode="decimal" className="h-11 tabular-nums" />
         </Field>
       </div>
+      {(kind === "bank_deposit" || kind === "bank_withdrawal") && bankAccounts.length > 1 ? <BankAccountSelect accounts={bankAccounts} error={errors.bankAccountId} /> : null}
       <Field label={<span>{t("cashbook.note")} <span className="font-normal text-muted-foreground">{t("common.optional")}</span></span>} error={errors.note}>
         <Input name="note" defaultValue={values.note} maxLength={200} className="h-11" />
       </Field>
@@ -215,6 +221,53 @@ export function ReopenDayForm({ date }: { date: string }) {
         <Button type="button" variant="ghost" size="touch" onClick={() => setOpen(false)}>
           {t("common.cancel")}
         </Button>
+      </div>
+    </form>
+  );
+}
+
+/** Anyone who counts the drawer (a cashier, a manager) sends the amount; the person who closes the day sees it. */
+export function DrawerCountForm({ date }: { date: string }) {
+  const t = useT();
+  const { idempotencyKey, state, formAction } = useKeyedAction(submitDrawerCountAction);
+  const errors = state.fieldErrors ?? {};
+  return (
+    <form key={idempotencyKey} action={formAction} className="flex flex-col gap-3">
+      <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+      <input type="hidden" name="businessDate" value={date} />
+      <Field label={t("cashbook.countedField")} error={errors.counted}>
+        <Input name="counted" defaultValue={state.ok ? "" : state.values?.counted} inputMode="decimal" placeholder={t("cashbook.countedExample")} className="h-11 tabular-nums" />
+      </Field>
+      <Field label={<span>{t("cashbook.note")} <span className="font-normal text-muted-foreground">{t("common.optional")}</span></span>} error={errors.note}>
+        <Input name="note" defaultValue={state.ok ? "" : state.values?.note} maxLength={200} className="h-11" />
+      </Field>
+      <FormAlert error={state.fieldErrors ? undefined : state.error} message={state.message} />
+      <div>
+        <SubmitButton variant="outline">{t("cashbook.sendCount")}</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+/** The owner confirms what the drawer really holds when the books and the cashbook did not agree from before. */
+export function ReconcileCashForm() {
+  const t = useT();
+  const { idempotencyKey, state, formAction } = useKeyedAction(reconcileCashAction);
+  const errors = state.fieldErrors ?? {};
+  return (
+    <form key={idempotencyKey} action={formAction} className="flex flex-col gap-3">
+      <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label={t("cashbook.countedField")} error={errors.counted}>
+          <Input name="counted" defaultValue={state.values?.counted} inputMode="decimal" placeholder={t("cashbook.countedExample")} className="h-11 tabular-nums" />
+        </Field>
+        <Field label={t("common.reason")} error={errors.reason}>
+          <Input name="reason" defaultValue={state.values?.reason} maxLength={200} className="h-11" />
+        </Field>
+      </div>
+      <FormAlert error={state.fieldErrors ? undefined : state.error} message={state.message} />
+      <div>
+        <SubmitButton>{t("cashbook.confirmCash")}</SubmitButton>
       </div>
     </form>
   );

@@ -5,8 +5,10 @@ import { hasPermission, requirePermission, type SessionContext } from "@/modules
 import { getDb, withTransaction, type Database, type Transaction } from "@/server/db";
 import { ConflictError, NotFoundError } from "@/server/errors";
 import { financialYearLabel } from "@/shared/financial-year";
+import { parseRupeesToPaise } from "@/shared/money";
 import { GST_REGISTRATIONS, gstinProblem, isGstState, STATUTORY_GST_RATES_BP, type GstRegistration, type TaxSettings } from "@/shared/gst";
 import { numberSeries, shops } from "./schema";
+import { loadStaffLimits } from "./shop";
 
 /**
  * Business profile, GST and invoice settings (owner: `settings.edit`). Every change is validated here,
@@ -189,4 +191,36 @@ export async function invoiceProfile(shopId: string, db: Database | Transaction 
   const [shop] = await db.select().from(shops).where(eq(shops.id, shopId)).limit(1);
   if (!shop) throw new NotFoundError("Shop not found.");
   return { name: shop.name, legalName: shop.legalName, address: shop.address, phone: shop.phone, stateCode: shop.stateCode, gstin: shop.gstin, registration: shop.gstRegistration as GstRegistration, ...extrasOf(shop.settings), ...profileExtrasOf(shop.settings) };
+}
+
+const limitsSchema = z.object({
+  smallExpense: z.string().trim().transform((value, ctx): number => {
+    const paise = parseRupeesToPaise(value || "0");
+    if (paise === null) {
+      ctx.addIssue({ code: "custom", message: "Enter the small-expense limit in rupees, for example 500." });
+      return z.NEVER;
+    }
+    return paise;
+  }),
+  returnLimit: z.string().trim().transform((value, ctx): number => {
+    const paise = parseRupeesToPaise(value || "0");
+    if (paise === null) {
+      ctx.addIssue({ code: "custom", message: "Enter the return limit in rupees, for example 2000." });
+      return z.NEVER;
+    }
+    return paise;
+  }),
+});
+
+/** The owner sets what a cashier may do alone: the biggest expense and the biggest return before the owner must approve. */
+export async function updateStaffLimits(session: SessionContext, input: unknown) {
+  await requirePermission(session, SETTINGS_EDIT);
+  const data = limitsSchema.parse(input);
+  const limits = { smallExpensePaise: data.smallExpense, returnLimitPaise: data.returnLimit };
+  await withTransaction(async (tx) => {
+    const shop = await lockShop(tx, session.shopId);
+    const before = await loadStaffLimits(shop.id, tx);
+    await tx.update(shops).set({ settings: sql`coalesce(${shops.settings}, '{}'::jsonb) || ${JSON.stringify({ staffLimits: limits })}::jsonb` }).where(eq(shops.id, shop.id));
+    await recordAudit(tx, actorOf(session), { action: "settings.staff_limits_updated", entityType: "shop", entityId: shop.id, before, after: limits });
+  });
 }

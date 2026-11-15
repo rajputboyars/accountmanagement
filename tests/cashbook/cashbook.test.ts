@@ -198,14 +198,17 @@ describe("expenses", () => {
 });
 
 describe("permissions and isolation", () => {
-  it("managers record cash but can't close; cashiers can't see the cashbook", async () => {
+  it("managers record cash and close the day; cashiers see the cashbook but may only record small expenses and count the drawer", async () => {
     const { shop } = await freshShop();
     const { session: manager } = await signInAs(shop.users.manager);
     await expect(recordExpense(manager, { idempotencyKey: key(), businessDate: today, category: "tea", amount: "10", method: "cash" })).resolves.toHaveProperty("id");
-    await expect(closeDay(manager, { businessDate: today, counted: "4990" })).rejects.toBeInstanceOf(ForbiddenError);
     const { session: cashier } = await signInAs(shop.users.cashier);
-    await expect(getCashbook(cashier, today)).rejects.toBeInstanceOf(ForbiddenError);
-    await expect(recordExpense(cashier, { idempotencyKey: key(), businessDate: today, category: "tea", amount: "10", method: "cash" })).rejects.toBeInstanceOf(ForbiddenError);
+    // A cashier sees the cashbook but cannot close the day or record cash movements.
+    await expect(getCashbook(cashier, today)).resolves.toMatchObject({ canClose: false, canRecord: false, canRecordExpense: true, showTotals: false });
+    await expect(closeDay(cashier, { businessDate: today, counted: "4990", reasonKey: "other", reasonNote: "x" })).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(recordCashMovement(cashier, { idempotencyKey: key(), businessDate: today, kind: "withdrawal", amount: "10" })).rejects.toBeInstanceOf(ForbiddenError);
+    // The manager closes the day.
+    await expect(closeDay(manager, { businessDate: today, counted: "4980", reasonKey: "change_short" })).resolves.toMatchObject({ differencePaise: -1000 });
   });
 
   it("never mixes shops", async () => {

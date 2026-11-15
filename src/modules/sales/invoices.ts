@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { documentParties, printedSeller } from "./document-parties";
-import { and, asc, desc, eq, ilike, is, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, is, sql, TransactionRollbackError, type SQL, isNull } from "drizzle-orm";
+import { deriveChallanBill } from "./challan-billing";
+import { bankAccountKeyOf, postInvoiceCancelled, postInvoiceIssued, postPayment, resolveBankRoute } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, searchShopProducts } from "@/modules/catalog";
 import { ANY_TARGET, consumeApproval, consumeMatchingApproval, hasPermission, loadUserNames, requirePermission, verifyOwnerPin, type SessionContext } from "@/modules/identity";
-import { appendStockMovement, lockStockRows, stockOnHand } from "@/modules/inventory";
+import { appendStockMovement, godownList, lockStockRows, originalGodowns, stockOnHand } from "@/modules/inventory";
 import { appendLedgerEntry, lockPartyBalance, partyBalance } from "@/modules/ledger";
 import { ensureWalkInCustomer, findCustomer, listActiveCustomers, loadCustomerNames } from "@/modules/parties";
 import { paymentsForInvoice, recordCounterPayment, refundInvoicePayments } from "@/modules/payments";
@@ -17,10 +19,11 @@ import { indiaDate } from "@/shared/financial-year";
 import { formatQuantity, parseQuantity, toDbQuantity } from "@/shared/quantity";
 import { billView, computeBill, type BillView } from "./bill";
 import { BILLING_CREATE, BILLING_RETURN, BILLING_VIEW, INVOICE_CANCEL } from "./permissions";
-import { creditNotes, invoiceLines, invoices } from "./schema";
+import { invoiceChallanLinks, creditNotes, invoiceLines, invoices } from "./schema";
 import { billInputSchema, cancelInvoiceSchema, correctInvoiceSchema, saveBillSchema } from "./validation";
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
+const booksOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId });
 
 type SaveInput = ReturnType<typeof saveBillSchema.parse>;
 type ParsedBill = ReturnType<typeof billInputSchema.parse>;
@@ -44,7 +47,7 @@ async function computeWithApprovals(tx: Transaction, session: SessionContext, bi
   let creditApprovalId: string | null = null;
   if (computed.problems.some((problem) => problem.code === "DISCOUNT_APPROVAL_REQUIRED")) {
     const refs = registeredId ? [registeredId, ANY_TARGET] : [ANY_TARGET];
-    const covers = (payload: { limitBp?: number | null }) => ((payload.limitBp ?? 0) >= bill.discountPercent ? null : "The approved discount is lower than the discount on this bill.");
+    const covers = (payload: { limitBp?: number | null }) => ((payload.limitBp ?? 0) >= computed.effectiveDiscountBp ? null : "The approved discount is lower than the discount on this bill.");
     const used = save.discountApprovalId ? await consumeApproval(tx, session, save.discountApprovalId, "discount_over_limit", refs, covers) : await consumeMatchingApproval(tx, session, "discount_over_limit", refs, covers);
     if (used) {
       discountApprovalId = used.id;
@@ -73,7 +76,8 @@ export async function previewBill(session: SessionContext, input: unknown): Prom
   try {
     await getDb().transaction(async (tx) => {
       await tx.execute(sql`set transaction read only`);
-      view = billView(await computeBill(tx, session, data));
+      const bill = data.challanLines?.length ? (await deriveChallanBill(tx, session.shopId, data, { lock: false })).bill : data;
+      view = billView(await computeBill(tx, session, bill));
       tx.rollback();
     });
   } catch (error) {
@@ -96,15 +100,15 @@ export type CreatedInvoice = { id: string; number: string; totalPaise: number; r
  */
 export async function createInvoice(session: SessionContext, input: unknown): Promise<CreatedInvoice> {
   await requirePermission(session, BILLING_CREATE);
-  const bill = billInputSchema.parse(input);
+  const parsedBill = billInputSchema.parse(input);
   const save = saveBillSchema.parse(input);
   // Cash received only works out change and is never saved, so a retry with a different amount
   // typed there is still the same bill and must replay, not save a second one.
   const requestBody = {
     action: "sales.invoice",
-    ...bill,
+    ...parsedBill,
     cashReceived: undefined,
-    lines: bill.lines.map((line) => ({ ...line, quantity: line.quantity.toString() })),
+    lines: parsedBill.lines.map((line) => ({ ...line, quantity: line.quantity.toString() })),
     expectedTotalPaise: save.expectedTotalPaise,
     expectedRates: save.expectedRates,
   };
@@ -112,7 +116,10 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
   return withTransaction(async (tx) => {
     const outcome = await withIdempotency<Omit<CreatedInvoice, "replayed">>(tx, { shopId: session.shopId, userId: session.userId, key: save.idempotencyKey }, requestBody, async () => {
       await lockDayForWrite(tx, session.shopId, indiaDate());
-      await lockStockRows(tx, session.shopId, bill.lines.map((line) => line.productId));
+      // Goods already delivered: their lines come from the challans (locked), and no stock rows are touched.
+      const derived = parsedBill.challanLines?.length ? await deriveChallanBill(tx, session.shopId, parsedBill, { lock: true }) : null;
+      const bill = derived?.bill ?? parsedBill;
+      if (!derived) await lockStockRows(tx, session.shopId, bill.lines.map((line) => line.productId));
       const chosen = bill.customerId ? await findCustomer(session.shopId, bill.customerId, tx) : null;
       const registered = chosen && chosen.type !== "walkin" ? chosen : null;
       if (registered) await lockPartyBalance(tx, session.shopId, "customer", registered.id);
@@ -125,6 +132,10 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
       }
       const problem = computed.problems[0];
       if (problem) throw new ConflictError(problem.code, problem.message, { bill: view, problems: computed.problems });
+      // The delivered quantity was counted with the factor it left under; refuse if the product's unit has since changed.
+      if (derived && computed.lines.some((line, index) => line.saleUnit.factor !== derived.rows[index]!.factor || line.quote.baseQuantity !== derived.rows[index]!.base)) {
+        throw new ConflictError("UNIT_CHANGED", "A unit's size changed since these goods were delivered. Bill the delivered quantity in its own unit or ask the owner.");
+      }
 
       const customer = chosen ?? (await ensureWalkInCustomer(tx, session.shopId));
       const businessDate = indiaDate();
@@ -142,6 +153,7 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
         createdBy: session.userId,
         subtotalPaise: totals.subtotalPaise,
         discountBp: totals.discountBp,
+        itemDiscountPaise: totals.itemDiscountPaise,
         discountPaise: totals.discountPaise,
         taxablePaise: totals.taxablePaise,
         cgstPaise: totals.cgstPaise,
@@ -150,15 +162,17 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
         roundOffPaise: totals.roundOffPaise,
         totalPaise: totals.totalPaise,
         paidNowPaise: computed.paidNowPaise,
-        costComplete: computed.costComplete,
+        costComplete: derived ? derived.rows.every((row) => row.unitCostPaise !== null) : computed.costComplete,
+        fromChallans: Boolean(derived),
         taxMode: computed.taxMode,
         placeOfSupply: computed.placeOfSupply,
         discountApprovalId: consumedDiscountApprovalId,
         ...(await documentParties(tx, session.shopId, customer)),
       });
+      const lineIds = computed.lines.map(() => randomUUID());
       await tx.insert(invoiceLines).values(
         computed.lines.map((line, index) => ({
-          id: randomUUID(),
+          id: lineIds[index]!,
           invoiceId,
           lineNo: index + 1,
           productId: line.product.id,
@@ -170,21 +184,29 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
           rateReason: line.rateReason,
           linePaise: line.quote.lineAmountPaise,
           lineDiscountPaise: totals.lines[index]!.discountPaise,
+          discountKind: computed.lines[index]!.discount.kind,
+          discountValue: computed.lines[index]!.discount.value,
+          itemDiscountPaise: totals.lines[index]!.itemDiscountPaise,
           taxablePaise: totals.lines[index]!.taxablePaise,
           gstRateBp: totals.lines[index]!.gstRateBp,
           cgstPaise: totals.lines[index]!.cgstPaise,
           sgstPaise: totals.lines[index]!.sgstPaise,
           igstPaise: totals.lines[index]!.igstPaise,
-          unitCostPaise: line.product.costPaise,
+          unitCostPaise: derived ? derived.rows[index]!.unitCostPaise : line.product.costPaise,
           productName: line.product.name,
           hsn: line.product.hsn,
         })),
       );
-      for (const line of computed.lines) {
+      // Which delivered quantity each line covers. No stock moves for these goods: it left on the challan.
+      if (derived) {
+        await tx.insert(invoiceChallanLinks).values(derived.rows.map((row, index) => ({ id: randomUUID(), shopId: session.shopId, invoiceId, invoiceLineId: lineIds[index]!, challanLineId: row.challanLineId, baseQty: toDbQuantity(row.base) })));
+      }
+      for (const line of derived ? [] : computed.lines) {
         await appendStockMovement(tx, {
           shopId: session.shopId,
           productId: line.product.id,
           movementDate: businessDate,
+          godownId: computed.godownId ?? undefined,
           kind: "sale",
           qtyBase: -line.quote.baseQuantity,
           unitCostPaise: line.product.costPaise,
@@ -197,10 +219,13 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
       if (registered) {
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: registered.id, entryDate: businessDate, kind: "invoice", sourceType: "invoice", sourceId: invoiceId, debitPaise: totals.totalPaise });
       }
+      await postInvoiceIssued(tx, booksOf(session), { invoiceId, date: businessDate, customerId: customer.id, taxablePaise: totals.taxablePaise, gstPaise: totals.cgstPaise + totals.sgstPaise + totals.igstPaise, roundOffPaise: totals.roundOffPaise, totalPaise: totals.totalPaise, fromDelivery: Boolean(derived), lines: computed.lines.map((line, index) => ({ productId: line.product.id, qtyBase: toDbQuantity(line.quote.baseQuantity), unitCostPaise: derived ? derived.rows[index]!.unitCostPaise : line.product.costPaise })) });
       for (const method of ["cash", "upi", "card", "bank"] as const) {
         const amount = bill.payments[method];
         if (amount <= 0) continue;
-        const paymentId = await recordCounterPayment(tx, { shopId: session.shopId, fy, customerId: registered?.id ?? null, invoiceId, method, amountPaise: amount, businessDate, recordedBy: session.userId });
+        const route = await resolveBankRoute(tx, session.shopId, method, bill.bankAccountId);
+        const paymentId = await recordCounterPayment(tx, { shopId: session.shopId, fy, customerId: registered?.id ?? null, invoiceId, method, amountPaise: amount, businessDate, recordedBy: session.userId, bankAccountId: route.bankAccountId });
+        await postPayment(tx, booksOf(session), { paymentId, date: businessDate, direction: "in", partyType: "customer", partyId: customer.id, method, amountPaise: amount, bankAccountKey: route.key });
         if (registered) {
           await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: registered.id, entryDate: businessDate, kind: "payment", sourceType: "payment", sourceId: paymentId, creditPaise: amount });
         }
@@ -216,6 +241,7 @@ export async function createInvoice(session: SessionContext, input: unknown): Pr
           priceList: computed.priceList,
           totalPaise: totals.totalPaise,
           discountBp: totals.discountBp,
+          itemDiscountPaise: totals.itemDiscountPaise,
           paidNowPaise: computed.paidNowPaise,
           methods: Object.fromEntries(Object.entries(bill.payments).filter(([, amount]) => amount > 0)),
           creditPaise: computed.creditPaise,
@@ -255,16 +281,19 @@ export async function cancelInvoice(session: SessionContext, invoiceId: string, 
 
     const lines = await tx.select().from(invoiceLines).where(eq(invoiceLines.invoiceId, invoice.id)).orderBy(asc(invoiceLines.lineNo));
     await lockStockRows(tx, session.shopId, lines.map((line) => line.productId));
+    const soldFrom = await originalGodowns(tx, session.shopId, "invoice", invoice.id);
     const customer = await findCustomer(session.shopId, invoice.customerId, tx);
     const registered = customer.type !== "walkin";
     if (registered) await lockPartyBalance(tx, session.shopId, "customer", customer.id);
 
     await tx.update(invoices).set({ status: "cancelled", cancelledAt: new Date(), cancelledBy: session.userId, cancelReason: reason }).where(eq(invoices.id, invoice.id));
-    for (const line of lines) {
+    // A bill made from delivered goods never moved stock, so cancelling it puts none back: the goods stay delivered and can be billed again.
+    for (const line of invoice.fromChallans ? [] : lines) {
       await appendStockMovement(tx, {
         shopId: session.shopId,
         productId: line.productId,
         movementDate: today,
+        godownId: soldFrom.get(line.productId),
         kind: "sale_cancel",
         qtyBase: parseQuantity(line.baseQty),
         unitCostPaise: line.unitCostPaise,
@@ -283,6 +312,9 @@ export async function cancelInvoice(session: SessionContext, invoiceId: string, 
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: customer.id, entryDate: today, kind: "payment", sourceType: "payment", sourceId: refund.id, debitPaise: refund.amountPaise });
       }
     }
+    if (invoice.fromChallans) await tx.update(invoiceChallanLinks).set({ releasedAt: new Date() }).where(and(eq(invoiceChallanLinks.invoiceId, invoice.id), isNull(invoiceChallanLinks.releasedAt)));
+    await postInvoiceCancelled(tx, booksOf(session), { invoiceId: invoice.id, date: today });
+    for (const refund of refunds) await postPayment(tx, booksOf(session), { paymentId: refund.id, date: today, direction: "out", partyType: "customer", partyId: customer.id, method: refund.method, amountPaise: refund.amountPaise, bankAccountKey: refund.bankAccountId ? await bankAccountKeyOf(tx, session.shopId, refund.bankAccountId) : null });
     await recordAudit(tx, actorOf(session), {
       action: "sales.invoice_cancelled",
       entityType: "invoice",
@@ -346,6 +378,7 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
 
         if (!original) throw new NotFoundError("Bill not found.");
         if (original.status === "cancelled") throw new ConflictError("ALREADY_CANCELLED", "This bill is already cancelled.");
+        if (original.fromChallans) throw new ConflictError("CHALLAN_BILL", "A bill made from delivered goods can't be corrected. Cancel it and bill the goods again.");
         if (original.businessDate !== today) throw new ConflictError("NOT_SAME_DAY", "Only today's bills can be corrected. For an older bill, issue a credit note.");
 
         const [returned] = await tx
@@ -388,10 +421,12 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
           })
           .where(eq(invoices.id, original.id));
 
+        const origSoldFrom = await originalGodowns(tx, session.shopId, "invoice", original.id);
         for (const line of origLines) {
           await appendStockMovement(tx, {
             shopId: session.shopId,
             productId: line.productId,
+            godownId: origSoldFrom.get(line.productId),
             movementDate: today,
             kind: "sale_cancel",
             qtyBase: parseQuantity(line.baseQty),
@@ -454,6 +489,9 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
           reason: correction.reason,
         });
 
+        await postInvoiceCancelled(tx, booksOf(session), { invoiceId: original.id, date: today });
+        for (const refund of refunds) await postPayment(tx, booksOf(session), { paymentId: refund.id, date: today, direction: "out", partyType: "customer", partyId: origCustomer.id, method: refund.method, amountPaise: refund.amountPaise, bankAccountKey: refund.bankAccountId ? await bankAccountKeyOf(tx, session.shopId, refund.bankAccountId) : null });
+
         // 2. Issue the new corrected invoice
 
         const { computed, discountApprovalId: consumedDiscountApprovalId, creditApprovalId: consumedCreditApprovalId } = await computeWithApprovals(tx, session, bill, save, registered?.id ?? null);
@@ -485,6 +523,7 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
           createdBy: session.userId,
           subtotalPaise: totals.subtotalPaise,
           discountBp: totals.discountBp,
+          itemDiscountPaise: totals.itemDiscountPaise,
           discountPaise: totals.discountPaise,
           taxablePaise: totals.taxablePaise,
           cgstPaise: totals.cgstPaise,
@@ -515,6 +554,9 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
             rateReason: line.rateReason,
             linePaise: line.quote.lineAmountPaise,
             lineDiscountPaise: totals.lines[index]!.discountPaise,
+            discountKind: computed.lines[index]!.discount.kind,
+            discountValue: computed.lines[index]!.discount.value,
+            itemDiscountPaise: totals.lines[index]!.itemDiscountPaise,
             taxablePaise: totals.lines[index]!.taxablePaise,
             gstRateBp: totals.lines[index]!.gstRateBp,
             cgstPaise: totals.lines[index]!.cgstPaise,
@@ -530,6 +572,7 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
           await appendStockMovement(tx, {
             shopId: session.shopId,
             productId: line.product.id,
+            godownId: computed.godownId ?? undefined,
             movementDate: today,
             kind: "sale",
             qtyBase: -line.quote.baseQuantity,
@@ -553,10 +596,12 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
             debitPaise: totals.totalPaise,
           });
         }
+        await postInvoiceIssued(tx, booksOf(session), { invoiceId: newInvoiceId, date: today, customerId: customer.id, taxablePaise: totals.taxablePaise, gstPaise: totals.cgstPaise + totals.sgstPaise + totals.igstPaise, roundOffPaise: totals.roundOffPaise, totalPaise: totals.totalPaise, lines: computed.lines.map((line) => ({ productId: line.product.id, qtyBase: toDbQuantity(line.quote.baseQuantity), unitCostPaise: line.product.costPaise })) });
 
         for (const method of ["cash", "upi", "card", "bank"] as const) {
           const amount = bill.payments[method];
           if (amount <= 0) continue;
+          const route = await resolveBankRoute(tx, session.shopId, method, bill.bankAccountId);
           const paymentId = await recordCounterPayment(tx, {
             shopId: session.shopId,
             fy,
@@ -566,7 +611,9 @@ export async function correctInvoice(session: SessionContext, originalInvoiceId:
             amountPaise: amount,
             businessDate: today,
             recordedBy: session.userId,
+            bankAccountId: route.bankAccountId,
           });
+          await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "in", partyType: "customer", partyId: customer.id, method, amountPaise: amount, bankAccountKey: route.key });
           if (registered) {
             await appendLedgerEntry(tx, {
               shopId: session.shopId,
@@ -689,6 +736,13 @@ export async function searchSellableProducts(session: SessionContext, q: string)
     units: [{ code: item.baseUnit, label: item.baseUnitName }, ...item.conversions.map((conversion) => ({ code: conversion.unit, label: `${conversion.unitName} of ${conversion.factor}` }))],
     stockQty: stock.has(item.id) ? formatQuantity(stock.get(item.id)!.qty) : null,
   }));
+}
+
+/** The godowns a bill can take goods from, only when there is more than one to choose from (a one-godown shop is never asked). */
+export async function listBillingGodowns(session: SessionContext) {
+  await requirePermission(session, BILLING_CREATE);
+  const places = await godownList(getDb(), session.shopId);
+  return places.length > 1 ? places.map((place) => ({ id: place.id, name: place.name, isDefault: place.isDefault })) : [];
 }
 
 export async function listBillingCustomers(session: SessionContext) {

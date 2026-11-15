@@ -10,7 +10,7 @@ import { ConflictError, ForbiddenError, NotFoundError } from "@/server/errors";
 import { financialYearLabel } from "@/shared/financial-year";
 import { numberSeries, shops } from "./schema";
 
-export const DOCUMENT_SERIES = ["INV", "CN", "RCPT", "PO", "GRN", "ADJ"] as const;
+export const DOCUMENT_SERIES = ["INV", "CN", "RCPT", "PO", "GRN", "ADJ", "TRF", "DN", "SO", "DC"] as const;
 
 export const setupSchema = z.object({
   setupToken: z.string().min(1, "Enter the setup token."),
@@ -60,6 +60,8 @@ export async function runFirstTimeSetup(input: SetupInput, now: Date = new Date(
     await seedDefaultUnits(tx, shopId);
     const fy = financialYearLabel(now);
     await tx.insert(numberSeries).values(DOCUMENT_SERIES.map((series) => ({ shopId, series, fy })));
+    // Every shop keeps its stock in a Main Store from day one; nothing about godowns is shown until a second one is added.
+    await tx.execute(sql`insert into godowns (id, shop_id, name, is_default) values (gen_random_uuid(), ${shopId}, 'Main Store', true) on conflict do nothing`);
     await recordAudit(tx, { shopId, userId: ownerId, role: "owner" }, {
       action: "setup.completed",
       entityType: "shop",

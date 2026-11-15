@@ -9,6 +9,7 @@ import { ScrollIntoViewOnHash } from "@/components/nexora/scroll-into-view";
 import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { listBankChoices } from "@/modules/accounting";
 import { getCustomerAccount, listWhatsAppMessages } from "@/modules/reporting";
 import { requireSession } from "@/server/auth";
 import { getLanguage, getT } from "@/server/i18n";
@@ -58,6 +59,7 @@ async function Account({ params, searchParams }: Pick<Props, "params" | "searchP
   const [{ customerId }, query] = await Promise.all([params, searchParams]);
   const session = await requireSession();
   const [t, language] = await Promise.all([getT(), getLanguage()]);
+  const bankAccounts = await listBankChoices(session).catch(() => []);
   const dateText = (value: string) => billDate(value, language);
   const days = (count: number) => t("common.days", { count });
   const account = await getCustomerAccount(session, customerId, { from: String(query.from ?? ""), to: String(query.to ?? "") }).catch((error: unknown) => {
@@ -312,7 +314,7 @@ async function Account({ params, searchParams }: Pick<Props, "params" | "searchP
         <div className="flex min-w-0 flex-col gap-6">
           {account.canRecord ? (
             <SectionCard title={t("customers.recordTitle")} anchorId="section-record-a-payment" description={t("customers.recordHelp")}>
-              <ReceiptForm customerId={customer.id} balanceText={formatPaise(account.balancePaise, { withPaise: true })} />
+              <ReceiptForm customerId={customer.id} balanceText={formatPaise(account.balancePaise, { withPaise: true })} bankAccounts={bankAccounts} />
               <ScrollIntoViewOnHash anchorId="section-record-a-payment" />
             </SectionCard>
           ) : null}

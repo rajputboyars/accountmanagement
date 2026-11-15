@@ -2,7 +2,9 @@ import { sql } from "drizzle-orm";
 import { char, check, date, index, integer, numeric, pgTable, text, timestamp, unique, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 import { products } from "../catalog/schema";
 import { users } from "../identity/schema";
+import { godowns } from "../inventory/schema";
 import { suppliers } from "../parties/schema";
+import { payments } from "../payments/schema";
 import { shops } from "../settings/schema";
 import { createdAt, id, oneOf, paise, quantity } from "../../server/schema-helpers";
 
@@ -109,5 +111,90 @@ export const goodsReceiptLines = pgTable(
     check("goods_receipt_lines_gst_rate_check", sql`${t.gstRateBp} in (0, 10, 25, 150, 300, 500, 1200, 1800, 2800, 4000)`), // STATUTORY_GST_RATES_BP
     index("goods_receipt_lines_receipt_idx").on(t.goodsReceiptId),
     index("goods_receipt_lines_po_line_idx").on(t.purchaseOrderLineId),
+  ],
+);
+
+/**
+ * Which products a supplier supplies (many to many). It only narrows what the purchase screens
+ * offer; stock, cost and ledger never read it. Filled by quick-add, "link existing product" and,
+ * for existing shops, a backfill from past orders and receipts.
+ */
+export const supplierProducts = pgTable(
+  "supplier_products",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    supplierId: uuid("supplier_id").notNull().references(() => suppliers.id),
+    productId: uuid("product_id").notNull().references(() => products.id),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("supplier_products_supplier_product_key").on(t.supplierId, t.productId),
+    index("supplier_products_shop_supplier_idx").on(t.shopId, t.supplierId),
+    index("supplier_products_product_idx").on(t.productId),
+  ],
+);
+
+export const PURCHASE_RETURN_SETTLEMENTS = ["credit", "refund"] as const;
+export const REFUND_METHODS = ["cash", "upi", "bank", "cheque"] as const;
+
+/**
+ * Goods sent back to a supplier from an existing receipt. The document is also the supplier's debit note (DN number).
+ * Lines keep the receipt line's own unit, factor, cost and GST, so nothing is repriced. Append-only: a return is never edited.
+ */
+export const purchaseReturns = pgTable(
+  "purchase_returns",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    fy: char("fy", { length: 5 }).notNull(),
+    number: varchar("number", { length: 16 }).notNull(),
+    goodsReceiptId: uuid("goods_receipt_id").notNull().references(() => goodsReceipts.id),
+    supplierId: uuid("supplier_id").notNull().references(() => suppliers.id),
+    godownId: uuid("godown_id").notNull().references(() => godowns.id),
+    returnDate: date("return_date", { mode: "string" }).notNull(),
+    reason: text("reason").notNull(),
+    settlement: text("settlement").$type<(typeof PURCHASE_RETURN_SETTLEMENTS)[number]>().notNull(),
+    refundMethod: text("refund_method").$type<(typeof REFUND_METHODS)[number]>(),
+    /** The money received from the supplier, an incoming payment, when the return is refunded. */
+    refundPaymentId: uuid("refund_payment_id").references(() => payments.id),
+    taxablePaise: paise("taxable_paise").notNull(),
+    gstPaise: paise("gst_paise").notNull().default(0),
+    totalPaise: paise("total_paise").notNull(),
+    createdBy: uuid("created_by").notNull().references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("purchase_returns_shop_fy_number_key").on(t.shopId, t.fy, t.number),
+    index("purchase_returns_receipt_idx").on(t.goodsReceiptId),
+    index("purchase_returns_supplier_idx").on(t.supplierId, t.returnDate),
+    check("purchase_returns_settlement_check", oneOf(t.settlement, PURCHASE_RETURN_SETTLEMENTS)),
+    check("purchase_returns_refund_check", sql`(${t.settlement} = 'refund') = (${t.refundMethod} is not null and ${t.refundPaymentId} is not null)`),
+    check("purchase_returns_total_check", sql`${t.totalPaise} = ${t.taxablePaise} + ${t.gstPaise} and ${t.totalPaise} > 0`),
+  ],
+);
+
+export const purchaseReturnLines = pgTable(
+  "purchase_return_lines",
+  {
+    id: id(),
+    purchaseReturnId: uuid("purchase_return_id").notNull().references(() => purchaseReturns.id),
+    receiptLineId: uuid("receipt_line_id").notNull().references(() => goodsReceiptLines.id),
+    productId: uuid("product_id").notNull().references(() => products.id),
+    /** As entered, with the receipt line's factor. */
+    unit: text("unit").notNull(),
+    factor: numeric("factor", { precision: 12, scale: 3 }).notNull(),
+    qty: quantity("qty").notNull(),
+    qtyBase: quantity("qty_base").notNull(),
+    unitCostPaise: paise("unit_cost_paise").notNull(),
+    taxablePaise: paise("taxable_paise").notNull(),
+    gstRateBp: integer("gst_rate_bp").notNull().default(0),
+    gstPaise: paise("gst_paise").notNull().default(0),
+  },
+  (t) => [
+    unique("purchase_return_lines_line_key").on(t.purchaseReturnId, t.receiptLineId),
+    index("purchase_return_lines_receipt_line_idx").on(t.receiptLineId),
+    check("purchase_return_lines_qty_check", sql`${t.qtyBase} > 0 and ${t.qty} > 0`),
   ],
 );

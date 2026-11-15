@@ -9,7 +9,7 @@ describe("navigation by role", () => {
   it("offers each role only the sections its default permissions open", () => {
     expect(navKeysFor(granted("owner"))).toEqual(NAV_ITEMS.map((item) => item.key));
     expect(navKeysFor(granted("manager"))).toEqual(["dashboard", "billing", "inventory", "customers", "purchases", "suppliers", "cashbook", "reports", "approvals", "settings"]);
-    expect(navKeysFor(granted("cashier"))).toEqual(["billing", "customers", "approvals", "settings"]);
+    expect(navKeysFor(granted("cashier"))).toEqual(["billing", "customers", "cashbook", "approvals", "settings"]);
     expect(navKeysFor(granted("inventory"))).toEqual(["inventory", "purchases", "suppliers", "approvals", "settings"]);
   });
 

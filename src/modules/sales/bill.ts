@@ -1,6 +1,6 @@
 import { findCustomer, type CustomerSummary } from "@/modules/parties";
 import { defaultPriceList, priceBillLine, type BillLinePrice } from "@/modules/pricing";
-import { stockOnHand } from "@/modules/inventory";
+import { godownList, reservedQuantities, stockOnHand } from "@/modules/inventory";
 import { partyBalance } from "@/modules/ledger";
 import { loadTaxSettings } from "@/modules/settings";
 import type { SessionContext } from "@/modules/identity";
@@ -8,7 +8,7 @@ import type { Transaction } from "@/server/db";
 import { ConflictError } from "@/server/errors";
 import { formatPaise } from "@/shared/money";
 import { resolveTaxMode, type TaxMode } from "@/shared/gst";
-import { cashChange, computeInvoiceTotals, DISCOUNT_LIMIT_BP, type InvoiceTotals } from "@/shared/invoice";
+import { cashChange, computeInvoiceTotals, DISCOUNT_LIMIT_BP, effectiveDiscountBp, itemDiscountOf, type InvoiceTotals, type ItemDiscount } from "@/shared/invoice";
 import { formatBasisPoints } from "@/shared/pricing-engine";
 import { formatQuantity } from "@/shared/quantity";
 import type { billInputSchema } from "./validation";
@@ -28,7 +28,11 @@ export type BillProblem = { code: string; message: string; field?: string };
 export type ComputedBill = {
   customer: Pick<CustomerSummary, "id" | "name" | "type" | "creditLimitPaise" | "gstin"> | null;
   priceList: "retail" | "wholesale";
-  lines: (BillLinePrice & { baseQtyNeeded: bigint; stockQty: bigint | null })[];
+  lines: (BillLinePrice & { baseQtyNeeded: bigint; stockQty: bigint | null; discount: ItemDiscount; itemDiscountPaise: number })[];
+  /** Item discounts plus the bill discount as one % of the gross, in basis points (rounded up). What the role limit and approvals are compared with. */
+  effectiveDiscountBp: number;
+  /** The godown the goods leave from; null while the shop has several and none was chosen. */
+  godownId: string | null;
   totals: InvoiceTotals;
   paidNowPaise: number;
   creditPaise: number;
@@ -64,26 +68,52 @@ export async function computeBill(
     priced.push(await priceBillLine(tx, session.shopId, { productId: line.productId, unit: line.unit, quantity: line.quantity, customer: registered, priceList }));
   }
 
-  const stock = await stockOnHand(session.shopId, priced.map((line) => line.product.id), tx);
+  // One godown: the Main Store, never asked. Several: the person must choose; stock is never taken from a place they did not pick.
+  // Goods already delivered on a challan left stock then: billing them moves no stock, asks for no godown and checks no availability.
+  const fromDelivery = Boolean(input.challanLines?.length);
+  const places = fromDelivery ? [] : await godownList(tx, session.shopId);
+  let godownId: string | null = null;
+  let godownName: string | null = null;
+  if (places.length <= 1) {
+    godownId = places[0]?.id ?? null;
+  } else {
+    const chosen = places.find((place) => place.id === input.godownId);
+    if (chosen) {
+      godownId = chosen.id;
+      godownName = chosen.name;
+    } else {
+      problems.push({ code: "GODOWN_REQUIRED", field: "godownId", message: input.godownId ? "Choose one of your godowns." : "Choose which godown the goods are taken from." });
+    }
+  }
+  const stockOptions = godownId ? { godownId } : {};
+  const stock = fromDelivery ? new Map() : await stockOnHand(session.shopId, priced.map((line) => line.product.id), tx, stockOptions);
+  // Direct sales can only take stock that is not set aside for confirmed orders.
+  const reserved = fromDelivery ? new Map<string, bigint>() : await reservedQuantities(tx, session.shopId, priced.map((line) => line.product.id), stockOptions);
   const lines = priced.map((line, index) => {
-    const onHand = stock.get(line.product.id)?.qty ?? null;
+    const raw = stock.get(line.product.id)?.qty;
+    const onHand = fromDelivery ? null : raw === undefined ? null : raw - (reserved.get(line.product.id) ?? BigInt(0));
     const needed = line.quote.baseQuantity;
-    if (onHand === null || onHand < needed) {
+    if (!fromDelivery && (onHand === null || onHand < needed)) {
       problems.push({
         code: "INSUFFICIENT_STOCK",
         field: `lines.${index}.quantity`,
-        message: onHand === null ? `${line.product.name} has no stock entered yet.` : `Only ${formatQuantity(onHand > BigInt(0) ? onHand : BigInt(0))} ${line.product.baseUnit} of ${line.product.name} in stock.`,
+        message: onHand === null ? `${line.product.name} has no stock entered yet.` : `Only ${formatQuantity(onHand > BigInt(0) ? onHand : BigInt(0))} ${line.product.baseUnit} of ${line.product.name} in ${godownName ?? "stock"}.`,
       });
     }
-    return { ...line, baseQtyNeeded: needed, stockQty: onHand };
+    const discount = input.lines[index]!.discount;
+    const worked = itemDiscountOf(line.quote.lineAmountPaise, discount);
+    if ("problem" in worked) problems.push({ code: "ITEM_DISCOUNT_TOO_HIGH", field: `lines.${index}.discountValue`, message: worked.problem });
+    return { ...line, baseQtyNeeded: needed, stockQty: fromDelivery ? null : onHand, discount, itemDiscountPaise: "paise" in worked ? worked.paise : 0 };
   });
 
+  // The role limit covers the whole discount: the lines' own discounts and the bill discount together, as a % of the gross.
   const limit = Math.max(DISCOUNT_LIMIT_BP[session.role] ?? 0, options.discountLimitBp ?? 0);
-  if (input.discountPercent > limit) {
+  const effectiveBp = effectiveDiscountBp(lines.map((line) => ({ amountPaise: line.quote.lineAmountPaise, discount: line.itemDiscountPaise > 0 || line.discount.kind === "none" ? line.discount : { kind: "none", value: 0 } })), input.discountPercent);
+  if (effectiveBp > limit) {
     problems.push({
       code: "DISCOUNT_APPROVAL_REQUIRED",
       field: "discountPercent",
-      message: `Discount ${formatBasisPoints(input.discountPercent)} is above your ${formatBasisPoints(limit)} limit. Ask the owner or submit an approval request.`,
+      message: `Discount ${formatBasisPoints(effectiveBp)} is above your ${formatBasisPoints(limit)} limit. Ask the owner or submit an approval request.`,
     });
   }
 
@@ -94,7 +124,7 @@ export async function computeBill(
   const taxMode: TaxMode = "problem" in tax ? (taxSettings.registration === "regular" ? "intra" : "none") : tax.mode;
   const placeOfSupply = "problem" in tax ? taxSettings.stateCode : tax.placeOfSupply;
   const totals = computeInvoiceTotals(
-    lines.map((line) => ({ amountPaise: line.quote.lineAmountPaise, gstRateBp: line.product.gstRateBp })),
+    lines.map((line) => ({ amountPaise: line.quote.lineAmountPaise, gstRateBp: line.product.gstRateBp, itemDiscountPaise: line.itemDiscountPaise })),
     input.discountPercent,
     taxMode,
   );
@@ -131,7 +161,9 @@ export async function computeBill(
     customer: customer ? { id: customer.id, name: customer.name, type: customer.type, creditLimitPaise: customer.creditLimitPaise, gstin: customer.gstin } : null,
     priceList,
     lines,
+    godownId,
     totals,
+    effectiveDiscountBp: effectiveBp,
     paidNowPaise,
     creditPaise,
     balanceBeforePaise,
@@ -163,6 +195,9 @@ export function billView(bill: ComputedBill) {
       ratePaise: line.quote.saleUnitRatePaise,
       rateReason: line.rateReason,
       amountPaise: line.quote.lineAmountPaise,
+      discountKind: line.discount.kind,
+      discountValue: line.discount.value,
+      itemDiscountPaise: line.itemDiscountPaise,
       gstRateBp: bill.totals.lines[index]!.gstRateBp,
       stockQty: line.stockQty === null ? null : formatQuantity(line.stockQty),
       taxablePaise: bill.totals.lines[index]!.taxablePaise,

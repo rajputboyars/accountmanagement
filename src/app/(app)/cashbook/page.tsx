@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Lock } from "lucide-react";
-import { CashMovementForm, CloseDayForm, ExpenseForm, ReopenDayForm, VoidExpense } from "@/components/cashbook/cash-forms";
+import { CashMovementForm, CloseDayForm, DrawerCountForm, ExpenseForm, ReconcileCashForm, ReopenDayForm, VoidExpense } from "@/components/cashbook/cash-forms";
 import { Money } from "@/components/nexora/money";
 import { PageContainer, PageIntro } from "@/components/nexora/page-container";
 import { ProtectedPage } from "@/components/nexora/protected-page";
@@ -10,7 +10,10 @@ import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { listBankChoices } from "@/modules/accounting";
+import { unmatchedBankSummary } from "@/modules/banking";
 import { getCashbook, listClosings } from "@/modules/cashbook";
+import { BankReminder } from "@/components/bank/bank-reminder";
 import { requireSession } from "@/server/auth";
 import { getLanguage, getT } from "@/server/i18n";
 import { formatPaise } from "@/shared/money";
@@ -25,7 +28,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default function CashbookPage({ searchParams }: PageProps<"/cashbook">) {
   return (
-    <ProtectedPage permission="cash.record" title="Cashbook" guide="cashbook">
+    <ProtectedPage permission="cash.view" title="Cashbook" guide="cashbook">
       <CashbookView searchParams={searchParams} />
     </ProtectedPage>
   );
@@ -38,16 +41,25 @@ const shift = (date: string, days: number) => {
   return day.toISOString().slice(0, 10);
 };
 const PAYMENT_LABEL: Record<string, MessageKey> = { bill: "cashbook.payment.bill", collection: "cashbook.payment.collection", refund: "cashbook.payment.refund", supplier_paid: "cashbook.payment.supplierPaid", supplier_returned: "cashbook.payment.supplierReturned" };
-const MOVEMENT_LABEL: Record<string, MessageKey> = { withdrawal: "cashbook.movement.withdrawal", bank_deposit: "cashbook.movement.bankDeposit", float_added: "cashbook.movement.floatAdded" };
+const MOVEMENT_LABEL: Record<string, MessageKey> = { withdrawal: "cashbook.movement.withdrawal", bank_deposit: "cashbook.movement.bankDeposit", bank_withdrawal: "cashbook.movement.bankWithdrawal", float_added: "cashbook.movement.floatAdded" };
 
 async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbook">["searchParams"] }) {
   const params = await searchParams;
   const session = await requireSession();
   const book = await getCashbook(session, String(params.date ?? ""));
   const closings = await listClosings(session, 10);
+  const bankAccounts = await listBankChoices(session).catch(() => []);
+  // Only a reminder: closing the day never waits for the bank.
+  const bankReminder = book.canClose ? await unmatchedBankSummary(session).catch(() => null) : null;
   const [t, language] = await Promise.all([getT(), getLanguage()]);
   const method = (code: string) => paymentMethodLabel(t, code);
   const c = book.cash;
+  // Say what disagrees, so the owner knows why they are being asked to count.
+  const health = book.health;
+  const reconcileWhy = [
+    health.openingSettingPaise !== health.openingInBooksPaise ? t("cashbook.reconcileWhyOpening", { setting: formatPaise(health.openingSettingPaise, { withPaise: true }), books: formatPaise(health.openingInBooksPaise, { withPaise: true }) }) : "",
+    health.unpostedDifferences.length > 0 ? t("cashbook.reconcileWhyDays", { count: health.unpostedDifferences.length, amount: formatPaise(health.unpostedDifferences.reduce((sum, row) => sum + Math.abs(row.differencePaise), 0), { withPaise: true }) }) : "",
+  ].join("");
   const lines: { label: string; paise: number; sign: "+" | "−" }[] = [
     { label: t("cashbook.line.sales"), paise: c.cashSalesPaise, sign: "+" },
     { label: t("cashbook.line.collections"), paise: c.cashCollectionsPaise, sign: "+" },
@@ -119,14 +131,14 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
                 : t(book.closing.differencePaise < 0 ? "cashbook.shortBy" : "cashbook.extraBy", { amount: formatPaise(Math.abs(book.closing.differencePaise), { withPaise: true }), reason: differenceReasonLabel(t, book.closing.differenceReason ?? "") })}
             </p>
           </div>
-        ) : (
+        ) : book.showTotals ? (
           <div>
             <p className="text-sm text-panel-muted">{t("cashbook.salesToday")}</p>
             <p className="text-3xl font-bold">
               <Money paise={book.sales.salesPaise} />
             </p>
           </div>
-        )}
+        ) : null}
       </section>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -180,6 +192,8 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
                 <Money paise={book.sales.creditGivenPaise} withPaise />
               </dd>
             </div>
+            {book.showTotals ? (
+              <>
             <div className="flex justify-between gap-3">
               <dt className="text-muted-foreground">{t(book.sales.billCount === 1 ? "cashbook.salesCountOne" : "cashbook.salesCount", { count: book.sales.billCount })}</dt>
               <dd>
@@ -198,6 +212,8 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
                 <Money paise={book.purchases.purchasesPaise} withPaise />
               </dd>
             </div>
+              </>
+            ) : null}
           </dl>
         </SectionCard>
       </div>
@@ -282,8 +298,8 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
                     {movement.note ? ` · ${movement.note}` : ""}
                   </span>
                 </span>
-                <span className={`shrink-0 font-semibold tabular-nums ${movement.kind === "float_added" ? "text-success" : "text-danger"}`}>
-                  {movement.kind === "float_added" ? "+" : "−"}
+                <span className={`shrink-0 font-semibold tabular-nums ${movement.kind === "float_added" || movement.kind === "bank_withdrawal" ? "text-success" : "text-danger"}`}>
+                  {movement.kind === "float_added" || movement.kind === "bank_withdrawal" ? "+" : "−"}
                   <Money paise={movement.amountPaise} withPaise />
                 </span>
               </li>
@@ -292,21 +308,50 @@ async function CashbookView({ searchParams }: { searchParams: PageProps<"/cashbo
         )}
       </SectionCard>
 
+      {book.health.needsReconciliation ? (
+        <SectionCard title={t("cashbook.reconcileTitle")} description={t("cashbook.reconcileDescription", { books: formatPaise(book.health.bookCashPaise ?? 0, { withPaise: true }), why: reconcileWhy })}>
+          <div data-testid="cash-reconcile" className="flex flex-col gap-3">
+            {book.canReconcile ? <ReconcileCashForm /> : <p className="text-sm text-muted-foreground">{t("cashbook.reconcileAskOwner")}</p>}
+          </div>
+        </SectionCard>
+      ) : null}
+
       <div className="grid gap-6 lg:grid-cols-3">
+        {book.canRecordExpense ? (
+          <SectionCard help="expenses" title={t("cashbook.addExpense")} description={book.smallExpenseLimitPaise === null ? t("cashbook.addExpenseDescription") : t("cashbook.smallExpenseLimit", { limit: formatPaise(book.smallExpenseLimitPaise, { withPaise: false }) })} anchorId="section-add-an-expense">
+            <ExpenseForm date={book.date} bankAccounts={bankAccounts} />
+            <ScrollIntoViewOnHash anchorId="section-add-an-expense" />
+          </SectionCard>
+        ) : null}
         {book.canRecord ? (
-          <>
-            <SectionCard help="expenses" title={t("cashbook.addExpense")} description={t("cashbook.addExpenseDescription")} anchorId="section-add-an-expense">
-              <ExpenseForm date={book.date} />
-              <ScrollIntoViewOnHash anchorId="section-add-an-expense" />
-            </SectionCard>
-            <SectionCard help="cashInOut" title={t("cashbook.cashInOut")} description={t("cashbook.cashInOutDescription")}>
-              <CashMovementForm date={book.date} />
-            </SectionCard>
-          </>
+          <SectionCard help="cashInOut" title={t("cashbook.cashInOut")} description={t("cashbook.cashInOutDescription")}>
+            <CashMovementForm date={book.date} bankAccounts={bankAccounts} />
+          </SectionCard>
+        ) : null}
+        {book.canCount ? (
+          <SectionCard title={t("cashbook.countTitle")} description={t("cashbook.countDescription")}>
+            {book.drawerCounts.length > 0 ? (
+              <ul className="mb-3 flex flex-col gap-1 text-sm" data-testid="drawer-counts">
+                {book.drawerCounts.map((count) => (
+                  <li key={count.id} className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">{t("cashbook.countedBy", { name: systemName(count.countedByName, language) })}</span>
+                    <Money paise={count.countedPaise} withPaise />
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <DrawerCountForm date={book.date} />
+          </SectionCard>
         ) : null}
         {book.canClose ? (
           <SectionCard title={t("cashbook.closeDay")} description={t("cashbook.closeDayDescription")}>
-            <CloseDayForm date={book.date} expectedPaise={book.expectedPaise} />
+            {bankReminder && bankReminder.total > 0 ? (
+              <div className="mb-4">
+                <BankReminder summary={bankReminder} closing />
+              </div>
+            ) : null}
+            {book.health.needsReconciliation ? <p className="text-sm text-muted-foreground">{t("cashbook.closeNeedsReconcile")}</p> : <CloseDayForm date={book.date} expectedPaise={book.expectedPaise} />}
+            {book.drawerCounts[0] ? <p className="mt-2 text-xs text-muted-foreground">{t("cashbook.latestCount", { name: systemName(book.drawerCounts[0].countedByName, language), amount: formatPaise(book.drawerCounts[0].countedPaise, { withPaise: true }) })}</p> : null}
           </SectionCard>
         ) : book.canReopen ? (
           <SectionCard title={t("cashbook.dayClosed")} description={t("cashbook.dayClosedDescription")}>

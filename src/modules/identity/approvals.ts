@@ -28,13 +28,15 @@ export const APPROVAL_ACTION_LABELS: Record<ApprovalAction, string> = {
   edit_invoice: "Bill correction",
   stock_adjustment: "Large stock adjustment",
   reopen_day: "Reopen closed day",
+  return_over_limit: "Return above limit",
+  expense_over_limit: "Expense above limit",
 };
 
 /**
  * Actions staff can ask for here. "below_cost" (slab below cost, C15) and "reopen_day" are owner-only
  * screens already, so the owner does them directly and no request is needed.
  */
-export const REQUESTABLE_ACTIONS = ["discount_over_limit", "credit_over_limit", "stock_adjustment", "edit_invoice"] as const satisfies readonly ApprovalAction[];
+export const REQUESTABLE_ACTIONS = ["discount_over_limit", "credit_over_limit", "stock_adjustment", "edit_invoice", "return_over_limit", "expense_over_limit"] as const satisfies readonly ApprovalAction[];
 export type RequestableAction = (typeof REQUESTABLE_ACTIONS)[number];
 
 /** What each request is about and who may ask for it (the asker must be allowed to do the action itself). */
@@ -43,6 +45,8 @@ const REQUEST_RULES: Record<RequestableAction, { targetType: string; permission:
   credit_over_limit: { targetType: "customer", permission: "billing.create" },
   stock_adjustment: { targetType: "product", permission: "stock.adjust" },
   edit_invoice: { targetType: "invoice", permission: "invoice.edit" },
+  return_over_limit: { targetType: "invoice", permission: "billing.return.limited" },
+  expense_over_limit: { targetType: "shop", permission: "expense.small" },
 };
 
 /** Discount approvals may name "any customer" (walk-in or not yet chosen). */
@@ -121,6 +125,7 @@ const requestSchema = z
     if (data.action === "discount_over_limit" && !data.limitBp) ctx.addIssue({ code: "custom", path: ["limitBp"], message: "Enter the discount % you need." });
     if (data.action === "credit_over_limit" && !data.amountPaise) ctx.addIssue({ code: "custom", path: ["amountPaise"], message: "Enter the highest dues allowed after this bill." });
     if ((data.action === "credit_over_limit" || data.action === "stock_adjustment") && !UUID.test(data.targetRef)) ctx.addIssue({ code: "custom", path: ["targetRef"], message: "Choose the record this is for." });
+    if ((data.action === "return_over_limit" || data.action === "expense_over_limit") && !data.amountPaise) ctx.addIssue({ code: "custom", path: ["amountPaise"], message: "Enter the amount you need." });
     if (data.action === "discount_over_limit" && data.targetRef !== ANY_TARGET && !UUID.test(data.targetRef)) ctx.addIssue({ code: "custom", path: ["targetRef"], message: "Choose the customer." });
   });
 

@@ -1,0 +1,1 @@
+ALTER TABLE "accounting_settings" ADD COLUMN "opening_recorded_at" timestamp with time zone;

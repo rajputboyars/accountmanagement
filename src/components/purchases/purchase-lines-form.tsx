@@ -3,12 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { LoaderCircle, Plus, Trash2 } from "lucide-react";
-import { createOrderAction, receiveGoodsAction } from "@/app/(app)/purchases/actions";
+import { createOrderAction, linkSupplierProductsAction, receiveGoodsAction } from "@/app/(app)/purchases/actions";
 import { Field, FormAlert, selectClass } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Money } from "@/components/nexora/money";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LinkProductPanel, QuickProductPanel, QuickSupplierPanel, type ProductQuickCreate, type QuickProduct } from "./purchase-quick-create";
 import { parseRupeesToPaise } from "@/shared/money";
 import { computePurchaseTotals } from "@/shared/purchase";
 import { parseQuantity } from "@/shared/quantity";
@@ -16,6 +17,11 @@ import { STATUTORY_GST_RATES_BP } from "@/shared/gst";
 
 export type PurchasableProduct = { id: string; name: string; sku: string; baseUnit: string; gstRateBp: number; units: { code: string; label: string }[] };
 export type OrderLineForReceipt = { id: string; productName: string; unit: string; baseUnit: string; leftBase: string; leftInUnit: string | null; costPaisePerUnit: number; gstRateBp: number; unitLabel: string; baseUnitLabel: string };
+
+const ADD_SUPPLIER = "__add_supplier__";
+const ADD_PRODUCT = "__add_product__";
+const LINK_PRODUCT = "__link_product__";
+type Panel = { type: "supplier" } | { type: "product"; lineKey: number } | { type: "link"; lineKey: number };
 
 type Line = { key: number; productId: string; purchaseOrderLineId: string; unit: string; quantity: string; cost: string; gstRateBp: string; label?: string };
 
@@ -47,12 +53,21 @@ export function PurchaseLinesForm({
   products,
   order,
   defaultSupplierId = "",
+  links = {},
+  quick,
+  godowns,
 }: {
   mode: "order" | "receipt";
   defaultSupplierId?: string;
   suppliers: { id: string; name: string }[];
   products: PurchasableProduct[];
   order?: { id: string; supplierName: string; lines: OrderLineForReceipt[] };
+  /** Supplier id → ids of the products that supplier supplies. */
+  links?: Record<string, string[]>;
+  /** Where goods can be received, only when the shop has more than one godown; the Main Store is the default. */
+  godowns?: { id: string; name: string; isDefault: boolean }[];
+  /** What the signed-in person may quick-add; omitted when nothing is offered. */
+  quick?: { canAddSupplier: boolean; canLinkProducts: boolean; productCreate: ProductQuickCreate | null };
 }) {
   const t = useT();
   const router = useRouter();
@@ -68,7 +83,38 @@ export function PurchaseLinesForm({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [idempotencyKey] = useState(newKey);
   const [pending, startTransition] = useTransition();
-  const byId = new Map(products.map((product) => [product.id, product]));
+  const [extraSuppliers, setExtraSuppliers] = useState<{ id: string; name: string }[]>([]);
+  const [extraProducts, setExtraProducts] = useState<PurchasableProduct[]>([]);
+  const [linkMap, setLinkMap] = useState<Record<string, string[]>>(links);
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const [notice, setNotice] = useState<string>();
+  const [linkError, setLinkError] = useState<string>();
+  const [linking, startLinking] = useTransition();
+  const allSuppliers = [...suppliers, ...extraSuppliers.filter((extra) => !suppliers.some((known) => known.id === extra.id))];
+  const allProducts = [...products, ...extraProducts.filter((extra) => !products.some((known) => known.id === extra.id))];
+  const supplier = allSuppliers.find((candidate) => candidate.id === supplierId);
+  const linkedIds = new Set(linkMap[supplierId] ?? []);
+  const supplierProducts = allProducts.filter((candidate) => linkedIds.has(candidate.id));
+  const byId = new Map(allProducts.map((product) => [product.id, product]));
+  const addLink = (forSupplier: string, productIds: string[]) => setLinkMap((all) => ({ ...all, [forSupplier]: [...new Set([...(all[forSupplier] ?? []), ...productIds])] }));
+  // Products already chosen on lines that this supplier does not supply: kept, never dropped silently.
+  const unlinkedUsed = [...new Set(lines.map((line) => line.productId).filter((id) => id && !linkedIds.has(id)))];
+  const fillLine = (key: number, product: PurchasableProduct) => update(key, { productId: product.id, unit: product.baseUnit, gstRateBp: String(product.gstRateBp) });
+  const changeSupplier = (value: string) => {
+    setSupplierId(value);
+    setPanel(null);
+    setNotice(undefined);
+    setLinkError(undefined);
+  };
+  const linkUsed = () =>
+    startLinking(async () => {
+      const result = await linkSupplierProductsAction(supplierId, unlinkedUsed);
+      if (result.ok) {
+        addLink(supplierId, unlinkedUsed);
+        setNotice(t("purchases.qc.linkedMany", { count: unlinkedUsed.length, supplier: supplier?.name ?? "" }));
+        setLinkError(undefined);
+      } else setLinkError(result.error);
+    });
   const update = (key: number, patch: Partial<Line>) => {
     // Editing a field answers its message: drop it at once rather than leave it up until the next save.
     const edited = Object.keys(patch).map((field) => `${key}.${field}`).filter((name) => fieldErrors[name]);
@@ -79,6 +125,7 @@ export function PurchaseLinesForm({
     }
     setLines((all) => all.map((line) => (line.key === key ? { ...line, ...patch } : line)));
   };
+  const [godownId, setGodownId] = useState(() => godowns?.find((godown) => godown.isDefault)?.id ?? "");
   const included = lines.filter((line) => line.quantity.trim() !== "" && line.quantity.trim() !== "0");
   const totals = previewTotal(mode === "order" ? included.map((line) => ({ ...line, gstRateBp: "0" })) : included);
 
@@ -93,6 +140,7 @@ export function PurchaseLinesForm({
               supplierId: order ? "" : supplierId,
               supplierBillNo: billNo,
               supplierBillDate: billDate,
+              ...(godowns && godownId ? { godownId } : {}),
               lines: included.map((line) => ({ purchaseOrderLineId: line.purchaseOrderLineId, productId: line.productId, unit: line.unit, quantity: line.quantity, cost: line.cost, gstRateBp: line.gstRateBp })),
             });
       if (result.ok && result.id) {
@@ -114,16 +162,28 @@ export function PurchaseLinesForm({
     <div className="flex flex-col gap-5">
       {order ? null : (
         <Field label={t("page.supplier")} error={fieldErrors.supplierId}>
-          <select data-guide="purchase-supplier" value={supplierId} onChange={(event) => setSupplierId(event.target.value)} className={selectClass}>
+          <select data-guide="purchase-supplier" value={supplierId} onChange={(event) => (event.target.value === ADD_SUPPLIER ? setPanel({ type: "supplier" }) : changeSupplier(event.target.value))} className={selectClass}>
             <option value="">{t("common.choose")}</option>
-            {suppliers.map((supplier) => (
-              <option key={supplier.id} value={supplier.id}>
-                {supplier.name}
+            {allSuppliers.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.name}
+              </option>
+            ))}
+            {quick?.canAddSupplier ? <option value={ADD_SUPPLIER}>{t("purchases.qc.addSupplier")}</option> : null}
+          </select>
+        </Field>
+      )}
+      {mode === "receipt" && godowns ? (
+        <Field label={t("godown.receiveInto")} error={fieldErrors.godownId}>
+          <select value={godownId} onChange={(event) => setGodownId(event.target.value)} className={selectClass}>
+            {godowns.map((godown) => (
+              <option key={godown.id} value={godown.id}>
+                {godown.isDefault && godown.name === "Main Store" ? t("godown.mainStore") : godown.name}
               </option>
             ))}
           </select>
         </Field>
-      )}
+      ) : null}
       {mode === "receipt" ? (
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label={<span>{t("purchases.billNumber")} <span className="font-normal text-muted-foreground">{t("common.optional")}</span></span>} hint={t("purchases.billOnce")} error={fieldErrors.supplierBillNo}>
@@ -132,6 +192,62 @@ export function PurchaseLinesForm({
           <Field label={<span>{t("purchases.billDate")} <span className="font-normal text-muted-foreground">{t("common.optional")}</span></span>} error={fieldErrors.supplierBillDate}>
             <Input data-guide="purchase-bill-date" type="date" value={billDate} onChange={(event) => setBillDate(event.target.value)} className="h-11" />
           </Field>
+        </div>
+      ) : null}
+
+      {panel?.type === "supplier" ? (
+        <QuickSupplierPanel
+          onClose={() => setPanel(null)}
+          onCreated={(created) => {
+            setExtraSuppliers((all) => [...all, created]);
+            setSupplierId(created.id);
+            setPanel(null);
+            setNotice(t("purchases.qc.supplierAdded", { name: created.name }));
+          }}
+        />
+      ) : null}
+      {panel && panel.type !== "supplier" && supplier ? (
+        panel.type === "product" && quick?.productCreate ? (
+          <QuickProductPanel
+            supplier={supplier}
+            options={quick.productCreate}
+            onClose={() => setPanel(null)}
+            onCreated={(created: QuickProduct) => {
+              const unit = quick.productCreate!.units.find((candidate) => candidate.code === created.baseUnit);
+              const product: PurchasableProduct = { ...created, units: [{ code: created.baseUnit, label: unit?.label ?? created.baseUnit }] };
+              setExtraProducts((all) => [...all, product]);
+              addLink(supplier.id, [product.id]);
+              fillLine(panel.lineKey, product);
+              setPanel(null);
+              setNotice(t("purchases.qc.productAdded", { name: product.name }));
+            }}
+          />
+        ) : panel.type === "link" ? (
+          <LinkProductPanel
+            supplier={supplier}
+            candidates={allProducts.filter((candidate) => !linkedIds.has(candidate.id))}
+            onClose={() => setPanel(null)}
+            onLinked={(productId) => {
+              const product = byId.get(productId);
+              addLink(supplier.id, [productId]);
+              if (product) fillLine(panel.lineKey, product);
+              setPanel(null);
+              setNotice(t("purchases.qc.linked", { name: product?.name ?? "", supplier: supplier.name }));
+            }}
+          />
+        ) : null
+      ) : null}
+      {notice ? <FormAlert message={notice} /> : null}
+      {!order && supplier && unlinkedUsed.length > 0 ? (
+        <div data-guide="purchase-unlinked" className="flex flex-col gap-2 rounded-xl border border-amber/50 bg-muted/40 p-3 text-sm">
+          <p className="text-foreground">{t("purchases.qc.unlinkedWarn", { count: unlinkedUsed.length, supplier: supplier.name })}</p>
+          {quick?.canLinkProducts ? (
+            <Button type="button" variant="outline" size="touch" className="self-start" disabled={linking} onClick={linkUsed}>
+              {linking ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
+              {t("purchases.qc.linkThem", { supplier: supplier.name })}
+            </Button>
+          ) : null}
+          <FormAlert error={linkError} />
         </div>
       ) : null}
 
@@ -157,18 +273,31 @@ export function PurchaseLinesForm({
                       data-guide="purchase-product"
                       value={line.productId}
                       onChange={(event) => {
-                        const next = byId.get(event.target.value);
-                        update(line.key, { productId: event.target.value, unit: next?.baseUnit ?? "", gstRateBp: String(next?.gstRateBp ?? 0) });
+                        const value = event.target.value;
+                        if (value === ADD_PRODUCT || value === LINK_PRODUCT) {
+                          setPanel({ type: value === ADD_PRODUCT ? "product" : "link", lineKey: line.key });
+                          return;
+                        }
+                        const next = byId.get(value);
+                        update(line.key, { productId: value, unit: next?.baseUnit ?? "", gstRateBp: String(next?.gstRateBp ?? 0) });
                       }}
                       className={selectClass}
                     >
                       <option value="">{t("common.choose")}</option>
-                      {products.map((option) => (
+                      {supplierProducts.map((option) => (
                         <option key={option.id} value={option.id}>
                           {option.name} ({option.sku})
                         </option>
                       ))}
+                      {product && !linkedIds.has(product.id) ? (
+                        <option value={product.id}>
+                          {product.name} ({product.sku}) · {t("purchases.qc.notLinked")}
+                        </option>
+                      ) : null}
+                      {supplier && quick?.canLinkProducts ? <option value={LINK_PRODUCT}>{"+ "}{t("purchases.qc.linkProduct")}</option> : null}
+                      {supplier && quick?.productCreate ? <option value={ADD_PRODUCT}>{t("purchases.qc.addProduct")}</option> : null}
                     </select>
+                    {!supplier ? <p className="mt-1 text-xs text-muted-foreground">{t("purchases.qc.chooseSupplier")}</p> : supplierProducts.length === 0 && !product ? <p className="mt-1 text-xs text-muted-foreground">{t("purchases.qc.none")}</p> : null}
                   </Field>
                 </>
               )}

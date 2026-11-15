@@ -1,8 +1,9 @@
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { bankAccountKeyOf, postGoodsReceiptCancelled, postGoodsReceived, postPayment, resolveBankRoute } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
-import { applyReceivedCost, listShopProductsForStock, loadProductNames, loadProductsForStock, lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
+import { applyReceivedCost, convertQuantity, createProductWithin, listShopProductsForStock, loadProductNames, loadProductsForStock, lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
 import { hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
-import { appendStockMovement, lockStockRows, stockOnHand } from "@/modules/inventory";
+import { appendStockMovement, availableStock, lockStockRows, originalGodowns, resolveGodown, stockOnHand } from "@/modules/inventory";
 import { appendLedgerEntry, lockPartyBalance, partyBalance, partyBalancesFor, partyStatement } from "@/modules/ledger";
 import { findSupplier, insertSupplier, listShopSuppliers, supplierNameTaken, updateSupplierRow } from "@/modules/parties";
 import { recordSupplierPayment, reverseSupplierPaymentRow, supplierPayments } from "@/modules/payments";
@@ -15,9 +16,10 @@ import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { financialYearLabel, indiaDate } from "@/shared/financial-year";
 import { formatPaise } from "@/shared/money";
 import { computePurchaseTotals, costPerBaseUnit, weightedAverageCost } from "@/shared/purchase";
-import { formatQuantity, isWholeQuantity, ONE_UNIT, parseQuantity, toBaseQuantity, toDbQuantity, type Milli } from "@/shared/quantity";
+import { formatQuantity, ONE_UNIT, parseQuantity, toBaseQuantity, toDbQuantity, type Milli } from "@/shared/quantity";
+import { receiptHasReturns } from "./returns";
 import { PURCHASES_CANCEL, PURCHASES_EDIT, PURCHASES_VIEW, STOCK_RECEIVE, SUPPLIERS_PAY } from "./permissions";
-import { goodsReceiptLines, goodsReceipts, purchaseOrderLines, purchaseOrders } from "./schema";
+import { goodsReceiptLines, goodsReceipts, purchaseOrderLines, purchaseOrders, supplierProducts } from "./schema";
 import { purchaseOrderInputSchema, reasonSchema, receiptInputSchema, supplierInputSchema, supplierPaymentInputSchema } from "./validation";
 
 /**
@@ -33,6 +35,7 @@ import { purchaseOrderInputSchema, reasonSchema, receiptInputSchema, supplierInp
  */
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
+const booksOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId });
 type Db = Database | Transaction;
 const owedFrom = (ledgerBalance: number) => (ledgerBalance === 0 ? 0 : -ledgerBalance);
 
@@ -119,19 +122,12 @@ export async function getSupplier(session: SessionContext, supplierId: string) {
 
 // ── Purchase orders ──────────────────────────────────────────────────────────
 
-function factorFor(product: ProductStockUnits, unit: string): Milli | null {
-  return unit === product.baseUnit ? ONE_UNIT : (product.saleUnits.find((candidate) => candidate.code === unit)?.factor ?? null);
-}
-
 function baseQuantity(product: ProductStockUnits, unit: string, quantity: Milli, field: string): { factor: Milli; base: Milli } {
-  const factor = factorFor(product, unit);
-  if (!factor) throw new ValidationError(`${product.name} isn't bought in "${unit}".`, { fieldErrors: { [field]: "Choose one of this product's units." } });
-  const base = toBaseQuantity(quantity, factor);
-  if (base === null) throw new ValidationError("That quantity can't be stored exactly. Use fewer decimal places.", { fieldErrors: { [field]: "Use fewer decimal places." } });
-  if (!product.baseAllowsDecimal && !isWholeQuantity(base)) {
-    throw new ValidationError(`${product.baseUnitName} can't be split: ${product.name} must come to a whole number of ${product.baseUnit}.`, { fieldErrors: { [field]: "Whole numbers only." } });
-  }
-  return { factor, base };
+  const converted = convertQuantity(product, unit, quantity);
+  if (!("error" in converted)) return converted;
+  if (converted.error === "unit") throw new ValidationError(`${product.name} isn't bought in "${unit}".`, { fieldErrors: { [field]: "Choose one of this product's units." } });
+  if (converted.error === "precision") throw new ValidationError("That quantity can't be stored exactly. Use fewer decimal places.", { fieldErrors: { [field]: "Use fewer decimal places." } });
+  throw new ValidationError(`${product.baseUnitName} can't be split: ${product.name} must come to a whole number of ${product.baseUnit}.`, { fieldErrors: { [field]: "Whole numbers only." } });
 }
 
 export async function createPurchaseOrder(session: SessionContext, input: unknown): Promise<{ id: string; number: string; replayed: boolean }> {
@@ -147,11 +143,12 @@ export async function createPurchaseOrder(session: SessionContext, input: unknow
         if (!product) throw new ValidationError("Product not found.", { fieldErrors: { [`lines.${index}.productId`]: "Product not found." } });
         if (!product.isActive) throw new ValidationError(`${product.name} is switched off.`, { fieldErrors: { [`lines.${index}.productId`]: "Switched off." } });
         const { factor } = baseQuantity(product, line.unit, line.quantity, `lines.${index}.quantity`);
-        return { productId: product.id, unit: line.unit, factor: toDbQuantity(factor), qtyOrdered: toDbQuantity(line.quantity), costPaisePerUnit: line.cost };
+        return { index, name: product.name, productId: product.id, unit: line.unit, factor: toDbQuantity(factor), qtyOrdered: toDbQuantity(line.quantity), costPaisePerUnit: line.cost };
       });
+      await requireSupplierProducts(tx, session.shopId, supplier, lines);
       const { fy, number } = await takeDocumentNumber(tx, session.shopId, "PO");
       const [order] = await tx.insert(purchaseOrders).values({ shopId: session.shopId, fy, number, supplierId: supplier.id, orderDate: indiaDate(), status: "ordered", createdBy: session.userId }).returning({ id: purchaseOrders.id });
-      await tx.insert(purchaseOrderLines).values(lines.map((line) => ({ ...line, purchaseOrderId: order!.id })));
+      await tx.insert(purchaseOrderLines).values(lines.map((line) => ({ productId: line.productId, unit: line.unit, factor: line.factor, qtyOrdered: line.qtyOrdered, costPaisePerUnit: line.costPaisePerUnit, purchaseOrderId: order!.id })));
       await recordAudit(tx, actorOf(session), { action: "purchasing.order_created", entityType: "purchase_order", entityId: order!.id, after: { number, supplierId: supplier.id, lines: lines.length } });
       return { status: 201, body: { id: order!.id, number } };
     });
@@ -262,8 +259,12 @@ export async function receiveGoods(session: SessionContext, input: unknown): Pro
           return { ...line, product, factor, base };
         });
 
+        // Against an order the products were checked when it was placed; a direct receipt is checked here.
+        if (!order) await requireSupplierProducts(tx, session.shopId, supplier, planned.map((line) => ({ index: line.index, productId: line.product.id, name: line.product.name })));
         const totals = computePurchaseTotals(planned.map((line) => ({ quantity: line.quantity, costPaisePerUnit: line.cost, gstRateBp: line.gstRateBp })));
         const stock = await stockOnHand(session.shopId, planned.map((line) => line.product.id), tx);
+        // Goods go to the Main Store unless another godown is chosen on the receipt.
+        const godownId = await resolveGodown(tx, session.shopId, data.godownId, "receive");
 
         // 4. Supplier balance, then 5. the receipt number.
         await lockPartyBalance(tx, session.shopId, "supplier", supplier.id);
@@ -294,13 +295,14 @@ export async function receiveGoods(session: SessionContext, input: unknown): Pro
           });
           const onHand = stock.get(line.product.id)?.qty ?? BigInt(0);
           const newCost = weightedAverageCost(onHand, line.product.costPaise, line.base, value);
-          await appendStockMovement(tx, { shopId: session.shopId, productId: line.product.id, movementDate: today, kind: "purchase", qtyBase: line.base, unitCostPaise: perBase, sourceType: "goods_receipt", sourceId: receiptId, reason: number, createdBy: session.userId });
+          await appendStockMovement(tx, { shopId: session.shopId, productId: line.product.id, godownId, movementDate: today, kind: "purchase", qtyBase: line.base, unitCostPaise: perBase, sourceType: "goods_receipt", sourceId: receiptId, reason: number, createdBy: session.userId });
           if (newCost !== line.product.costPaise) {
             await applyReceivedCost(tx, session.shopId, line.product.id, newCost, receiptId);
             costChanges.push({ productId: line.product.id, from: line.product.costPaise, to: newCost });
           }
         }
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: supplier.id, entryDate: today, kind: "purchase", sourceType: "goods_receipt", sourceId: receiptId, creditPaise: totals.totalPaise });
+        await postGoodsReceived(tx, booksOf(session), { receiptId, date: today, supplierId: supplier.id, taxablePaise: totals.taxablePaise, gstPaise: totals.gstPaise, totalPaise: totals.totalPaise });
         if (order) await tx.update(purchaseOrders).set({ status: await orderStatusAfter(tx, order.id) }).where(eq(purchaseOrders.id, order.id));
         await recordAudit(tx, actorOf(session), {
           action: "purchasing.goods_received",
@@ -336,14 +338,16 @@ export async function cancelGoodsReceipt(session: SessionContext, receiptId: str
     if (!receipt) throw new NotFoundError("Receipt not found.");
     if (receipt.status === "cancelled") throw new ConflictError("ALREADY_CANCELLED", "This receipt is already cancelled.");
     if (receipt.purchaseOrderId) await lockOrder(tx, session.shopId, receipt.purchaseOrderId);
+    if (await receiptHasReturns(tx, session.shopId, receipt.id)) throw new ConflictError("HAS_RETURNS", "Goods were already returned from this receipt, so it can't be cancelled. Return the rest instead.");
     const lines = await tx.select().from(goodsReceiptLines).where(eq(goodsReceiptLines.goodsReceiptId, receipt.id));
     const productIds = lines.map((line) => line.productId);
     const products = new Map((await lockProductsForStock(tx, session.shopId, productIds)).map((product) => [product.id, product]));
     await lockStockRows(tx, session.shopId, productIds);
-    const stock = await stockOnHand(session.shopId, productIds, tx);
+    // The receipt is undone in the godown it came into, and only if that godown still holds the goods.
+    const receivedInto = await originalGodowns(tx, session.shopId, "goods_receipt", receipt.id);
     for (const line of lines) {
       const need = parseQuantity(line.qtyBase);
-      const have = stock.get(line.productId)?.qty ?? BigInt(0);
+      const have = (await availableStock(tx, session.shopId, [line.productId], receivedInto.get(line.productId) ? { godownId: receivedInto.get(line.productId)! } : {})).get(line.productId)?.available ?? BigInt(0);
       if (have < need) {
         const product = products.get(line.productId);
         throw new ConflictError("STOCK_ALREADY_USED", `Only ${formatQuantity(have)} ${product?.baseUnit ?? ""} of ${product?.name ?? "a product"} are left, less than this receipt brought in. Record a stock adjustment instead.`);
@@ -353,9 +357,10 @@ export async function cancelGoodsReceipt(session: SessionContext, receiptId: str
     const today = indiaDate();
     await tx.update(goodsReceipts).set({ status: "cancelled", cancelledAt: new Date(), cancelledBy: session.userId, cancelReason: reason }).where(eq(goodsReceipts.id, receipt.id));
     for (const line of lines) {
-      await appendStockMovement(tx, { shopId: session.shopId, productId: line.productId, movementDate: today, kind: "purchase", qtyBase: -parseQuantity(line.qtyBase), unitCostPaise: line.unitCostPaise, sourceType: "goods_receipt_cancel", sourceId: receipt.id, reason: `Cancelled ${receipt.number}: ${reason}`, createdBy: session.userId });
+      await appendStockMovement(tx, { shopId: session.shopId, productId: line.productId, godownId: receivedInto.get(line.productId), movementDate: today, kind: "purchase", qtyBase: -parseQuantity(line.qtyBase), unitCostPaise: line.unitCostPaise, sourceType: "goods_receipt_cancel", sourceId: receipt.id, reason: `Cancelled ${receipt.number}: ${reason}`, createdBy: session.userId });
     }
     await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: receipt.supplierId, entryDate: today, kind: "cancellation", sourceType: "goods_receipt", sourceId: receipt.id, debitPaise: receipt.totalPaise });
+    await postGoodsReceiptCancelled(tx, booksOf(session), { receiptId: receipt.id, date: today });
     if (receipt.purchaseOrderId) {
       const [order] = await tx.select({ status: purchaseOrders.status }).from(purchaseOrders).where(eq(purchaseOrders.id, receipt.purchaseOrderId));
       if (order && order.status !== "closed" && order.status !== "cancelled") await tx.update(purchaseOrders).set({ status: await orderStatusAfter(tx, receipt.purchaseOrderId) }).where(eq(purchaseOrders.id, receipt.purchaseOrderId));
@@ -380,8 +385,11 @@ export async function paySupplier(session: SessionContext, input: unknown): Prom
           throw new ConflictError("OVERPAYMENT", owed > 0 ? `You owe ${supplier.name} ${formatPaise(owed, { withPaise: true })}; you can't pay more than that.` : `You don't owe ${supplier.name} anything right now.`, { fieldErrors: { amount: `At most ${formatPaise(Math.max(owed, 0), { withPaise: true })}.` } });
         }
         const today = indiaDate();
-        const paymentId = await recordSupplierPayment(tx, { shopId: session.shopId, fy: financialYearLabel(), supplierId: supplier.id, method: data.method, amountPaise: data.amount, reference: data.method === "cash" ? null : data.reference, businessDate: today, recordedBy: session.userId });
+        const route = await resolveBankRoute(tx, session.shopId, data.method, data.bankAccountId);
+        const bankKey = route.key;
+        const paymentId = await recordSupplierPayment(tx, { shopId: session.shopId, fy: financialYearLabel(), supplierId: supplier.id, method: data.method, amountPaise: data.amount, reference: data.method === "cash" ? null : data.reference, businessDate: today, recordedBy: session.userId, bankAccountId: route.bankAccountId });
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: supplier.id, entryDate: today, kind: "payment", sourceType: "payment", sourceId: paymentId, debitPaise: data.amount });
+        await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "out", partyType: "supplier", partyId: supplier.id, method: data.method, amountPaise: data.amount, bankAccountKey: bankKey });
         await recordAudit(tx, actorOf(session), { action: "purchasing.supplier_paid", entityType: "payment", entityId: paymentId, after: { supplierId: supplier.id, amountPaise: data.amount, method: data.method, reference: data.reference, owedBeforePaise: owed } });
         return { status: 201, body: { id: paymentId, owedAfterPaise: owed - data.amount } };
       });
@@ -406,6 +414,7 @@ export async function reverseSupplierPayment(session: SessionContext, paymentId:
     const supplierId = result.original.partyId!;
     await lockPartyBalance(tx, session.shopId, "supplier", supplierId);
     await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "supplier", partyId: supplierId, entryDate: today, kind: "payment", sourceType: "payment", sourceId: result.reversalId, creditPaise: result.original.amountPaise });
+    await postPayment(tx, booksOf(session), { paymentId: result.reversalId, date: today, direction: "in", partyType: "supplier", partyId: supplierId, method: result.original.method, amountPaise: result.original.amountPaise, bankAccountKey: result.original.bankAccountId ? await bankAccountKeyOf(tx, session.shopId, result.original.bankAccountId) : null });
     await recordAudit(tx, actorOf(session), { action: "purchasing.supplier_payment_reversed", entityType: "payment", entityId: result.original.id, before: { status: "recorded" }, after: { status: "reversed", reversalId: result.reversalId, amountPaise: result.original.amountPaise }, reason });
   });
 }
@@ -541,4 +550,67 @@ export async function purchasableProducts(session: SessionContext) {
       gstRateBp: product.gstRateBp,
       units: [{ code: product.baseUnit, name: product.baseUnitName, factor: null as string | null }, ...product.saleUnits.map((unit) => ({ code: unit.code, name: unit.name, factor: formatQuantity(unit.factor) as string | null }))],
     }));
+}
+
+// ── Supplier ↔ product links ─────────────────────────────────────────────────
+
+/** Product ids each supplier supplies, so the purchase screens offer only that supplier's products. */
+export async function supplierProductLinks(session: SessionContext): Promise<Record<string, string[]>> {
+  await requirePermission(session, PURCHASES_VIEW);
+  const rows = await getDb().select({ supplierId: supplierProducts.supplierId, productId: supplierProducts.productId }).from(supplierProducts).where(eq(supplierProducts.shopId, session.shopId));
+  const links: Record<string, string[]> = {};
+  for (const row of rows) (links[row.supplierId] ??= []).push(row.productId);
+  return links;
+}
+
+/** Links products to a supplier. Products already linked are skipped, so this never makes duplicates. */
+async function linkProducts(tx: Transaction, session: SessionContext, supplierId: string, productIds: string[]): Promise<string[]> {
+  const found = await loadProductsForStock(session.shopId, productIds, tx);
+  if (found.length !== new Set(productIds).size) throw new NotFoundError("Product not found.");
+  const inserted = await tx
+    .insert(supplierProducts)
+    .values(found.map((product) => ({ shopId: session.shopId, supplierId, productId: product.id, createdBy: session.userId })))
+    .onConflictDoNothing({ target: [supplierProducts.supplierId, supplierProducts.productId] })
+    .returning({ productId: supplierProducts.productId });
+  if (inserted.length > 0) {
+    await recordAudit(tx, actorOf(session), { action: "purchasing.supplier_products_linked", entityType: "supplier", entityId: supplierId, after: { productIds: inserted.map((row) => row.productId) } });
+  }
+  return inserted.map((row) => row.productId);
+}
+
+export async function linkSupplierProducts(session: SessionContext, supplierId: string, productIds: string[]): Promise<{ linked: number }> {
+  await requirePermission(session, PURCHASES_EDIT);
+  const ids = [...new Set(productIds)];
+  if (ids.length === 0) return { linked: 0 };
+  return withTransaction(async (tx) => {
+    const supplier = await findSupplier(session.shopId, supplierId, tx);
+    return { linked: (await linkProducts(tx, session, supplier.id, ids)).length };
+  });
+}
+
+/** Quick-add from a purchase screen: the normal product rules and permission, then linked to the supplier. */
+export async function createProductForSupplier(session: SessionContext, supplierId: string, input: unknown): Promise<{ id: string }> {
+  await requirePermission(session, PURCHASES_EDIT);
+  await findSupplier(session.shopId, supplierId);
+  // One transaction: if the link fails the product is rolled back too, and the other way round.
+  return withTransaction(async (tx) => {
+    const supplier = await findSupplier(session.shopId, supplierId, tx);
+    const { id } = await createProductWithin(tx, session, input);
+    await linkProducts(tx, session, supplier.id, [id]);
+    return { id };
+  });
+}
+
+/** Every product on a new order or direct receipt must be one this supplier supplies (link it from the purchase screen first). */
+async function requireSupplierProducts(tx: Transaction, shopId: string, supplier: { id: string; name: string }, lines: { index: number; productId: string; name: string }[]) {
+  if (lines.length === 0) return;
+  const rows = await tx
+    .select({ productId: supplierProducts.productId })
+    .from(supplierProducts)
+    .where(and(eq(supplierProducts.shopId, shopId), eq(supplierProducts.supplierId, supplier.id), inArray(supplierProducts.productId, lines.map((line) => line.productId))));
+  const linked = new Set(rows.map((row) => row.productId));
+  const missing = lines.find((line) => !linked.has(line.productId));
+  if (missing) {
+    throw new ConflictError("PRODUCT_NOT_FOR_SUPPLIER", `${missing.name} isn't linked to ${supplier.name}. Link it to this supplier first.`, { fieldErrors: { [`lines.${missing.index}.productId`]: "Not linked to this supplier." } });
+  }
 }

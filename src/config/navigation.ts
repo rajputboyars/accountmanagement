@@ -55,7 +55,7 @@ export const NAV_PERMISSION: Record<NavKey, Permission | null> = {
   customers: "customers.view",
   purchases: "purchases.view",
   suppliers: "purchases.view",
-  cashbook: "cash.record",
+  cashbook: "cash.view",
   reports: "reports.view",
   approvals: "approvals.view",
   settings: null,

@@ -3,7 +3,7 @@ import { getCurrentShop, invoiceProfile } from "@/modules/settings";
 import { hasPermission, requirePermission, type SessionContext } from "@/modules/identity";
 import { partyStatement, partyStatements, type StatementLine } from "@/modules/ledger";
 import { findCustomer, findSupplier, listShopCustomers, listShopSuppliers } from "@/modules/parties";
-import { customerReceipts, paymentDetails, PAYMENTS_RECORD, PAYMENTS_REVERSE, reversedPaymentIds, reversingPaymentIds } from "@/modules/payments";
+import { billLinkedReceipts, creditNoteRefunds, customerReceipts, paymentDetails, PAYMENTS_RECORD, PAYMENTS_REVERSE, reversedPaymentIds, reversingPaymentIds } from "@/modules/payments";
 import { receiptNumbersFor } from "@/modules/purchasing";
 import { documentNumbers } from "@/modules/sales";
 import { getDb, withTransaction } from "@/server/db";
@@ -32,17 +32,33 @@ const db = () => getDb();
  * (`reversedPayments`), so money that was undone never counts as paid. `owedSign` = 1 for customers
  * (debit = owed), −1 for suppliers (credit = owed by the shop).
  */
-function ageingEntries(lines: StatementLine[], owedSign: 1 | -1, labels: Map<string, string>, reversedPayments: ReadonlySet<string> = new Set()): AgeingEntry[] {
+function ageingEntries(lines: StatementLine[], owedSign: 1 | -1, labels: Map<string, string>, reversedPayments: ReadonlySet<string> = new Set(), billLinks: ReadonlyMap<string, string> = new Map(), refundLinks: ReadonlyMap<string, string> = new Map()): AgeingEntry[] {
+  // A payment taken on a bill points at that bill's entry, so ageing can settle it first. Unknown or cancelled bills fall back to oldest-first.
+  const billEntry = new Map(lines.filter((line) => line.kind === "invoice").map((line) => [line.sourceId, String(line.id)] as const));
+  // A refund paid out on a credit note and that credit note cancel each other (the customer was never owed a bill back, nor did the note pay an old bill off).
+  const noteLines = new Map(lines.filter((line) => line.kind === "credit_note").map((line) => [line.sourceId, line] as const));
+  const refunded = new Set<number>();
+  if (owedSign === 1) {
+    for (const line of lines) {
+      const note = line.kind === "payment" && line.debitPaise > 0 ? noteLines.get(refundLinks.get(line.sourceId) ?? "") : undefined;
+      if (note && note.creditPaise === line.debitPaise && !refunded.has(note.id)) {
+        refunded.add(line.id);
+        refunded.add(note.id);
+      }
+    }
+  }
   const cancelled = new Set(lines.filter((line) => line.kind === "cancellation").map((line) => line.sourceId));
   return lines
     .filter((line) => !cancelled.has(line.sourceId) || (line.kind !== "cancellation" && line.kind !== "invoice" && line.kind !== "purchase"))
     .filter((line) => !(line.kind === "payment" && reversedPayments.has(line.sourceId)))
+    .filter((line) => !refunded.has(line.id))
     .map((line) => ({
       id: String(line.id),
       date: line.entryDate,
       debitPaise: owedSign === 1 ? line.debitPaise : line.creditPaise,
       creditPaise: owedSign === 1 ? line.creditPaise : line.debitPaise,
       label: labels.get(line.sourceId) ?? KIND_LABEL[line.kind] ?? line.kind,
+      appliesTo: owedSign === 1 && line.kind === "payment" && line.creditPaise > 0 ? (billEntry.get(billLinks.get(line.sourceId) ?? "") ?? null) : null,
     }));
 }
 
@@ -94,11 +110,12 @@ function describe(line: StatementLine, labels: Map<string, string>) {
 
 export async function listReceivables(session: SessionContext, asOf = indiaDate()) {
   await requirePermission(session, CUSTOMERS_VIEW);
-  const [customers, statements, reversed] = await Promise.all([listShopCustomers(session.shopId, { includeInactive: true }), partyStatements(session.shopId, "customer"), reversedPaymentIds(db(), session.shopId, "customer")]);
+  const [customers, statements, reversed, billLinks] = await Promise.all([listShopCustomers(session.shopId, { includeInactive: true }), partyStatements(session.shopId, "customer"), reversedPaymentIds(db(), session.shopId, "customer"), billLinkedReceipts(db(), session.shopId)]);
+  const refundLinks = await creditNoteRefunds(db(), session.shopId);
   const rows = customers.map((customer) => {
     const lines = statements.get(customer.id) ?? [];
     const balancePaise = lines.at(-1)?.balancePaise ?? 0;
-    const ageing = ageOpenItems(ageingEntries(lines, 1, new Map(), reversed), asOf, CUSTOMER_TERMS_DAYS);
+    const ageing = ageOpenItems(ageingEntries(lines, 1, new Map(), reversed, billLinks, refundLinks), asOf, CUSTOMER_TERMS_DAYS);
     const oldest = ageing.open[0]?.ageDays ?? null;
     return { ...customer, balancePaise, overduePaise: ageing.overduePaise, oldestDueDays: oldest, tone: dueTone(oldest, balancePaise), buckets: ageing.buckets };
   });
@@ -137,13 +154,14 @@ export async function getCustomerAccount(session: SessionContext, customerId: st
   const customer = await findCustomer(session.shopId, customerId);
   if (customer.type === "walkin") throw new ConflictError("WALKIN_NO_ACCOUNT", "The walk-in customer has no account.");
   const asOf = indiaDate();
-  const [lines, reversed] = await Promise.all([partyStatement(session.shopId, "customer", customer.id), reversedPaymentIds(db(), session.shopId, "customer", customer.id)]);
+  const refundLinks = await creditNoteRefunds(db(), session.shopId, customer.id);
+  const [lines, reversed, billLinks] = await Promise.all([partyStatement(session.shopId, "customer", customer.id), reversedPaymentIds(db(), session.shopId, "customer", customer.id), billLinkedReceipts(db(), session.shopId, customer.id)]);
   const { labels, links } = await labelsFor(session.shopId, lines);
   const from = options.from && /^\d{4}-\d{2}-\d{2}$/.test(options.from) ? options.from : null;
   const to = options.to && /^\d{4}-\d{2}-\d{2}$/.test(options.to) ? options.to : null;
   const before = from ? lines.filter((line) => line.entryDate < from) : [];
   const shown = lines.filter((line) => (!from || line.entryDate >= from) && (!to || line.entryDate <= to));
-  const ageing = ageOpenItems(ageingEntries(lines, 1, labels, reversed), asOf, CUSTOMER_TERMS_DAYS);
+  const ageing = ageOpenItems(ageingEntries(lines, 1, labels, reversed, billLinks, refundLinks), asOf, CUSTOMER_TERMS_DAYS);
   const [receipts, canRecord, canReverse, canEdit, shop] = await Promise.all([
     customerReceipts(db(), session.shopId, customer.id),
     hasPermission(session, PAYMENTS_RECORD),
@@ -189,11 +207,13 @@ export async function listPayables(session: SessionContext, asOf = indiaDate()) 
     const lines = statements.get(supplier.id) ?? [];
     const owedPaise = -(lines.at(-1)?.balancePaise ?? 0) || 0;
     const ageing = ageOpenItems(ageingEntries(lines, -1, new Map(), reversed), asOf, supplier.paymentTermsDays);
-    return { id: supplier.id, name: supplier.name, owedPaise, overduePaise: ageing.overduePaise, nextDue: ageing.open.find((item) => item.daysPastDue === 0)?.dueDate ?? null, buckets: ageing.buckets };
+    // What falls due in the next 7 days (not yet late): the part the shop should plan to pay soon.
+    const dueSoonPaise = ageing.open.filter((item) => item.daysPastDue === 0 && Date.parse(`${item.dueDate}T00:00:00Z`) - Date.parse(`${asOf}T00:00:00Z`) <= 7 * 86_400_000).reduce((sum, item) => sum + item.remainingPaise, 0);
+    return { id: supplier.id, name: supplier.name, owedPaise, overduePaise: ageing.overduePaise, dueSoonPaise, nextDue: ageing.open.find((item) => item.daysPastDue === 0)?.dueDate ?? null, buckets: ageing.buckets };
   });
   return {
     rows,
-    totals: { payablePaise: rows.reduce((sum, row) => sum + Math.max(row.owedPaise, 0), 0), overduePaise: rows.reduce((sum, row) => sum + row.overduePaise, 0) },
+    totals: { payablePaise: rows.reduce((sum, row) => sum + Math.max(row.owedPaise, 0), 0), overduePaise: rows.reduce((sum, row) => sum + row.overduePaise, 0), dueSoonPaise: rows.reduce((sum, row) => sum + row.dueSoonPaise, 0), suppliersDue: rows.filter((row) => row.overduePaise + row.dueSoonPaise > 0).length },
   };
 }
 

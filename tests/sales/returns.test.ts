@@ -217,12 +217,15 @@ describe("cancellation and returns together", () => {
 });
 
 describe("permissions and isolation", () => {
-  it("lets owners and managers make returns, not cashiers", async () => {
+  it("lets owners and managers make returns, a cashier only within the limit, and the inventory role none", async () => {
     const [lineId] = await lineIds(exampleA.id);
     const input = { invoiceId: exampleA.id, lines: [{ invoiceLineId: lineId!, baseQty: "1", restock: true }], reason: "Extra", settlement: "ledger" as const };
+    const { session: stockKeeper } = await signInAs(shopA.users.inventory);
+    await expect(previewReturn(stockKeeper, input)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(createReturn(stockKeeper, { ...input, idempotencyKey: key(), expectedTotalPaise: 0 })).rejects.toBeInstanceOf(ForbiddenError);
+    // A cashier may return a small amount alone (staff-workflows.test.ts covers the limit and approval).
     const { session: cashier } = await signInAs(shopA.users.cashier);
-    await expect(previewReturn(cashier, input)).rejects.toBeInstanceOf(ForbiddenError);
-    await expect(createReturn(cashier, { ...input, idempotencyKey: key(), expectedTotalPaise: 0 })).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(previewReturn(cashier, input)).resolves.toMatchObject({ needsApproval: false });
     const { session: manager } = await signInAs(shopA.users.manager);
     await expect(giveBack(manager, input)).resolves.toHaveProperty("number");
   });

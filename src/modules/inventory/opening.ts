@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { postStockOpening } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
-import { lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
+import { convertQuantity, lockProductsForStock, type ProductStockUnits } from "@/modules/catalog";
 import { requirePermission, type SessionContext } from "@/modules/identity";
 import { withIdempotency } from "@/modules/sync";
 import { withTransaction } from "@/server/db";
 import { isUniqueViolation } from "@/server/db-errors";
 import { ConflictError, ValidationError } from "@/server/errors";
-import { formatQuantity, isWholeQuantity, ONE_UNIT, toBaseQuantity, type Milli } from "@/shared/quantity";
+import { formatQuantity, toDbQuantity, type Milli } from "@/shared/quantity";
+import { resolveGodown } from "./godowns";
 import { appendMovement, ledgerTotals, lockCacheRows } from "./ledger";
 import { STOCK_OPENING } from "./permissions";
 import { openingInputSchema } from "./validation";
@@ -31,15 +33,12 @@ export class OpeningLinesError extends ValidationError {
   }
 }
 
-function baseQuantityFor(product: ProductStockUnits, unit: string, quantity: Milli): { base: Milli } | { error: string; field: "unit" | "quantity" } {
-  const factor = unit === product.baseUnit ? ONE_UNIT : product.saleUnits.find((candidate) => candidate.code === unit)?.factor;
-  if (!factor) return { error: `${product.name} isn't sold in "${unit}". Choose ${product.baseUnit} or one of its pack sizes.`, field: "unit" };
-  const base = toBaseQuantity(quantity, factor);
-  if (base === null) return { error: "That quantity can't be stored exactly. Use fewer decimal places.", field: "quantity" };
-  if (!product.baseAllowsDecimal && !isWholeQuantity(base)) {
-    return { error: `${product.baseUnitName} can't be split, so this must come to a whole number of ${product.baseUnit} (it comes to ${formatQuantity(base)}).`, field: "quantity" };
-  }
-  return { base };
+function baseQuantityFor(product: ProductStockUnits, unit: string, quantity: Milli): { base: Milli; factor: Milli } | { error: string; field: "unit" | "quantity" } {
+  const result = convertQuantity(product, unit, quantity);
+  if (!("error" in result)) return result;
+  if (result.error === "unit") return { error: `${product.name} isn't sold in "${unit}". Choose ${product.baseUnit} or one of its pack sizes.`, field: "unit" };
+  if (result.error === "precision") return { error: "That quantity can't be stored exactly. Use fewer decimal places.", field: "quantity" };
+  return { error: `${product.baseUnitName} can't be split, so this must come to a whole number of ${product.baseUnit}.`, field: "quantity" };
 }
 
 export async function recordOpeningStock(session: SessionContext, input: unknown): Promise<OpeningResult & { replayed: boolean }> {
@@ -51,11 +50,13 @@ export async function recordOpeningStock(session: SessionContext, input: unknown
       const outcome = await withIdempotency<OpeningResult>(tx, { shopId: session.shopId, userId: session.userId, key: idempotencyKey }, { action: "inventory.opening", ...body, lines: body.lines.map((line) => ({ ...line, quantity: line.quantity.toString() })) }, async () => {
         const productIds = body.lines.map((line) => line.productId);
         const products = new Map((await lockProductsForStock(tx, session.shopId, productIds)).map((product) => [product.id, product]));
-        await lockCacheRows(tx, session.shopId, productIds);
-        const existing = await ledgerTotals(session.shopId, productIds, tx);
+        // Opening stock goes to the Main Store unless another godown is chosen; each godown can be opened once per product.
+        const godownId = await resolveGodown(tx, session.shopId, body.godownId, "receive");
+        await lockCacheRows(tx, session.shopId, productIds, [godownId]);
+        const existing = await ledgerTotals(session.shopId, productIds, tx, { godownId });
 
         const errors: Record<string, string> = {};
-        const planned: { product: ProductStockUnits; base: Milli; unitCost: number | null }[] = [];
+        const planned: { product: ProductStockUnits; base: Milli; factor: Milli; unit: string; quantity: Milli; unitCost: number | null }[] = [];
         body.lines.forEach((line, index) => {
           const product = products.get(line.productId);
           if (!product) {
@@ -75,7 +76,7 @@ export async function recordOpeningStock(session: SessionContext, input: unknown
             errors[`lines.${index}.${result.field}`] = result.error;
             return;
           }
-          planned.push({ product, base: result.base, unitCost: line.unitCost ?? product.costPaise });
+          planned.push({ product, base: result.base, factor: result.factor, unit: line.unit, quantity: line.quantity, unitCost: line.unitCost ?? product.costPaise });
         });
         if (Object.keys(errors).length > 0) throw new OpeningLinesError(errors);
 
@@ -84,6 +85,7 @@ export async function recordOpeningStock(session: SessionContext, input: unknown
           await appendMovement(tx, {
             shopId: session.shopId,
             productId: line.product.id,
+            godownId,
             movementDate: body.movementDate,
             kind: "opening",
             qtyBase: line.base,
@@ -91,9 +93,11 @@ export async function recordOpeningStock(session: SessionContext, input: unknown
             sourceType: "opening_stock",
             sourceId: batchId,
             reason: body.note || "Opening stock",
+            entered: { qty: toDbQuantity(line.quantity), unit: line.unit, factor: toDbQuantity(line.factor) },
             createdBy: session.userId,
           });
         }
+        await postStockOpening(tx, { shopId: session.shopId, userId: session.userId }, { batchId, effectiveDate: body.movementDate, lines: planned.map((line) => ({ productId: line.product.id, qtyBase: formatQuantity(line.base), unitCostPaise: line.unitCost })) });
         const lines = planned.map((line) => ({ productId: line.product.id, name: line.product.name, qty: formatQuantity(line.base), baseUnit: line.product.baseUnit }));
         await recordAudit(tx, { shopId: session.shopId, userId: session.userId, role: session.role }, {
           action: "inventory.opening_recorded",

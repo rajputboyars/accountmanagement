@@ -3,7 +3,8 @@
 import { useActionState, useState, useTransition } from "react";
 import { Copy, MessageCircle } from "lucide-react";
 import { logReminderAction, prepareReminderAction, recordReceiptAction, reverseReceiptAction, saveCustomerAction, type FormState } from "@/app/(app)/customers/actions";
-import { Field, FormAlert, FormSelect, SubmitButton } from "@/components/catalog/form-bits";
+import { BankAccountSelect, type BankChoice } from "@/components/bank/bank-choice";
+import { Field, FormAlert, FormSelect, selectClass, SubmitButton } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { LANGUAGE_NAMES, LANGUAGES, type Language } from "@/shared/i18n/languages";
@@ -85,8 +86,9 @@ export function CustomerForm({ customer }: { customer?: Customer }) {
   );
 }
 
-export function ReceiptForm({ customerId, balanceText }: { customerId: string; balanceText: string }) {
+export function ReceiptForm({ customerId, balanceText, bankAccounts = [] }: { customerId: string; balanceText: string; bankAccounts?: BankChoice[] }) {
   const t = useT();
+  const [method, setMethod] = useState("cash");
   const [idempotencyKey, setIdempotencyKey] = useState(newKey);
   const [state, action] = useActionState<FormState, FormData>(async (previous, formData) => {
     const result = await recordReceiptAction(previous, formData);
@@ -104,14 +106,15 @@ export function ReceiptForm({ customerId, balanceText }: { customerId: string; b
           <Input name="amount" defaultValue={v.amount} inputMode="decimal" className="h-11 tabular-nums" />
         </Field>
         <Field label={t("common.paidBy")} error={e.method}>
-          <FormSelect name="method" defaultValue={v.method ?? "cash"}>
+          <select name="method" value={method} onChange={(event) => setMethod(event.target.value)} className={selectClass}>
             <option value="cash">{t("common.cash")}</option>
             <option value="upi">{t("common.upi")}</option>
             <option value="bank">{t("suppliers.bankTransfer")}</option>
             <option value="cheque">{t("common.cheque")}</option>
-          </FormSelect>
+          </select>
         </Field>
       </div>
+      {method === "bank" && bankAccounts.length > 1 ? <BankAccountSelect accounts={bankAccounts} error={e.bankAccountId} /> : null}
       <Field label={t("customers.reference")} error={e.reference}>
         <Input name="reference" defaultValue={v.reference} maxLength={40} className="h-11" />
       </Field>

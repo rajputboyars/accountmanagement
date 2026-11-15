@@ -33,7 +33,7 @@ describe("role permissions", () => {
     ["inventory", "stock.receive", true],
     ["inventory", "billing.create", false],
     ["inventory", "customers.view", false],
-    ["manager", "day.close", false],
+    ["manager", "day.close", true],
     ["manager", "reports.view", true],
   ] as const)("%s → %s = %s", async (role, permission, expected) => {
     expect(await allowed(role, permission)).toBe(expected);

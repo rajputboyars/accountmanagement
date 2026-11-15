@@ -21,11 +21,17 @@ export type BillInputPayload = {
   customerId: string;
   priceList: string;
   discountPercent: string;
-  lines: { productId: string; unit: string; quantity: string }[];
+  lines: { productId: string; unit: string; quantity: string; discountKind?: string; discountValue?: string }[];
   payments: { cash: string; upi: string; card: string; bank: string };
   cashReceived: string;
+  /** Which bank account the bank amount went through; sent only when the shop has several. */
+  bankAccountId?: string;
   /** GST state code; empty = the shop's own state. */
   placeOfSupply?: string;
+  /** Where the goods are taken from; sent only when the shop has several godowns. */
+  godownId?: string;
+  /** Billing delivered goods: which delivered lines and how much. The server builds the bill's lines from these. */
+  challanLines?: { challanLineId: string; quantity: string; discountKind?: string; discountValue?: string }[];
 };
 
 type Failure = { error: string; code?: string; fieldErrors?: Record<string, string> };

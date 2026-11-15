@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { char, check, date, index, pgTable, text, uniqueIndex, uuid, varchar, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { bankAccounts } from "../accounting/schema";
 import { users } from "../identity/schema";
 import { creditNotes, invoices } from "../sales/schema";
 import { devices, shops } from "../settings/schema";
@@ -31,6 +32,8 @@ export const payments = pgTable(
     method: text("method").$type<(typeof PAYMENT_METHODS)[number]>().notNull(),
     amountPaise: paise("amount_paise").notNull(),
     reference: varchar("reference", { length: 40 }), // UPI UTR / cheque no.
+    /** Which bank account a bank payment went through. Empty on earlier payments, which belong to the original bank account. */
+    bankAccountId: uuid("bank_account_id").references(() => bankAccounts.id),
     businessDate: date("business_date", { mode: "string" }).notNull(),
     recordedBy: uuid("recorded_by").notNull().references(() => users.id),
     deviceId: uuid("device_id").references(() => devices.id),

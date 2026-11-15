@@ -33,9 +33,11 @@ export async function requireSession(): Promise<SessionContext> {
 }
 
 /** For pages: returns whether the signed-in user holds the permission (pages then show an access-denied state). */
-export async function checkPagePermission(permission: Permission): Promise<{ session: SessionContext; allowed: boolean }> {
+export async function checkPagePermission(permission: Permission | readonly Permission[]): Promise<{ session: SessionContext; allowed: boolean }> {
   const session = await requireSession();
-  return { session, allowed: await hasPermission(session, permission) };
+  // Several permissions mean "any of them": a page a cashier may open for a limited task and an owner for the full one.
+  for (const candidate of Array.isArray(permission) ? permission : [permission]) if (await hasPermission(session, candidate as Permission)) return { session, allowed: true };
+  return { session, allowed: false };
 }
 
 /** For server actions: throws ForbiddenError unless the permission is held. */

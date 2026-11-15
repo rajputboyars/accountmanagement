@@ -176,6 +176,69 @@
       "when": 1793609139342,
       "tag": "0024_user_guidance_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793773055616,
+      "tag": "0025_plain_nova",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793795480771,
+      "tag": "0026_accounting_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793798203999,
+      "tag": "0027_accounting_opening_recorded",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793801253074,
+      "tag": "0028_accounting_gap_resolutions",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793804572527,
+      "tag": "0029_inventory_godowns",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1793808495266,
+      "tag": "0030_sales_purchase_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1793850233652,
+      "tag": "0031_bank_reconciliation_stock_intelligence",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794596771703,
+      "tag": "0032_line_discounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794599721950,
+      "tag": "0033_daily_operations_reliability",
+      "breakpoints": true
     }
   ]
 }

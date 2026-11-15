@@ -1,6 +1,6 @@
 import { and, asc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { getDb, type Database, type Transaction } from "@/server/db";
-import { parseQuantity, type Milli } from "@/shared/quantity";
+import { isWholeQuantity, ONE_UNIT, parseQuantity, toBaseQuantity, type Milli } from "@/shared/quantity";
 import { categories, productCostHistory, productUnits, products, units } from "./schema";
 
 /** What the inventory module needs to know about a product. Callers check permissions first. */
@@ -21,6 +21,20 @@ export type ProductStockInputs = {
 };
 
 export type ProductStockUnits = ProductStockInputs & { saleUnits: { code: string; name: string; factor: Milli }[] };
+
+/**
+ * The one place a quantity entered in a pack size becomes a quantity in the product's base unit. Exact (thousandths, no floats):
+ * the product's own factor for that unit, an error when the unit isn't one of its units, when the result can't be stored in three
+ * decimals, or when the base unit can't be split. Callers turn the error code into their own message.
+ */
+export function convertQuantity(product: ProductStockUnits, unit: string, quantity: Milli): { factor: Milli; base: Milli } | { error: "unit" | "precision" | "whole" } {
+  const factor = unit === product.baseUnit ? ONE_UNIT : (product.saleUnits.find((candidate) => candidate.code === unit)?.factor ?? null);
+  if (!factor) return { error: "unit" };
+  const base = toBaseQuantity(quantity, factor);
+  if (base === null) return { error: "precision" };
+  if (!product.baseAllowsDecimal && !isWholeQuantity(base)) return { error: "whole" };
+  return { factor, base };
+}
 
 const columns = {
   id: products.id,

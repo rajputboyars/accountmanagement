@@ -17,3 +17,4 @@ export * from "@/modules/cashbook/schema";
 export * from "@/modules/audit/schema";
 export * from "@/modules/sync/schema";
 export * from "@/modules/imports/schema";
+export * from "@/modules/accounting/schema";

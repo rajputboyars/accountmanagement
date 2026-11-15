@@ -183,6 +183,12 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
                   {mode !== "none" ? <td data-label="GST" className="py-2 pr-2 text-right align-top text-muted-foreground">{formatBasisPoints(line.gstRateBp)}</td> : null}
                   <td data-key data-label={t("common.amount")} className="py-2 text-right align-top">
                     <Money paise={line.linePaise} withPaise />
+                    {line.itemDiscountPaise > 0 ? (
+                      <span data-testid="line-discount" className="block text-xs text-muted-foreground">
+                        − <Money paise={line.itemDiscountPaise} withPaise /> {t("billing.lineDiscountWord")}
+                        {line.discountKind === "percent" ? ` (${formatBasisPoints(line.discountValue)})` : ""} = <Money paise={line.linePaise - line.itemDiscountPaise} withPaise />
+                      </span>
+                    ) : null}
                   </td>
                 </tr>
               ))}
@@ -240,6 +246,7 @@ async function InvoiceView({ params, searchParams }: Pick<Props, "params" | "sea
           )}
           <dl className="flex flex-col gap-1 text-sm">
             <Row label={t("common.subtotal")} paise={invoice.subtotalPaise} />
+            {invoice.itemDiscountPaise > 0 ? <Row label={t("billing.itemDiscounts")} paise={-invoice.itemDiscountPaise} /> : null}
             {invoice.discountPaise > 0 ? <Row label={t("bill.discountPercent", { percent: formatBasisPoints(invoice.discountBp) })} paise={-invoice.discountPaise} /> : null}
             <Row label={t("common.taxableValue")} paise={invoice.taxablePaise} />
             {mode === "intra" ? (

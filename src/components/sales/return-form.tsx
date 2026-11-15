@@ -4,11 +4,13 @@ import { useRouter } from "next/navigation";
 import { useActionState, useState, useTransition } from "react";
 import { LoaderCircle, Search } from "lucide-react";
 import { findInvoiceAction, previewReturnAction, saveReturnAction, type ReturnPayload } from "@/app/(app)/billing/returns/actions";
+import { BankAccountPicker, chosenBank, mustChooseBank, type BankChoice } from "@/components/bank/bank-choice";
 import { Field, FormAlert, SubmitButton, selectClass } from "@/components/catalog/form-bits";
 import { useT } from "@/components/nexora/language-provider";
 import { Money } from "@/components/nexora/money";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatPaise } from "@/shared/money";
 import type { ReturnPreview } from "@/modules/sales";
 
 const newKey = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID().replace(/-/g, "") : `${Date.now()}${Math.random().toString(36).slice(2)}`);
@@ -31,7 +33,7 @@ export function FindInvoiceForm() {
 
 type Line = { id: string; lineNo: number; productName: string; baseUnit: string; sold: string; soldBaseQty: string; returnedBaseQty: string; remainingBaseQty: string };
 
-export function ReturnForm({ invoice }: { invoice: { id: string; number: string; customer: { name: string; type: string }; lines: Line[] } }) {
+export function ReturnForm({ invoice, bankAccounts = [] }: { invoice: { id: string; number: string; customer: { name: string; type: string }; lines: Line[] }; bankAccounts?: BankChoice[] }) {
   const router = useRouter();
   const t = useT();
   const walkIn = invoice.customer.type === "walkin";
@@ -39,6 +41,9 @@ export function ReturnForm({ invoice }: { invoice: { id: string; number: string;
   const [restock, setRestock] = useState<Record<string, boolean>>({});
   const [reason, setReason] = useState("");
   const [settlement, setSettlement] = useState(walkIn ? "cash" : "ledger");
+  const [bankPick, setBankPick] = useState("");
+  const bankAccountId = settlement === "bank" ? chosenBank(bankAccounts, bankPick) : "";
+  const bankChoiceMissing = settlement === "bank" && mustChooseBank(bankAccounts) && !bankAccountId;
   const [preview, setPreview] = useState<ReturnPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -46,7 +51,7 @@ export function ReturnForm({ invoice }: { invoice: { id: string; number: string;
   const [pending, startTransition] = useTransition();
 
   const chosen = invoice.lines.filter((line) => (quantities[line.id] ?? "").trim() !== "");
-  const payload: ReturnPayload = { invoiceId: invoice.id, lines: chosen.map((line) => ({ invoiceLineId: line.id, baseQty: quantities[line.id]!.trim(), restock: restock[line.id] ?? true })), reason, settlement };
+  const payload: ReturnPayload = { invoiceId: invoice.id, lines: chosen.map((line) => ({ invoiceLineId: line.id, baseQty: quantities[line.id]!.trim(), restock: restock[line.id] ?? true })), reason, settlement, ...(bankAccountId ? { bankAccountId } : {}) };
   const lineError = (lineId: string) => {
     const index = chosen.findIndex((line) => line.id === lineId);
     return index >= 0 ? fieldErrors[`lines.${index}.baseQty`] : undefined;
@@ -125,6 +130,7 @@ export function ReturnForm({ invoice }: { invoice: { id: string; number: string;
           </select>
         </Field>
       </div>
+      {settlement === "bank" && mustChooseBank(bankAccounts) ? <BankAccountPicker accounts={bankAccounts} value={bankAccountId} onChange={setBankPick} error={fieldErrors.bankAccountId} /> : null}
 
       <FormAlert error={error ?? undefined} />
 
@@ -153,6 +159,11 @@ export function ReturnForm({ invoice }: { invoice: { id: string; number: string;
               </dd>
             </div>
           </dl>
+          {preview.needsApproval && preview.limitPaise !== null ? (
+            <p role="alert" data-testid="return-needs-approval" className="font-medium text-amber-ink">
+              {t("returns.needsApproval", { limit: formatPaise(preview.limitPaise, { withPaise: false }) })}
+            </p>
+          ) : null}
           <p>{settlement === "ledger" ? t("returns.effectLedger", { name: invoice.customer.name }) : t(settlement === "cash" ? "returns.effectCash" : settlement === "upi" ? "returns.effectUpi" : "returns.effectBank")}</p>
           <div className="flex flex-wrap gap-2">
             <Button type="button" size="touch" onClick={confirm} disabled={pending}>
@@ -165,7 +176,7 @@ export function ReturnForm({ invoice }: { invoice: { id: string; number: string;
           </div>
         </section>
       ) : (
-        <Button type="button" size="touch" className="self-start" onClick={review} disabled={pending || chosen.length === 0}>
+        <Button type="button" size="touch" className="self-start" onClick={review} disabled={pending || chosen.length === 0 || bankChoiceMissing}>
           {pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
           {t("returns.reviewButton")}
         </Button>

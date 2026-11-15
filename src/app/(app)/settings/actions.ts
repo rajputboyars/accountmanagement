@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { addStaffMember, revokeStaffAccess, setOwnerPin, setStaffActive, updateStaffRole } from "@/modules/identity";
-import { updateBusinessProfile, updateGstSettings, updateInvoiceSettings } from "@/modules/settings";
+import { updateBusinessProfile, updateGstSettings, updateInvoiceSettings, updateStaffLimits } from "@/modules/settings";
 import { toActionError } from "@/server/action-result";
 import { requireSession } from "@/server/auth";
 import { getT } from "@/server/i18n";
@@ -113,4 +113,9 @@ export async function saveGstAction(_previous: SettingsFormState, formData: Form
 export async function saveInvoiceAction(_previous: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
   const values = fields(formData, ["invoicePrefix", "startingNumber", "terms", "upiId", "bankDetails"]);
   return saveSettings(async () => updateInvoiceSettings(await requireSession(), values), values, (await getT())("settings.saved.invoice"));
+}
+
+export async function saveStaffLimitsAction(_previous: SettingsFormState, formData: FormData): Promise<SettingsFormState> {
+  const values = fields(formData, ["smallExpense", "returnLimit"]);
+  return saveSettings(async () => updateStaffLimits(await requireSession(), values), values, (await getT())("settings.saved.limits"));
 }

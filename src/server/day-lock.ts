@@ -24,6 +24,20 @@ export async function lockDayForWrite(tx: Transaction, shopId: string, businessD
   }
 }
 
+/**
+ * The one narrow exception to the closed-day rule: settling UPI, card or cheque money against the bank statement.
+ * That settlement only moves money between "not yet in the bank" and a bank account (and books the fee the bank kept); it
+ * never touches the cash drawer, a drawer count or a day closing, and the statement date is a fact the owner cannot choose.
+ * So it may be posted on its original date even when that day is closed. It still takes the shared lock, so it can not run
+ * while the day is being closed or reopened, and it reports whether the day was closed so the audit trail can say so.
+ * Every other money write keeps using lockDayForWrite and stays blocked on a closed day.
+ */
+export async function lockDayForBankSettlement(tx: Transaction, shopId: string, businessDate: string): Promise<{ dayClosed: boolean }> {
+  await tx.execute(sql`select pg_advisory_xact_lock_shared(${keys(shopId, businessDate)})`);
+  const result = await tx.execute<{ status: string }>(sql`select status from day_closings where shop_id = ${shopId}::uuid and business_date = ${businessDate}::date`);
+  return { dayClosed: result.rows[0]?.status === "closed" };
+}
+
 /** Exclusive version, for closing and reopening a day. */
 export async function lockDayExclusive(tx: Transaction, shopId: string, businessDate: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(${keys(shopId, businessDate)})`);

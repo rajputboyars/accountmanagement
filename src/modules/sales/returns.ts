@@ -1,22 +1,25 @@
 import { randomUUID } from "node:crypto";
 import { documentParties, printedSeller } from "./document-parties";
 import { and, asc, desc, eq, ilike, inArray, is, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
+import { postCreditNote, postPayment, resolveBankRoute } from "@/modules/accounting";
 import { recordAudit } from "@/modules/audit";
 import { loadProductNames, loadProductsForStock } from "@/modules/catalog";
-import { loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
-import { appendStockMovement, lockStockRows } from "@/modules/inventory";
+import { ANY_TARGET, consumeMatchingApproval, hasPermission, loadUserNames, requirePermission, type SessionContext } from "@/modules/identity";
+import { appendStockMovement, lockStockRows, originalGodowns } from "@/modules/inventory";
+import { challanGodowns } from "./challan-billing";
 import { appendLedgerEntry, lockPartyBalance, partyBalance } from "@/modules/ledger";
 import { findCustomer, loadCustomerNames } from "@/modules/parties";
 import { recordCreditNoteRefund } from "@/modules/payments";
-import { invoiceProfile, takeDocumentNumber } from "@/modules/settings";
+import { invoiceProfile, loadStaffLimits, takeDocumentNumber } from "@/modules/settings";
 import { withIdempotency } from "@/modules/sync";
 import { getDb, withTransaction, type Database, type Transaction } from "@/server/db";
 import { lockDayForWrite } from "@/server/day-lock";
-import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
 import { computeCreditNote, ReturnQuantityError, type CreditNoteTotals } from "@/shared/credit-note";
 import { indiaDate } from "@/shared/financial-year";
+import { formatPaise } from "@/shared/money";
 import { formatQuantity, isWholeQuantity, parseQuantity, toDbQuantity, type Milli } from "@/shared/quantity";
-import { BILLING_RETURN, BILLING_VIEW } from "./permissions";
+import { BILLING_RETURN, BILLING_RETURN_LIMITED, BILLING_VIEW } from "./permissions";
 import { creditNoteLines, creditNotes, invoiceLines, invoices } from "./schema";
 import { returnInputSchema, saveReturnSchema } from "./validation";
 
@@ -34,6 +37,7 @@ import { returnInputSchema, saveReturnSchema } from "./validation";
  */
 
 const actorOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId, role: session.role });
+const booksOf = (session: SessionContext) => ({ shopId: session.shopId, userId: session.userId });
 type Db = Database | Transaction;
 
 type ReturnableLine = {
@@ -96,7 +100,7 @@ async function findInvoice(db: Db, shopId: string, invoiceId: string, lock = fal
 
 /** A bill with what is left to return on each line, for the return screen. */
 export async function getReturnableInvoice(session: SessionContext, invoiceId: string) {
-  await requirePermission(session, BILLING_RETURN);
+  await returnAccess(session);
   const db = getDb();
   const invoice = await findInvoice(db, session.shopId, invoiceId);
   const [lines, customer] = await Promise.all([loadReturnable(db, session.shopId, invoice), findCustomer(session.shopId, invoice.customerId)]);
@@ -124,7 +128,7 @@ export async function getReturnableInvoice(session: SessionContext, invoiceId: s
 
 /** Finds a bill by its number (e.g. "INV/26-27/00012" or just "12") in this shop. */
 export async function findInvoiceByNumber(session: SessionContext, number: string): Promise<{ id: string; number: string } | null> {
-  await requirePermission(session, BILLING_RETURN);
+  await returnAccess(session);
   const text = number.trim();
   if (!text) return null;
   const digits = /^\d{1,5}$/.test(text) ? text.padStart(5, "0") : null;
@@ -190,6 +194,9 @@ function returnView(plan: Planned) {
     taxMode: plan.invoice.taxMode,
     roundOffPaise: plan.totals.roundOffPaise,
     totalPaise: plan.totals.totalPaise,
+    /** Only a cashier is given a limit; above it the return needs the owner's approval. */
+    limitPaise: null as number | null,
+    needsApproval: false,
   };
 }
 
@@ -197,13 +204,19 @@ export type ReturnPreview = ReturnType<typeof returnView>;
 
 /** Read-only: what the credit note would be. Writes nothing. */
 export async function previewReturn(session: SessionContext, input: unknown): Promise<ReturnPreview> {
-  await requirePermission(session, BILLING_RETURN);
+  const access = await returnAccess(session);
   const data = returnInputSchema.parse(input);
   let view: ReturnPreview | undefined;
   try {
     await getDb().transaction(async (tx) => {
       await tx.execute(sql`set transaction read only`);
-      view = returnView(await planReturn(tx, session.shopId, data, false));
+      const plan = await planReturn(tx, session.shopId, data, false);
+      view = returnView(plan);
+      // Tell a cashier up front when this return needs the owner's approval.
+      if (access === "limited") {
+        const limit = (await loadStaffLimits(session.shopId, tx)).returnLimitPaise;
+        view = { ...view, limitPaise: limit, needsApproval: plan.totals.totalPaise > limit };
+      }
       tx.rollback();
     });
   } catch (error) {
@@ -215,7 +228,7 @@ export async function previewReturn(session: SessionContext, input: unknown): Pr
 export type CreatedCreditNote = { id: string; number: string; totalPaise: number; replayed: boolean };
 
 export async function createReturn(session: SessionContext, input: unknown): Promise<CreatedCreditNote> {
-  await requirePermission(session, BILLING_RETURN);
+  const access = await returnAccess(session);
   const data = returnInputSchema.parse(input);
   const save = saveReturnSchema.parse(input);
   const body = { action: "sales.return", ...data, lines: data.lines.map((line) => ({ ...line, baseQty: line.baseQty.toString() })), expectedTotalPaise: save.expectedTotalPaise };
@@ -227,8 +240,21 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
       if (plan.totals.totalPaise !== save.expectedTotalPaise) {
         throw new ConflictError("RETURN_CHANGED", "This bill changed since the return was shown (another return may have been saved). Check the new amount and save again.", { preview: returnView(plan) });
       }
+      // A cashier may return up to the shop's limit alone. A bigger return needs an approval the owner gave for this bill.
+      let returnApprovalId: string | null = null;
+      if (access === "limited") {
+        const limit = (await loadStaffLimits(session.shopId, tx)).returnLimitPaise;
+        if (plan.totals.totalPaise > limit) {
+          const used = await consumeMatchingApproval(tx, session, "return_over_limit", [plan.invoice.number, ANY_TARGET], (payload) => ((payload.amountPaise ?? 0) >= plan.totals.totalPaise ? null : "The approved amount is lower than this return."));
+          if (!used) throw new ForbiddenError(`This return is above your ${formatPaise(limit, { withPaise: false })} limit. Ask the owner to approve it.`);
+          returnApprovalId = used.id;
+        }
+      }
       const registered = plan.customer.type !== "walkin";
       await lockStockRows(tx, session.shopId, plan.lines.map((line) => line.productId));
+      // Returned goods go back to the godown the bill took them from.
+      // A bill made from delivered goods has no sale movement of its own: its goods left from the godown named on the challan.
+      const soldFrom = plan.invoice.fromChallans ? await challanGodowns(tx, session.shopId, plan.invoice.id) : await originalGodowns(tx, session.shopId, "invoice", plan.invoice.id);
       if (registered) await lockPartyBalance(tx, session.shopId, "customer", plan.customer.id);
       const { fy, number } = await takeDocumentNumber(tx, session.shopId, "CN");
       const today = indiaDate();
@@ -251,6 +277,7 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
         roundOffPaise: plan.totals.roundOffPaise,
         totalPaise: plan.totals.totalPaise,
         createdBy: session.userId,
+        approvalId: returnApprovalId,
       });
       await tx.insert(creditNoteLines).values(
         plan.lines.map((line, index) => ({
@@ -266,14 +293,17 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
         })),
       );
       for (const line of plan.lines) {
-        const movement = { shopId: session.shopId, productId: line.productId, movementDate: today, unitCostPaise: line.unitCostPaise, sourceType: "credit_note", sourceId: creditNoteId, createdBy: session.userId };
+        const movement = { shopId: session.shopId, productId: line.productId, godownId: soldFrom.get(line.productId), movementDate: today, unitCostPaise: line.unitCostPaise, sourceType: "credit_note", sourceId: creditNoteId, createdBy: session.userId };
         await appendStockMovement(tx, { ...movement, kind: "return_in", qtyBase: line.returnBaseQty, reason: `${number}: ${data.reason}` });
         if (!line.restock) await appendStockMovement(tx, { ...movement, kind: "damage", qtyBase: -line.returnBaseQty, reason: `${number}: returned damaged` });
       }
       if (registered) {
         await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: plan.customer.id, entryDate: today, kind: "credit_note", sourceType: "credit_note", sourceId: creditNoteId, creditPaise: plan.totals.totalPaise });
       }
+      const costed = (line: (typeof plan.lines)[number]) => ({ productId: line.productId, qtyBase: formatQuantity(line.returnBaseQty), unitCostPaise: line.unitCostPaise });
+      await postCreditNote(tx, booksOf(session), { creditNoteId, date: today, customerId: plan.customer.id, taxablePaise: plan.totals.taxablePaise, gstPaise: plan.totals.cgstPaise + plan.totals.sgstPaise + plan.totals.igstPaise, roundOffPaise: plan.totals.roundOffPaise, totalPaise: plan.totals.totalPaise, returned: plan.lines.map(costed), damaged: plan.lines.filter((line) => !line.restock).map(costed) });
       if (data.settlement !== "ledger" && plan.totals.totalPaise > 0) {
+        const route = await resolveBankRoute(tx, session.shopId, data.settlement, data.bankAccountId);
         const paymentId = await recordCreditNoteRefund(tx, {
           shopId: session.shopId,
           fy,
@@ -284,7 +314,9 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
           amountPaise: plan.totals.totalPaise,
           businessDate: today,
           recordedBy: session.userId,
+          bankAccountId: route.bankAccountId,
         });
+        await postPayment(tx, booksOf(session), { paymentId, date: today, direction: "out", partyType: "customer", partyId: plan.customer.id, method: data.settlement, amountPaise: plan.totals.totalPaise, bankAccountKey: route.key });
         if (registered) {
           await appendLedgerEntry(tx, { shopId: session.shopId, partyType: "customer", partyId: plan.customer.id, entryDate: today, kind: "payment", sourceType: "payment", sourceId: paymentId, debitPaise: plan.totals.totalPaise });
         }
@@ -300,6 +332,7 @@ export async function createReturn(session: SessionContext, input: unknown): Pro
           totalPaise: plan.totals.totalPaise,
           lines: plan.lines.map((line) => ({ invoiceLineId: line.id, baseQty: formatQuantity(line.returnBaseQty), restock: line.restock })),
         },
+        approvalId: returnApprovalId,
         reason: data.reason,
       });
       return { status: 201, body: { id: creditNoteId, number, totalPaise: plan.totals.totalPaise } };
@@ -363,4 +396,54 @@ export async function getCreditNote(session: SessionContext, creditNoteId: strin
     createdByName: users.get(note.createdBy) ?? "Unknown user",
     balanceNowPaise: customer.type === "walkin" ? null : await partyBalance(session.shopId, "customer", customer.id),
   };
+}
+
+// ── Who may return, and finding the bill ─────────────────────────────────────────────────────────────────────
+
+/**
+ * "full": owners and managers return any bill. "limited": a cashier returns up to the shop's return limit on their own;
+ * a bigger one needs the owner's approval (checked when the return is saved). Anyone else is refused.
+ */
+async function returnAccess(session: SessionContext): Promise<"full" | "limited"> {
+  if (await hasPermission(session, BILLING_RETURN)) return "full";
+  if (await hasPermission(session, BILLING_RETURN_LIMITED)) return "limited";
+  throw new ForbiddenError();
+}
+
+export type ReturnSearch = { customer?: string; number?: string; product?: string; from?: string; to?: string };
+export type ReturnSearchRow = { id: string; number: string; businessDate: string; customerName: string; totalPaise: number; items: { name: string; remaining: string; unit: string }[] };
+
+const SEARCH_LIMIT = 20;
+const DATE_TEXT = /^\d{4}-\d{2}-\d{2}$/;
+const likeText = (value: string) => `%${value.replace(/[\\%_]/g, (match) => `\\${match}`)}%`;
+
+/**
+ * Finds bills to return against by customer, bill number, product and date range (any mix). Only bills that still have
+ * something left to return are shown, each with just the eligible quantities, so the person picks a bill without hunting numbers.
+ */
+export async function searchReturnableInvoices(session: SessionContext, search: ReturnSearch): Promise<ReturnSearchRow[]> {
+  await returnAccess(session);
+  const db = getDb();
+  const conditions: SQL[] = [eq(invoices.shopId, session.shopId), eq(invoices.status, "issued")];
+  const number = (search.number ?? "").trim();
+  if (number) conditions.push(/^\d{1,5}$/.test(number) ? ilike(invoices.number, `%/${number.padStart(5, "0")}`) : ilike(invoices.number, likeText(number)));
+  const from = (search.from ?? "").trim();
+  const to = (search.to ?? "").trim();
+  if (DATE_TEXT.test(from)) conditions.push(sql`${invoices.businessDate} >= ${from}`);
+  if (DATE_TEXT.test(to)) conditions.push(sql`${invoices.businessDate} <= ${to}`);
+  const customerText = (search.customer ?? "").trim();
+  if (customerText) conditions.push(sql`${invoices.customerId} in (select id from customers where shop_id = ${session.shopId}::uuid and (name ilike ${likeText(customerText)} or phone ilike ${likeText(customerText)}))`);
+  const productText = (search.product ?? "").trim();
+  if (productText) conditions.push(sql`exists (select 1 from invoice_lines l join products p on p.id = l.product_id where l.invoice_id = ${invoices.id} and (coalesce(l.product_name, p.name) ilike ${likeText(productText)} or p.sku ilike ${likeText(productText)}))`);
+  const found = await db.select().from(invoices).where(and(...conditions)).orderBy(desc(invoices.businessDate), desc(invoices.createdAt)).limit(SEARCH_LIMIT * 2);
+  const names = await loadCustomerNames(session.shopId, [...new Set(found.map((row) => row.customerId))]);
+  const rows: ReturnSearchRow[] = [];
+  for (const invoice of found) {
+    const lines = await loadReturnable(db, session.shopId, invoice);
+    const items = lines.filter((line) => line.soldBaseQty > line.returnedBaseQty).map((line) => ({ name: line.productName, remaining: formatQuantity(line.soldBaseQty - line.returnedBaseQty), unit: line.baseUnit }));
+    if (items.length === 0) continue;
+    rows.push({ id: invoice.id, number: invoice.number, businessDate: invoice.businessDate, customerName: names.get(invoice.customerId) ?? "Customer", totalPaise: invoice.totalPaise, items });
+    if (rows.length >= SEARCH_LIMIT) break;
+  }
+  return rows;
 }

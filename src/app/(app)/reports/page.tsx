@@ -47,10 +47,17 @@ async function ReportList({ searchParams }: Pick<Props, "searchParams">) {
   const range = resolveRange({ range: one(query.range), from: one(query.from), to: one(query.to) }, today);
   const allowed = await Promise.all(REPORTS.map((report) => (report.permission ? hasPermission(session, report.permission) : true)));
   const q = rangeQuery(range);
+  const canSeeMoney = await hasPermission(session, "profit.view");
   return (
     <PageContainer>
       <PageIntro description={t("nav.reports.description")} />
       <RangeFilter basePath="/reports" range={range} today={today} />
+      {canSeeMoney ? (
+        <Link href="/reports/money" className="flex flex-col gap-1 rounded-2xl border border-border bg-card p-5 hover:bg-muted/40">
+          <h2 className="font-semibold text-foreground">{t("money.card.title")}</h2>
+          <p className="text-sm text-muted-foreground">{t("money.card.description")}</p>
+        </Link>
+      ) : null}
       <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {REPORTS.filter((_, index) => allowed[index]).map((report) => {
           const suffix = report.ranged ? `?${q}` : "";

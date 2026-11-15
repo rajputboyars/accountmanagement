@@ -8,6 +8,7 @@ import { ProtectedPage } from "@/components/nexora/protected-page";
 import { SectionCard } from "@/components/nexora/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { listBankChoices } from "@/modules/accounting";
 import { getSupplier } from "@/modules/purchasing";
 import { requireSession } from "@/server/auth";
 import { getLanguage, getT } from "@/server/i18n";
@@ -39,6 +40,7 @@ async function SupplierView({ params }: Pick<Props, "params">) {
   const { supplierId } = await params;
   const session = await requireSession();
   const [t, language] = await Promise.all([getT(), getLanguage()]);
+  const bankAccounts = await listBankChoices(session).catch(() => []);
   const dateText = (value: string) => billDate(value, language);
   const kindText = (kind: string) => (KIND[kind] ? t(KIND[kind]!) : kind);
   const supplier = await getSupplier(session, supplierId).catch((error: unknown) => {
@@ -186,7 +188,7 @@ async function SupplierView({ params }: Pick<Props, "params">) {
         <div className="flex min-w-0 flex-col gap-6">
           {supplier.canPay ? (
             <SectionCard title={t("suppliers.pay")}>
-              {supplier.owedPaise > 0 ? <PaySupplierForm supplierId={supplier.id} owedText={formatPaise(supplier.owedPaise, { withPaise: true })} /> : <p className="text-sm text-muted-foreground">{t("suppliers.nothingOwed")}</p>}
+              {supplier.owedPaise > 0 ? <PaySupplierForm supplierId={supplier.id} owedText={formatPaise(supplier.owedPaise, { withPaise: true })} bankAccounts={bankAccounts} /> : <p className="text-sm text-muted-foreground">{t("suppliers.nothingOwed")}</p>}
             </SectionCard>
           ) : null}
           {supplier.canEdit ? (

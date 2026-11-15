@@ -15,7 +15,7 @@ const KINDS = [
   { value: "count", label: "stock.kind.count", hint: "stock.hintCount" },
 ] as const;
 
-export function AdjustmentForm({ productId, units, baseUnit, baseUnitLabel }: { productId: string; units: { code: string; label: string }[]; baseUnit: string; baseUnitLabel: string }) {
+export function AdjustmentForm({ productId, units, baseUnit, baseUnitLabel, godowns }: { productId: string; units: { code: string; label: string }[]; baseUnit: string; baseUnitLabel: string; godowns?: { id: string; name: string }[] }) {
   const t = useT();
   const [idempotencyKey, setIdempotencyKey] = useState(newKey);
   const [kind, setKind] = useState<(typeof KINDS)[number]["value"]>("damage");
@@ -33,6 +33,18 @@ export function AdjustmentForm({ productId, units, baseUnit, baseUnitLabel }: { 
       <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
       <input type="hidden" name="productId" value={productId} />
       <input type="hidden" name="kind" value={kind} />
+      {godowns ? (
+        <Field label={t("godown.label")} error={errors.godownId}>
+          <FormSelect name="godownId" defaultValue={values.godownId ?? ""}>
+            <option value="">{t("godown.choose")}</option>
+            {godowns.map((godown) => (
+              <option key={godown.id} value={godown.id}>
+                {godown.name}
+              </option>
+            ))}
+          </FormSelect>
+        </Field>
+      ) : null}
       <div role="radiogroup" aria-label={t("stock.whatHappened")} className="grid grid-cols-3 gap-1 rounded-xl bg-muted p-1">
         {KINDS.map((option) => (
           <button
